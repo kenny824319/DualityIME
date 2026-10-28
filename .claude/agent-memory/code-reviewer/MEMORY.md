@@ -1,0 +1,1 @@
+- [Doc claims vs code](project_doc_claims_vs_code.md) — left/right Shift setting doesn't exist; 遊戲模式 is key pass-through, not 純英文 mode
