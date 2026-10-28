@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 768 768" width="768" height="768">
+  <!-- 中英混打 icon, traced from 中英混打左側icon.png. tools/make_icons.py draws
+       these shapes in order (rect and polygon only); the inverted icon flips every colour (255 - c) -->
+  <rect x="0" y="0" width="768" height="768" fill="#f8f7f6"/>
+  <polygon fill="#3a3a39" points="76,253 431,253 321,414 76,414"/>
+  <polygon fill="#f8f7f6" points="124,295 200,295 200,371 124,371"/>
+  <polygon fill="#f8f7f6" points="251,295 347,295 296,371 251,371"/>
+  <polygon fill="#3a3a39" points="199,157 250,157 252,497 203,546"/>
+  <polygon fill="#3a3a39" points="243,579 477,254 511,254 719,579 660,579 494,316 301,579"/>
+  <polygon fill="#3a3a39" points="494,368 520,410 491,452 580,452 605,493 461,493 395,579 340,579"/>
+  <polygon fill="#3a3a39" points="459,540 592,540 618,579 428,579"/>
+</svg>

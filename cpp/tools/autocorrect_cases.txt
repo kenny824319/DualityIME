@@ -1,0 +1,23 @@
+# End-to-end checks with 注音自動校正 on (one engine for all lines, so 校正記憶 carries over):
+#   powershell -ExecutionPolicy Bypass -File cpp\tools\e2e.ps1 cpp\tools\autocorrect_cases.txt -Config cpp\tools\autocorrect_config.json
+# (with the setting off these read si3好嗎, 好817, 817, ss以, 今篇, jie好, si31)
+# a key next to the right one, spelling nothing (u for i) or as a tone key (e for 3)
+si3cl3a87{ENTER} => 你好嘛
+jiecl3{ENTER} => 我好
+# digits out of order: in a word, on its own; between Chinese and making no word, or after English, a number
+cl3817{ENTER} => 好吧
+817{ENTER} => 吧
+u.3813ek7{ENTER} => 有813個
+you are 817{ENTER} => you are 817
+# a key typed twice
+ssu3{ENTER} => 你
+# a key next to the right one, spelling another syllable: 今篇 is no word, 今天 is
+rup qu0 {ENTER} => 今天
+# English is left alone
+look up {ENTER} => look up 
+ji3{ENTER} => 我
+# 校正記憶: si3 on its own stays English; ↓ offers 你; picked twice, it is 你 from then on
+si3{ENTER} => si3
+si3{DOWN}1{ENTER} => 你
+si3{DOWN}1{ENTER} => 你
+si3{ENTER} => 你

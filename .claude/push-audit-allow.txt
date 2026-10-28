@@ -1,0 +1,13 @@
+# Exceptions to .claude/scripts/push_audit.py: code that may ship although it looks like
+# debug logging, recording keys or the network. Only the user edits this file.
+# One per line: <path regex> TAB <added-line regex>  # why
+# (a TAB between the two)
+^installer/src/Updater\.cs$	\bWebRequest\b  # the update button asks GitHub Releases (api.github.com) and downloads the installer
+^installer/src/Updater\.cs$	\b(releases|latest)\.json\b  # the updater's test mode reads a fake release list from a folder (DUALITYIME_UPDATE_TEST_API)
+^installer/(install|uninstall)\.ps1$	^\s*#.*\b(un)?install\.log\b  # comment: the install / uninstall script writes what it did to a log the installer window shows
+^installer/(install|uninstall)\.ps1$	^\s*\$LogFile = Join-Path \S+ "(un)?install\.log"$  # the install / uninstall log, shown by the installer window, in the payload / install folder
+^installer/src/Setup\.cs$	^\s*PrintLog\(Path\.Combine\(dir, "(un)?install\.log"\)\);$  # the installer prints the log install.ps1 / uninstall.ps1 wrote
+^installer/(build|install)\.ps1$	LICENSE-McBopomofo\.txt  # the lexicon's licence ships with the data (MIT requires it)
+^cpp/tip/text_service\.cpp$	^// debugging: lines go to %TEMP%\\dualityime_debug\.log, only if that file exists\. Never what is typed:$  # the debug log's comment after the rename
+^cpp/tip/text_service\.cpp$	^    std::wstring path = std::wstring\(tmp\) \+ L"dualityime_debug\.log";$  # the debug log's switch after the rename (sz_debug.log to dualityime_debug.log), still written only while the file exists
+^installer/src/Setup\.cs$	\b(un)?install\.log\b  # the install / uninstall log, now written and read in the administrators-only step-2 folder (Program Files\DualityIME.setup-* / .uninstall-*)

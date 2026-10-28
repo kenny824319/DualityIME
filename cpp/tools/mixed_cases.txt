@@ -1,0 +1,57 @@
+# English next to zhuyin and digits: typed into the ASUS IME and ours side by side
+#   sz_tsftest cpp\tools\mixed_cases.txt --tip {clsid} {profile}
+pythong4{ENTER}
+googleg4{ENTER}
+pythonj3{ENTER}
+appleg4{ENTER}
+testg4{ENTER}
+codeg4{ENTER}
+gitg4{ENTER}
+pythonji3{ENTER}
+pythoxji3{ENTER}
+asdfji3{ENTER}
+Pythonji3{ENTER}
+PYTHONji3{ENTER}
+googlesu3{ENTER}
+jsonji3{ENTER}
+emailji3{ENTER}
+kissji3{ENTER}
+onlineji3{ENTER}
+macbookji3{ENTER}
+fingersu {ENTER}
+appsji3{ENTER}
+user'sji3{ENTER}
+e-mailji3{ENTER}
+well-knownji3{ENTER}
+python3{ENTER}
+gpt4{ENTER}
+pime103{ENTER}
+win10{ENTER}
+iphone15{ENTER}
+abc123{ENTER}
+mp3{ENTER}
+h264{ENTER}
+python3ji3{ENTER}
+ji3103{ENTER}
+ji3 3ek7{ENTER}
+3ek7{ENTER}
+18{ENTER}
+104{ENTER}
+3.14{ENTER}
+2024{ENTER}
+ji3google{ENTER}
+su3python3{ENTER}
+ji3gpt4{ENTER}
+google,ji3{ENTER}
+python.ji3{ENTER}
+pythong4.{ENTER}
+pythong{ENTER}
+python{ENTER}
+pythonsu3{ENTER}
+pythoncl3{ENTER}
+pythonek7{ENTER}
+pythonji3g4{ENTER}
+google5j/ ej/4{ENTER}
+hellog4{ENTER}
+workg4{ENTER}
+dog4{ENTER}
