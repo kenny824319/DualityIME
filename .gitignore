@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.claude/settings.local.json
+.claude/last-check.json
+/bin/
+/setup.exe
+/out/

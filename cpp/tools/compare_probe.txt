@@ -1,0 +1,44 @@
+# Behaviour probes for comparing with another input method:
+#   sz_tsftest cpp\tools\compare_probe.txt --tip {clsid} {profile}
+# What survives Esc was committed; {SHOT} saves %TEMP%\sz_shot<n>.bmp.
+su3cl3{ESC}
+su3cl3{ENTER}
+hello {ESC}
+su3cl3hello {ESC}
+su3cl3hello ji3{ESC}
+su3cl3hello ji3{ENTER}
+su3cl3,{ESC}
+su3cl3<{ESC}
+su3cl3!{ESC}
+su3cl3?{ESC}
+18{ENTER}
+104{ENTER}
+3.14{ENTER}
+python3{ENTER}
+0 5j; pime103{ENTER}
+3ek7{ENTER}
+us3{ENTER}
+ji3m/4googlen. vu04{ENTER}
+claudezp vu {ENTER}
+1{ENTER}
+su3cl31{ENTER}
+{SHIFT}abc{SHIFT}su3{ENTER}
+su3cl3{ENTER}{SBACK}{ENTER}
+su3cl3,{ENTER}
+su3cl3<{ENTER}
+su3cl3!{ENTER}
+hello, ji3{ENTER}
+hello ji3{ENTER}
+18 {ENTER}
+look up {ENTER}
+up {ENTER}
+su3cl3hello{ENTER}
+su3cl3{BACK}{ENTER}
+su3cl3hello ji3{BACK}{BACK}{ENTER}
+su3cl3{LEFT}{WAIT}{SHOT}{UP}{SHOT}{RIGHT}{SHOT}{DOWN}{SHOT}{ESC}{ESC}{ESC}
+0 5j; pime103{LEFT}{WAIT}{SHOT}{UP}{RIGHT}{SHOT}{ESC}{ESC}{ESC}
+up {LEFT}{WAIT}{SHOT}{ESC}{ESC}{ESC}
+su3cl3hello ji3{LEFT}{LEFT}{WAIT}{SHOT}{ESC}{ESC}{ESC}
+w96{WAIT}{SHOT}{ESC}{ESC}
+internati{WAIT}{SHOT}{ESC}{ESC}
+`{WAIT}{SHOT}{ESC}

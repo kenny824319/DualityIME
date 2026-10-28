@@ -1,0 +1,2 @@
+Microsoft.Web.WebView2 1.0.4314.35 (NuGet), lib/net462 and runtimes/win-x64/native.
+Signed by Microsoft Corporation (checked with Get-AuthenticodeSignature). BSD-style license: LICENSE.txt.

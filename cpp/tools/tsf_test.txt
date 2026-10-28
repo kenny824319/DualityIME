@@ -1,0 +1,108 @@
+# End-to-end checks for sz_tsftest (see tsf_test.cpp). Run with a fresh engine:
+#   DualityIMEEngine.exe --user-dir <empty folder>
+# typing and Enter
+su3cl3{ENTER} => 你好
+ji3m/4googlen. {ENTER} => 我用google搜
+# still being typed: the text is in the document already, underlined
+su3cl3 => 你好
+# candidates (like the ASUS IME): at the end the last character, before 你 the phrases from there
+su3cl3{DOWN}{DOWN}{ENTER}{ENTER} => 你郝
+su3cl3{LEFT}{LEFT}{DOWN}2{ENTER} => 妳好
+# numpad digits pick too while the list is up (妳, just picked above, is first now, 你 second: Enter alone
+# would give 妳好, a typed digit a 2); otherwise they are digits
+su3cl3{LEFT}{LEFT}{DOWN}{#2}{ENTER} => 你好
+ji3{#5}{ENTER} => 我5
+# the replacement bar above the text: ↑ in, → to the next, Enter takes it
+su3cl3{LEFT}{UP}{RIGHT}{ENTER}{ENTER} => 你c襖
+up {LEFT}{UP}{RIGHT}{RIGHT}{ENTER}{ENTER} => up 
+# Tab takes the hint
+w96{TAB}{ENTER} => 台灣
+# English words go out with the space
+hello  => hello 
+# Shift tap: English, then Chinese again
+{SHIFT}su3{SHIFT}su3{ENTER} => su3你
+# like the ASUS IME: the sentence waits for Enter; look up stays English
+look up {ENTER} => look up 
+su3cl3hello ji3{ESC} => 
+ji3< => 我<
+# Shift+Backspace after sending just deletes a character
+ji3m/4{ENTER}{SBACK} => 我
+# Esc drops what is being typed
+su3cl3{ESC} => 
+# punctuation after Chinese
+ji3, => 我,
+# Shift+Space: 全形 and back
+{SSPACE}ab{ENTER}{SSPACE}ab{ENTER} => ａｂab
+# the symbol keyboard: ` then a key types the symbol on it
+`1 => 1
+`q => 《
+# English then a whole digit syllable
+pime103{ENTER} => pime版
+python3{ENTER} => python3
+# the longest English word, then one syllable (like the ASUS IME)
+pythong4{ENTER} => python是
+workg4{ENTER} => work是
+dog4{ENTER} => dog4
+google,ji3{ENTER} => google,我
+# reported: a file name, then zhuyin
+56vu/6setup.exea87?{ENTER} => 執行setup.exe嗎?
+ji3187{UP}{RIGHT}{RIGHT}{RIGHT}{ENTER}{ENTER} => 我187
+youtube2; 5j/ {ENTER} => youtube當中
+# a web page with no text box in focus (YouTube's J K L), a window without TSF: keys are the app's
+{PAGE}jkl => jkl
+{PAGE}su3 => su3
+{NOFOCUS}jkl => jkl
+# a password box (input scope IS_PASSWORD): the keys go in as typed, nothing composed or learned
+{PASSWORD}su3cl3 => su3cl3
+{PASSWORD}claude => claude
+ji3{ENTER} => 我
+# a symbol key with nothing typed goes out at once; in a sentence it waits for Enter
+[{ESC} => [
+=su3{ESC} => =
+su3[{ESC} => 
+sugatau,4au04{ENTER} => sugata頁面
+# after a word is picked, the caret is right after it
+rup wu0 hk4g4g6yji4u,4au04{LEFT}{LEFT}{LEFT}{LEFT}{DOWN}1su3{ENTER} => 今天測試實作你頁面
+# typed before a character: the keys stay apart from its keys (like the ASUS IME)
+rup wu0 u,4au04{LEFT}{LEFT}su3{ENTER}{ENTER} => 今天你頁面
+# the bar reads the keys from the caret, whatever they read as now: dog4 -> do是
+dog4{LEFT}{LEFT}{UP}{ENTER}{ENTER} => do是
+# picks and picks again in the replacement bar: what the ASUS IME gave for the same keys (2026-10-26)
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{ENTER}{WAIT} => sugataㄧㄝˋ面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{ENTER}{WAIT} => sugatau誒面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{ENTER}{WAIT} => sugatau,ˋ面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{RIGHT}{ENTER}{WAIT} => sugatau,4面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{RIGHT}{ENTER}{WAIT}{LEFT}{WAIT}{UP}{ENTER}{WAIT} => sugatau,ˋ面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{RIGHT}{ENTER}{WAIT}{LEFT}{WAIT}{UP}{RIGHT}{ENTER}{WAIT} => sugatau,ˋ面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{RIGHT}{ENTER}{WAIT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{ENTER}{WAIT} => sugatau,ˋ面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{RIGHT}{ENTER}{WAIT}{LEFT}{LEFT}{WAIT}{UP}{ENTER}{WAIT} => sugatau誒面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{RIGHT}{ENTER}{WAIT}{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{ENTER}{WAIT} => sugatau誒面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{RIGHT}{ENTER}{WAIT}{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{ENTER}{WAIT} => sugatau誒面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{RIGHT}{ENTER}{WAIT}{LEFT}{LEFT}{LEFT}{WAIT}{UP}{ENTER}{WAIT} => sugata頁面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{RIGHT}{ENTER}{WAIT}{LEFT}{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{ENTER}{WAIT} => sugata頁面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{RIGHT}{ENTER}{WAIT}{LEFT}{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{ENTER}{WAIT} => sugata頁面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{RIGHT}{ENTER}{WAIT}{LEFT}{LEFT}{LEFT}{LEFT}{WAIT}{UP}{ENTER}{WAIT} => sugat滅面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{RIGHT}{ENTER}{WAIT}{LEFT}{LEFT}{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{ENTER}{WAIT} => sugat滅面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{RIGHT}{ENTER}{WAIT}{LEFT}{LEFT}{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{ENTER}{WAIT} => sugat滅面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{ENTER}{WAIT}{LEFT}{WAIT}{UP}{ENTER}{WAIT} => sugatauㄝˋ面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{ENTER}{WAIT}{LEFT}{WAIT}{UP}{RIGHT}{ENTER}{WAIT} => sugatau,ˋ面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{ENTER}{WAIT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{ENTER}{WAIT} => sugatau,4面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{ENTER}{WAIT}{LEFT}{LEFT}{WAIT}{UP}{ENTER}{WAIT} => sugata頁面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{ENTER}{WAIT}{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{ENTER}{WAIT} => sugata頁面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{ENTER}{WAIT}{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{ENTER}{WAIT} => sugata頁面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{ENTER}{WAIT}{LEFT}{LEFT}{LEFT}{WAIT}{UP}{ENTER}{WAIT} => sugat滅面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{ENTER}{WAIT}{LEFT}{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{ENTER}{WAIT} => sugat滅面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{ENTER}{WAIT}{LEFT}{LEFT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{ENTER}{WAIT} => sugat滅面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{ENTER}{WAIT}{LEFT}{WAIT}{UP}{ENTER}{WAIT} => sugata頁面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{WAIT}{UP}{ENTER}{WAIT}{LEFT}{WAIT}{UP}{RIGHT}{ENTER}{WAIT} => sugata頁面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{LEFT}{WAIT}{UP}{ENTER}{WAIT}{LEFT}{WAIT}{UP}{ENTER}{WAIT} => sugatㄇㄧㄝˋ面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{LEFT}{WAIT}{UP}{ENTER}{WAIT}{LEFT}{WAIT}{UP}{RIGHT}{ENTER}{WAIT} => sugata頁面
+{ESC}{ESC}sugatau,4au04{LEFT}{LEFT}{LEFT}{WAIT}{UP}{ENTER}{WAIT}{LEFT}{WAIT}{UP}{RIGHT}{RIGHT}{ENTER}{WAIT} => sugatau誒面
+# the word after - is completed too
+code-rev{TAB}{ENTER} => code-review
+# 代碼記憶 (the setting off too): mp3 is 允; its keys back from the bar twice, English from then on
+mp3{ENTER} => 允
+mp3{LEFT}{UP}{RIGHT}{RIGHT}{RIGHT}{ENTER}{ENTER} => mp3
+mp3{LEFT}{UP}{RIGHT}{RIGHT}{RIGHT}{ENTER}{ENTER} => mp3
+mp3{ENTER} => mp3
+ji3mp3{ENTER} => 我mp3

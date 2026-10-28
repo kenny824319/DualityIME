@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 768 768" width="768" height="768">
+  <!-- 全英輸入 icon, traced from 全英輸入左側icon.png. tools/make_icons.py draws
+       these shapes in order (rect and polygon only), same colours and size as 中英混打.svg -->
+  <rect x="0" y="0" width="768" height="768" fill="#f8f7f6"/>
+  <polygon fill="#3a3a39" points="384,156 668,576 587,576 502,448 308,448 345,394 465,394 384,272 182,576 100,576"/>
+  <polygon fill="#3a3a39" points="279,496 480,496 515,549 243,549"/>
+</svg>
