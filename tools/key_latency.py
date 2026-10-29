@@ -1,6 +1,6 @@
 """Time per key of the Python engine, on the longest of the repo's own sentences.
 
-    py tools/key_latency.py [--off] [--count N]
+    py tools/key_latency.py [--off] [--count N] [--bigram FILE]
 
 Types the N (30) longest sentences of autocorrect_eval.natural_sentences key by key, Enter
 after each, in a temporary folder, with 注音自動校正 on (--off: off), and prints the median,
@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 sys.stdout.reconfigure(encoding="utf-8")
 
 from engine import create_composer  # noqa: E402
+from engine.bigram import load_other  # noqa: E402
 from autocorrect_eval import natural_sentences  # noqa: E402
 
 
@@ -26,6 +27,8 @@ def main(argv):
     count = int(argv[argv.index("--count") + 1]) if "--count" in argv else 30
     with tempfile.TemporaryDirectory() as tmp:
         c = create_composer(os.path.join(tmp, "user.json"))
+        if "--bigram" in argv:  # (another context model file: tools/build_bigram.py --keep)
+            c.bigram = load_other(c.lexicon, argv[argv.index("--bigram") + 1])
         c.config.set(remember_words=False, autocorrect=on)
         c.settings_changed()
         longest = sorted(natural_sentences(c.lexicon), key=lambda s: -len("".join(s)))[:count]

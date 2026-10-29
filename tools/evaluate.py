@@ -1,6 +1,6 @@
 """Measure conversion accuracy on held-out text.
 
-    python tools/evaluate.py <corpus.parquet> [sentences] [--no-bigram] [--typed]
+    python tools/evaluate.py <corpus.parquet> [sentences] [--no-bigram | --bigram FILE] [--typed]
 
 --typed types the keystrokes through the full composer (tokenizer included)
 instead of handing the readings straight to the converter.
@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout.reconfigure(encoding="utf-8")
 
 from engine import load_resources  # noqa: E402
-from engine.bigram import BigramModel  # noqa: E402
+from engine.bigram import BigramModel, load_other  # noqa: E402
 from engine.composer import Composer, convert  # noqa: E402
 from engine.zhuyin import KEYMAP, TONES  # noqa: E402
 
@@ -67,6 +67,8 @@ def main(path, count=500, *flags):
     table, lexicon, english, user, bigram, config = load_resources(None)
     if "--no-bigram" in flags:
         bigram = None
+    elif "--bigram" in flags:  # (another context model file: tools/build_bigram.py --keep)
+        bigram = load_other(lexicon, flags[flags.index("--bigram") + 1])
     best_reading = {}
     for reading, lst in lexicon.entries.items():
         for p, s in lst:

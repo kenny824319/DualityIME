@@ -7,6 +7,7 @@
 
     python tools/tune_english.py            score the costs in EN now
     python tools/tune_english.py --search   look for better ones (coordinate search)
+    ... --bigram FILE                       with another context model file (tools/build_bigram.py --keep)
 """
 import os
 import random
@@ -18,6 +19,7 @@ sys.path.insert(0, ROOT)
 sys.stdout.reconfigure(encoding="utf-8")
 
 from engine import composer, create_composer  # noqa: E402
+from engine.bigram import load_other  # noqa: E402
 from engine.composer import tokenize  # noqa: E402
 from engine.zhuyin import reading_to_keys  # noqa: E402
 
@@ -61,6 +63,8 @@ def common_readings(lexicon, rng, count):
 
 def build(seed=7, n_english=2500, n_zhuyin=1500):
     c = create_composer(os.path.join(tempfile.mkdtemp(), "user.json"))
+    if "--bigram" in sys.argv:  # (another context model file: tools/build_bigram.py --keep)
+        c.bigram = load_other(c.lexicon, sys.argv[sys.argv.index("--bigram") + 1])
     rng = random.Random(seed)
     ranked = sorted(c.english, key=c.english.get)
     words = [w for w in ranked[:8000] if len(w) >= 3 and w.isalpha()]

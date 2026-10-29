@@ -1,7 +1,7 @@
 """Measures 注音自動校正 (the autocorrect setting) on made-up typos, and what it costs
 the text typed right.
 
-    py tools/autocorrect_eval.py [--seed N] [--count N] [--natural-count N] [--show]
+    py tools/autocorrect_eval.py [--seed N] [--count N] [--natural-count N] [--show] [--bigram FILE]
 
 Fixed (setting on): a sentence of common words with one syllable mistyped comes out
 as the sentence typed right does with the setting off. Kinds of mistakes:
@@ -33,6 +33,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 sys.stdout.reconfigure(encoding="utf-8")
 
 from engine import create_composer  # noqa: E402
+from engine.bigram import load_other  # noqa: E402
 from engine.zhuyin import ADJACENT, reading_to_keys  # noqa: E402
 from tune_english import MIXED  # noqa: E402
 from evaluate import reading_of  # noqa: E402
@@ -159,6 +160,8 @@ def main(argv):
     show = "--show" in argv
     rng = random.Random(seed)
     c = create_composer(os.path.join(tempfile.mkdtemp(), "user.json"))
+    if "--bigram" in argv:  # (another context model file: tools/build_bigram.py --keep)
+        c.bigram = load_other(c.lexicon, argv[argv.index("--bigram") + 1])
     c.config.set(remember_words=False)  # (nothing typed here may be learned as English)
 
     # fixed: the random word strings (rng, as before E existed: the same sentences and typos), and

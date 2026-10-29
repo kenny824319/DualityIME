@@ -57,10 +57,10 @@
 
 ## 資料與評估
 - `tools/build_lexicon.py`：從 [McBopomofo](https://github.com/openvanilla/McBopomofo) 的 `Source/Data` 重新產生 `data/lexicon.txt`
-- `tools/build_bigram.py data/bigram.bin 120 <parquet>...`：從語料重新產生前後文模型（每個檔案最多取 120 百萬字）
+- `tools/build_bigram.py data/bigram.bin 120 <parquet>... [--keep N,N] [--min-count N]`：從語料重新產生前後文模型（每個檔案最多取 120 百萬字，0 = 整個檔；`--keep` 一次輸出多種詞對數的檔案 `<輸出>.<N>`）
 - `tools/english_check.py`：1 萬個常用英文單字中有幾個會被當成注音（目前 77 個，多是 `pm`、`dj` 這類縮寫）
 - `py tools/tune_english.py [--search]`：中英切分的評分參數在三組資料上的表現（`--search` 找更好的參數）：英文單字加空白要維持英文、純注音句子要全部轉中文、混打例子要照預期（多數是實測華碩的結果）
-- `tools/evaluate.py <parquet> 1000 [--no-bigram] [--typed]`：用沒拿來訓練的文章測正確率\
+- `tools/evaluate.py <parquet> 1000 [--no-bigram | --bigram 檔案] [--typed]`：用沒拿來訓練的文章測正確率；`--bigram` 也可以用在 `autocorrect_eval.py`、`tune_english.py`、`code_memory_eval.py`、`key_latency.py`，比較別的前後文模型檔\
   目前結果（1000 句，從按鍵開始打）
 
   | 測試文字 | 不看前後文 | 看前後文 |

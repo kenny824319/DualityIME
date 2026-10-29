@@ -41,6 +41,14 @@ def write_bigrams(path, rows, unigrams):
         uni.tofile(f)
 
 
+def load_other(lexicon, path):
+    """BigramModel of another file (the tools' --bigram); stops if there is no such file (a
+    missing data/bigram.bin is no model at all, but a mistyped option must not be)."""
+    if not os.path.exists(path):
+        sys.exit(f"{path}: no such file")
+    return BigramModel(lexicon, path)
+
+
 class BigramModel:
     def __init__(self, lexicon, path=None):
         path = path or os.path.join(DATA_DIR, "bigram.bin")
