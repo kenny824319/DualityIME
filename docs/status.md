@@ -19,8 +19,7 @@
 
 ### 選字與校正（`docs/superpowers/specs/2026-10-29-adjacent-valid-sentence-design.md`）
 
-1. 第 2 階段：加大前後文模型（先提高詞對上限，有效再看前兩個詞），語料在 `C:\Users\kenny\Data\corpus`；Pre-release 3.0.3
-2. 第 3 階段：小型語言模型（RTX 4090 自己訓練、避開 GPL，整數推論兩個引擎各一份）；Pre-release 3.0.4
+1. 第 3 階段：小型語言模型（RTX 4090 自己訓練、避開 GPL，整數推論兩個引擎各一份），語料在 `C:\Users\kenny\Data\corpus`（第 2 階段停止，見 `docs/architecture/decisions.md` 2026-10-29）
 
 ## 仍有效的工作方式
 

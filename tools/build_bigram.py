@@ -2,10 +2,13 @@
 
 Usage:
     python tools/build_bigram.py <out file> <max million chars per file> <corpus.parquet>...
+        [--keep N,N,...] [--min-count N]
 
 The corpus is segmented with the lexicon itself (best unigram path), then
 adjacent phrase pairs are counted. Only pairs seen at least MIN_COUNT times
-are kept. File format: see engine/bigram.py.
+are kept, the MAX_PAIRS most common. File format: see engine/bigram.py.
+A max of 0 chars per file takes each file whole. --keep writes one file per
+number of pairs from the same count (<out file>.<N>), --min-count replaces MIN_COUNT.
 """
 import collections
 import math
@@ -86,13 +89,23 @@ def batches(paths, max_chars_per_file, size=2000):
                 if len(batch) >= size:
                     yield batch
                     batch = []
-            if total >= max_chars_per_file:
+            if 0 < max_chars_per_file <= total:
                 break
     if batch:
         yield batch
 
 
-def main(out_path, max_million, *paths):
+def main(out_path, max_million, *args):
+    paths, keep, min_count = [], None, MIN_COUNT
+    args = list(args)
+    while args:
+        a = args.pop(0)
+        if a == "--keep":
+            keep = [int(x) for x in args.pop(0).split(",")]
+        elif a == "--min-count":
+            min_count = int(args.pop(0))
+        else:
+            paths.append(a)
     lexicon = Lexicon()
     best = {}
     for lst in lexicon.entries.values():
@@ -109,15 +122,18 @@ def main(out_path, max_million, *paths):
             if k % 20 == 0:
                 print(f"batch {k}: {len(bi)} pairs", flush=True)
     mask = (1 << SHIFT) - 1
-    kept = sorted(((c, k) for k, c in bi.items() if c >= MIN_COUNT), reverse=True)[:MAX_PAIRS]
-    rows = [(k >> SHIFT, k & mask, math.log10(c / uni[k >> SHIFT])) for c, k in kept]
+    ranked = sorted(((c, k) for k, c in bi.items() if c >= min_count), reverse=True)
     total = sum(c for i, c in uni.items() if i >= 0)
     unigrams = [None] * len(vocab)
     for i, c in uni.items():
         if i >= 0:
             unigrams[i] = math.log10(c / total)
-    write_bigrams(out_path, rows, unigrams)
-    print(f"{sum(uni.values())} words, kept {len(rows)} of {len(bi)} pairs -> {out_path}")
+    for n in keep or [MAX_PAIRS]:
+        path = f"{out_path}.{n}" if keep else out_path
+        rows = [(k >> SHIFT, k & mask, math.log10(c / uni[k >> SHIFT])) for c, k in ranked[:n]]
+        write_bigrams(path, rows, unigrams)
+        print(f"{sum(uni.values())} words, kept {len(rows)} of {len(bi)} pairs "
+              f"({len(ranked)} seen {min_count}+ times) -> {path}")
 
 
 if __name__ == "__main__":

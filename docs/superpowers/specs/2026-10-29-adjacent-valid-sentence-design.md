@@ -72,6 +72,8 @@
 
 ## 第 2 階段：加大前後文模型（大綱，第 1 階段發布後再細化成計畫）
 
+> 結果（2026-10-29）：沒有達到「整句正確率平均 +2 個百分點」，停止，`data/bigram.bin` 不換；數字在 `docs/architecture/decisions.md`。
+
 - 語料：`erhwenkuo/wikipedia-zhtw`（20231001，4 檔，CC BY-SA 3.0）全部與 `zetavg/CC-100-zh-Hant` 前 8 檔，放在 `C:\Users\kenny\Data\corpus`（使用者 2026-10-29 同意下載）。和現在的 bigram 同一來源（`README.md:211`）。
 - 先只提高詞對上限（`tools/build_bigram.py` 的 `MAX_PAIRS = 3_000_000`，約 30 MB），不改格式：用每份語料沒拿來訓練的部分跑 `tools/evaluate.py`，和 `docs/development.md` 的舊數字比；有效再考慮看前兩個詞（trigram，要改格式與兩個引擎）。
 - 關卡：整句正確率提高多少、安裝檔變多大、記憶體與延遲，數字交給使用者決定上限。
