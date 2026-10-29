@@ -777,6 +777,11 @@ def preference(reading, ch, lexicon, user):
     return max(0.0, user.bonus(reading, ch) - (user.bonus(reading, usual) if usual else 0.0))
 
 
+def _chars(segments):
+    """Syllable index -> the character there, for the pieces written out ([(start, length, phrase)])."""
+    return {s + k: p[k] for s, l, p in segments if len(p) == l for k in range(l)}
+
+
 def strongly_picked(reading, ch, user):
     """In the personal dictionary or picked STRONG_PICKS times for this syllable."""
     return ch in user.custom.get(reading, ()) or user.phrase_count(reading, ch) >= STRONG_PICKS
@@ -1939,19 +1944,18 @@ class Composer:
             group.append((s, rd, p))
         self._learn_group(group)
 
-    def _learn_broken_words(self):
+    def _learn_broken_words(self, before):
         """A pick inside a word (不 in 部隊, 覺 in 發掘): the word as it now reads is learned too, or
         next time the dictionary's wins again (picking 不 or 覺, each the usual character of its
-        syllable, teaches nothing else) - if it is a word the dictionary has (發覺, 不行), or the
+        syllable, teaches nothing else) - if it is a word the dictionary has (發覺, 不行; also with
+        other tones: 下載 is ㄗㄞˇ there, typed ㄗㄞˋ it reads 下在), or the
         rest of it followed the pick by itself (隊 became 對: 不對). Not 你郝 for 郝 picked in 你好
         (a name, once), nor anything for a pick reaching out of the word (天天 in 今天天氣). If the
         user had picked the old word before (部隊), that no longer counts: the latest correction
-        wins."""
-        def chars(segments):
-            return {s + k: p[k] for s, l, p in segments if len(p) == l for k in range(l)}
-
-        now = chars(self.segments)
-        for s, l, p in self._convert_all({}):
+        wins; a word only the user taught (巴西 for ㄅㄚ ㄒㄧ˙) is forgotten even if what it now
+        reads is learned nothing of (八西). before: what it would be without the picks."""
+        now = _chars(self.segments)
+        for s, l, p in before:
             if l < 2 or len(p) != l:
                 continue
             spans = [(a, b) for (a, b), v in self.overrides.items() if len(v) == 2 and a < s + l and s < a + b]
@@ -1961,7 +1965,8 @@ class Composer:
             text = "".join(now.get(k, "") for k in range(s, s + l))
             if len(text) != l or text == p:
                 continue
-            key = "-".join(self.readings[s:s + l])
+            rd = self.readings[s:s + l]
+            key = "-".join(rd)
             if len(picked) == l:
                 # all of it picked: _learn_overrides has it; picked a character at a time (不 + 對),
                 # it is a correction of the word too
@@ -1969,10 +1974,47 @@ class Composer:
                     self.user.forget_phrase(key, p)
                 continue
             followed = any(k not in picked and text[k - s] != p[k - s] for k in range(s, s + l))
-            if not followed and all(w != text for w, _ in self.lexicon.lookup(self.readings[s:s + l])):
+            if not followed and not self.lexicon.has(rd, text) and not self.lexicon.reads_with_other_tones(rd, text):
+                if not self.lexicon.has(rd, p):
+                    self.user.forget_phrase(key, p)
                 continue
             self.user.learn_phrase(key, text)
             self.user.forget_phrase(key, p)
+
+    def _learn_tone_variant_words(self, before):
+        """A pick that makes, with the characters beside it, a word the dictionary writes with
+        other tones (載 for the 在 of 下|在 or 我下|在: 下載 is ㄒㄧㄚˋ ㄗㄞˇ there; 教育部 reads
+        ㄗㄞˋ): the word is learned for the syllables typed, or next time 下在 comes again,
+        however often 載 is picked (在 stays the usual ㄗㄞˋ). Each stretch of the sentence holding
+        a pick, picks wholly inside it and not all of it picked (_learn_overrides has those); a
+        stretch that was one word is _learn_broken_words'. Not for a pick that makes a word as
+        typed in some stretch (工 in 打公作 is for 打工: no 工作 for ㄍㄨㄥ ㄗㄨㄛ). before: what it
+        would be without the picks."""
+        words = {(s, l) for s, l, p in before if l > 1}
+        was, now = _chars(before), _chars(self.segments)
+        picks = [(a, b) for (a, b), v in self.overrides.items() if len(v) == 2]
+        found, explained = [], set()
+        for a, b in self.runs:
+            for s in range(a, b):
+                for e in range(s + 2, min(b, s + MAX_PHRASE_LEN) + 1):
+                    if any(k not in now or k not in was for k in range(s, e)):
+                        break
+                    inside = [(x, y) for x, y in picks if x < e and s < x + y]
+                    if not inside or any(x < s or x + y > e for x, y in inside):
+                        continue
+                    rd = self.readings[s:e]
+                    text = "".join(now[k] for k in range(s, e))
+                    if self.lexicon.has(rd, text):
+                        explained.update(inside)
+                    elif (s, e - s) not in words and sum(y for _, y in inside) < e - s \
+                            and self.lexicon.reads_with_other_tones(rd, text):
+                        found.append((s, e, inside, text))
+        for s, e, inside, text in found:
+            if any(x in explained for x in inside):
+                continue
+            key = "-".join(self.readings[s:e])
+            self.user.learn_phrase(key, text)
+            self.user.forget_phrase(key, "".join(was[k] for k in range(s, e)))
 
     def _keep_rest(self, s, l):
         """A pick that broke a word (麽 for the 麼 of 什麼) leaves the rest of it as it was (什), not
@@ -2012,7 +2054,9 @@ class Composer:
         learned = []  # what this commit taught, as it was before: for undo_commit to put back
         if self.overrides:
             before = (copy.deepcopy(self.user.phrases), copy.deepcopy(self.user.phrase_used))
-            self._learn_broken_words()
+            before_picks = self._convert_all({})
+            self._learn_broken_words(before_picks)
+            self._learn_tone_variant_words(before_picks)
             self._learn_overrides()
             learned = self.user.phrases_changed(before)
             self.user.save()

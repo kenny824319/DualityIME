@@ -51,6 +51,43 @@ const std::vector<Scored>* Lexicon::find(const ustr& key) const {
     return it == entries_.end() ? nullptr : &it->second;
 }
 
+static ustr toneless(const ustr& reading_key) {
+    // ㄒㄧㄚˋ-ㄗㄞˋ -> ㄒㄧㄚ-ㄗㄞ
+    static const ustr marks = U"ˊˇˋ˙";
+    std::vector<ustr> syls = split(reading_key, U'-');
+    for (auto& s : syls)
+        while (!s.empty() && marks.find(s.back()) != ustr::npos) s.pop_back();
+    return join(syls, U'-');
+}
+
+bool Lexicon::reads_with_other_tones(const std::vector<ustr>& readings, const ustr& phrase) const {
+    if (readings.size() < 2 || phrase.size() != readings.size()) return false;
+    if (!by_toneless_built_) {  // built on first use
+        by_toneless_built_ = true;
+        for (const auto& reading : order_)
+            if (reading.find(U'-') != ustr::npos) by_toneless_[toneless(reading)].push_back(reading);
+    }
+    ustr key = join(readings, U'-');
+    auto it = by_toneless_.find(toneless(key));
+    if (it == by_toneless_.end()) return false;
+    bool listed = false;
+    for (auto& r : it->second) {
+        if (r == key) continue;
+        for (auto& [p, _] : entries_.at(r))
+            if (p == phrase) listed = true;
+    }
+    if (!listed) return false;
+    for (size_t k = 0; k < readings.size(); ++k)
+        if (!has({readings[k]}, ustr(1, phrase[k]))) return false;
+    return true;
+}
+
+bool Lexicon::has(const std::vector<ustr>& readings, const ustr& phrase) const {
+    for (auto& [p, _] : lookup(readings))
+        if (p == phrase) return true;
+    return false;
+}
+
 const std::vector<Scored>& Lexicon::lookup(const std::vector<ustr>& readings) const {
     auto* found = find(join(readings, U'-'));
     return found ? *found : kNoScored;

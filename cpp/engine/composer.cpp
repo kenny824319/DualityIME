@@ -2637,23 +2637,27 @@ void Composer::drop_orphans() {
     overrides_ = std::move(kept);
 }
 
-void Composer::learn_broken_words() {
+// syllable index -> the character there, for the pieces written out
+static std::map<int, char32_t> chars_of(const std::vector<Segment>& segments) {
+    std::map<int, char32_t> out;
+    for (auto& seg : segments)
+        if (static_cast<int>(seg.phrase.size()) == seg.length)
+            for (int k = 0; k < seg.length; ++k) out[seg.start + k] = seg.phrase[k];
+    return out;
+}
+
+void Composer::learn_broken_words(const std::vector<Segment>& before) {
     // a pick inside a word (不 in 部隊, 覺 in 發掘): the word as it now reads is learned too, or next
     // time the dictionary's wins again (picking 不 or 覺, each the usual character of its syllable,
-    // teaches nothing else) - if it is a word the dictionary has (發覺, 不行), or the rest of it
+    // teaches nothing else) - if it is a word the dictionary has (發覺, 不行; also with other tones:
+    // 下載 is ㄗㄞˇ there, typed ㄗㄞˋ it reads 下在), or the rest of it
     // followed the pick by itself (隊 became 對: 不對). Not 你郝 for 郝 picked in 你好 (a name,
     // once), nor anything for a pick reaching out of the word (天天 in 今天天氣). If the user had
-    // picked the old word before (部隊), that no longer counts: the latest correction wins.
-    auto chars = [](const std::vector<Segment>& segments) {
-        std::map<int, char32_t> out;
-        for (auto& seg : segments)
-            if (static_cast<int>(seg.phrase.size()) == seg.length)
-                for (int k = 0; k < seg.length; ++k) out[seg.start + k] = seg.phrase[k];
-        return out;
-    };
-    auto now = chars(segments_);
-    Overrides none;
-    for (auto& seg : convert_all(&none)) {
+    // picked the old word before (部隊), that no longer counts: the latest correction wins; a word
+    // only the user taught (巴西 for ㄅㄚ ㄒㄧ˙) is forgotten even if what it now reads is learned
+    // nothing of (八西). before: what it would be without the picks.
+    auto now = chars_of(segments_);
+    for (auto& seg : before) {
         int s = seg.start, l = seg.length;
         if (l < 2 || static_cast<int>(seg.phrase.size()) != l) continue;
         std::set<int> picked;
@@ -2682,12 +2686,74 @@ void Composer::learn_broken_words() {
         bool followed = false;
         for (int k = s; k < s + l; ++k)
             if (!picked.count(k) && text[k - s] != seg.phrase[k - s]) followed = true;
-        bool known = false;
-        for (auto& [w, _] : lexicon_.lookup(rd))
-            if (w == text) known = true;
-        if (!followed && !known) continue;
+        if (!followed && !lexicon_.has(rd, text) && !lexicon_.reads_with_other_tones(rd, text)) {
+            if (!lexicon_.has(rd, seg.phrase)) user.forget_phrase(key, seg.phrase);
+            continue;
+        }
         user.learn_phrase(key, text);
         user.forget_phrase(key, seg.phrase);
+    }
+}
+
+void Composer::learn_tone_variant_words(const std::vector<Segment>& before) {
+    // a pick that makes, with the characters beside it, a word the dictionary writes with other
+    // tones (載 for the 在 of 下|在 or 我下|在: 下載 is ㄒㄧㄚˋ ㄗㄞˇ there; 教育部 reads ㄗㄞˋ): the
+    // word is learned for the syllables typed, or next time 下在 comes again, however often 載 is
+    // picked (在 stays the usual ㄗㄞˋ). Each stretch of the sentence holding a pick, picks wholly
+    // inside it and not all of it picked (learn_overrides has those); a stretch that was one word
+    // is learn_broken_words'. Not for a pick that makes a word as typed in some stretch (工 in
+    // 打公作 is for 打工: no 工作 for ㄍㄨㄥ ㄗㄨㄛ). before: what it would be without the picks.
+    std::set<std::pair<int, int>> words;
+    for (auto& seg : before)
+        if (seg.length > 1) words.insert({seg.start, seg.length});
+    auto was = chars_of(before), now = chars_of(segments_);
+    std::vector<std::pair<int, int>> picks;
+    for (auto& [span, v] : overrides_)
+        if (!v.kept) picks.push_back(span);
+    struct Found {
+        int s, e;
+        std::vector<std::pair<int, int>> inside;
+        ustr text;
+    };
+    std::vector<Found> found;
+    std::set<std::pair<int, int>> explained;
+    for (auto [a, b] : runs_) {
+        for (int s = a; s < b; ++s) {
+            for (int e = s + 2; e <= std::min(b, s + MAX_PHRASE_LEN); ++e) {
+                bool gap = false;
+                for (int k = s; k < e; ++k)
+                    if (!now.count(k) || !was.count(k)) gap = true;
+                if (gap) break;
+                std::vector<std::pair<int, int>> inside;
+                bool out = false;
+                int picked = 0;
+                for (auto [x, y] : picks) {
+                    if (!(x < e && s < x + y)) continue;
+                    inside.push_back({x, y});
+                    if (x < s || x + y > e) out = true;
+                    picked += y;
+                }
+                if (inside.empty() || out) continue;
+                std::vector<ustr> rd(readings.begin() + s, readings.begin() + e);
+                ustr text;
+                for (int k = s; k < e; ++k) text += now[k];
+                if (lexicon_.has(rd, text))
+                    explained.insert(inside.begin(), inside.end());
+                else if (!words.count({s, e - s}) && picked < e - s && lexicon_.reads_with_other_tones(rd, text))
+                    found.push_back({s, e, inside, text});
+            }
+        }
+    }
+    for (auto& f : found) {
+        bool skip = false;
+        for (auto& x : f.inside)
+            if (explained.count(x)) skip = true;
+        if (skip) continue;
+        std::vector<ustr> rd(readings.begin() + f.s, readings.begin() + f.e);
+        ustr key = join(rd, U'-'), old;
+        for (int k = f.s; k < f.e; ++k) old += was[k];
+        user.learn_phrase(key, f.text);
+        user.forget_phrase(key, old);
     }
 }
 
@@ -2711,7 +2777,10 @@ void Composer::do_commit() {
     if (!overrides_.empty()) {
         auto old_phrases = user.phrases;
         auto old_used = user.phrase_used;
-        learn_broken_words();
+        Overrides none;
+        auto before = convert_all(&none);
+        learn_broken_words(before);
+        learn_tone_variant_words(before);
         learn_overrides();
         undo.learned = user.phrases_changed(old_phrases, old_used);
         user.save();

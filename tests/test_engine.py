@@ -1391,6 +1391,70 @@ class LearnedSinglesTest(Base):
         self.assertEqual(self.c.user.phrase_count("ㄋㄧˇ-ㄏㄠˇ", "你郝"), 0)
         self.assertEqual(self.type(keys("ㄋㄧˇ ㄏㄠˇ")), "你好")
 
+    def test_reads_with_other_tones(self):
+        lx = self.c.lexicon
+        self.assertTrue(lx.reads_with_other_tones(["ㄒㄧㄚˋ", "ㄗㄞˋ"], "下載"))
+        self.assertFalse(lx.reads_with_other_tones(["ㄒㄧㄚˋ", "ㄗㄞˇ"], "下載"))  # its own reading
+        self.assertFalse(lx.reads_with_other_tones(["ㄒㄧㄚˋ", "ㄘㄞˋ"], "下載"))  # not only the tone
+        self.assertTrue(lx.reads_with_other_tones(["ㄒㄧㄣ", "ㄉㄜ˙"], "心得"))  # 輕聲 counts too
+        self.assertFalse(lx.reads_with_other_tones(["ㄗㄞˋ"], "載"))  # one syllable: never
+
+    def test_a_word_the_dictionary_reads_with_another_tone_is_learned(self):
+        # 下載 is ㄒㄧㄚˋ ㄗㄞˇ in the dictionary; typed ㄒㄧㄚˋ ㄗㄞˋ (教育部) it reads 下在
+        self.assertEqual(self.type(keys("ㄒㄧㄚˋ ㄗㄞˋ")), "下在")
+        self.assertEqual(self.pick_at("ㄒㄧㄚˋ ㄗㄞˋ", 1, "載"), "下載")
+        self.assertEqual(self.c.user.phrase_count("ㄒㄧㄚˋ-ㄗㄞˋ", "下載"), 1)
+        self.assertEqual(self.type(keys("ㄒㄧㄚˋ ㄗㄞˋ")), "下載")
+        self.assertEqual(self.type(keys("ㄗㄞˋ")), "在")
+
+    def test_a_tone_variant_word_in_a_sentence_is_learned(self):
+        # 我下|在 (我下 is one piece there): 載 picked, 下載 still learned
+        self.assertEqual(self.pick_at("ㄨㄛˇ ㄒㄧㄚˋ ㄗㄞˋ", 2, "載"), "我下載")
+        self.assertEqual(self.c.user.phrase_count("ㄒㄧㄚˋ-ㄗㄞˋ", "下載"), 1)
+        self.assertEqual(self.type(keys("ㄒㄧㄚˋ ㄗㄞˋ")), "下載")
+
+    def test_a_tone_variant_word_corrected_inside_a_word_is_learned(self):
+        # ㄋㄚˇ ㄒㄧㄝ reads 哪些; 那 picked: 那些 (ㄋㄚˋ ㄒㄧㄝ in the dictionary; 那 is a ㄋㄚˇ too)
+        # from then on, though it may have been ㄋㄚˋ typed with the wrong tone (the user's call,
+        # 2026-10-29: one correction cannot tell the two apart)
+        self.assertEqual(self.type(keys("ㄋㄚˇ ㄒㄧㄝ")), "哪些")
+        self.assertEqual(self.pick_at("ㄋㄚˇ ㄒㄧㄝ", 0, "那"), "那些")
+        self.assertEqual(self.c.user.phrase_count("ㄋㄚˇ-ㄒㄧㄝ", "那些"), 1)
+        self.assertEqual(self.type(keys("ㄋㄚˇ ㄒㄧㄝ")), "那些")
+
+    def test_a_learned_word_corrected_back_is_forgotten(self):
+        # 巴西 learned for ㄅㄚ ㄒㄧ˙ (ㄅㄚ ㄒㄧ there); 八 picked back: 八西 again, though 八西 is no word
+        self.assertEqual(self.pick_at("ㄅㄚ ㄒㄧ˙", 0, "巴"), "巴西")
+        self.assertEqual(self.c.user.phrase_count("ㄅㄚ-ㄒㄧ˙", "巴西"), 1)
+        self.assertEqual(self.pick_at("ㄅㄚ ㄒㄧ˙", 0, "八"), "八西")
+        self.assertEqual(self.c.user.phrase_count("ㄅㄚ-ㄒㄧ˙", "巴西"), 0)
+        self.assertEqual(self.type(keys("ㄅㄚ ㄒㄧ˙")), "八西")
+
+    def test_a_pick_making_a_word_as_typed_learns_no_tone_variant_beside_it(self):
+        # 打公作: 工 picked for 打工; 工作 (ㄍㄨㄥ ㄗㄨㄛˋ) beside it is not learned for ㄍㄨㄥ ㄗㄨㄛ
+        self.assertEqual(self.pick_at("ㄉㄚˇ ㄍㄨㄥ ㄗㄨㄛ", 1, "工"), "打工作")
+        self.assertEqual(self.c.user.phrase_count("ㄍㄨㄥ-ㄗㄨㄛ", "工作"), 0)
+
+    def test_a_tone_variant_word_is_not_learned_across_english(self):
+        # 下 hi 載: no 下載 (the two are not side by side; → stops at each letter of hi)
+        self.assertEqual(self.pick_at("ㄒㄧㄚˋ hi ㄗㄞˋ", 3, "載"), "下hi載")
+        self.assertEqual(self.c.user.phrase_count("ㄒㄧㄚˋ-ㄗㄞˋ", "下載"), 0)
+
+    def test_correcting_a_tone_variant_word_back_wins(self):
+        self.pick_at("ㄒㄧㄚˋ ㄗㄞˋ", 1, "載")
+        self.assertEqual(self.pick_at("ㄒㄧㄚˋ ㄗㄞˋ", 1, "在"), "下在")
+        self.assertEqual(self.c.user.phrase_count("ㄒㄧㄚˋ-ㄗㄞˋ", "下載"), 0)
+        self.assertEqual(self.type(keys("ㄒㄧㄚˋ ㄗㄞˋ")), "下在")
+
+    def test_undo_takes_back_a_tone_variant_word(self):
+        c = self.c
+        self.assertEqual(self.pick_at("ㄒㄧㄚˋ ㄗㄞˋ", 1, "載"), "下載")
+        self.assertEqual(c.undo_commit(), "下載")
+        c.key(special="ESC")
+        c.key(special="ESC")
+        self.assertEqual(c.user.phrase_count("ㄒㄧㄚˋ-ㄗㄞˋ", "下載"), 0)
+        self.assertEqual(self.type(keys("ㄒㄧㄚˋ ㄗㄞˋ")), "下在")
+
     def test_a_pick_reaching_out_of_a_word_teaches_no_half_of_it(self):
         # 天天 picked across 今天|天氣: no 金天 for ㄐㄧㄣ ㄊㄧㄢ afterwards
         self.pick_at("ㄐㄧㄣ ㄊㄧㄢ ㄊㄧㄢ ㄑㄧˋ", 1, "天天")

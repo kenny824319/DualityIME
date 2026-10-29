@@ -106,3 +106,6 @@ mp3{LEFT}{UP}{RIGHT}{RIGHT}{RIGHT}{ENTER}{ENTER} => mp3
 mp3{LEFT}{UP}{RIGHT}{RIGHT}{RIGHT}{ENTER}{ENTER} => mp3
 mp3{ENTER} => mp3
 ji3mp3{ENTER} => 我mp3
+# 下載 is ㄗㄞˇ in the dictionary: typed ㄗㄞˋ (教育部) and corrected once, it comes next time
+vu84y94{DOWN}3{ENTER} => 下載
+vu84y94{ENTER} => 下載
