@@ -1,1 +1,2 @@
+- [Corrected kinds checklist](project_corrected_kinds_checklist.md) — new corrected kinds: _refresh pin; "keys as typed" twice must still learn when keys split (e; m, x.)
 - [Doc claims vs code](project_doc_claims_vs_code.md) — no left/right Shift setting; 遊戲模式 is pass-through; Shift+Backspace undo not wired (wants_undo false)

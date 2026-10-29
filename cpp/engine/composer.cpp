@@ -47,8 +47,12 @@ constexpr double COST_REORDERED = 0.4;
 // 注音自動校正 (tuned with tools/autocorrect_eval.py; the same as engine/composer.py)
 constexpr double COST_ADJACENT = 1.5;  // a syllable read with one key swapped for the one next to it (si3 = 你), only
                                        // with Chinese right before or after it (not gpt4 = 神4, pythong = 嗯thong)
-constexpr double COST_ADJACENT_VALID = 3.0;  // log10: how much likelier than the characters apart a word must be to
-                                             // swap a syllable that spells something for its neighbour's (老嗎 -> 好嗎)
+constexpr double COST_NO_TONE = 1.0;  // a syllable typed without its tone key, another one right after it (5k1u0 = 這邊)
+constexpr double SWAP_GAIN_NO_WORD = 3.5;  // log10: how much better the sentence must read to swap a syllable that
+                                           // spells something, but makes no word, for its neighbour's (老嗎 -> 好嗎)
+constexpr double SWAP_GAIN_WORD = 3.0;     // ...and one that makes a word of the dictionary (你老嗎 -> 你好嗎)
+constexpr int SWAP_WINDOW = 3;             // syllables on each side of it that count (run_score)
+constexpr size_t RUN_SCORES_KEPT = 50000;  // run_score results kept across keys (then all dropped and started again)
 constexpr double ORDER_DIGITS_GAIN = 1.0;    // ...and for digits out of order to stay zhuyin (好吧, not 有813個 -> 有把個)
 constexpr double COST_RARE = 3.0;
 constexpr double RARE_SCORE = -6.0;
@@ -412,6 +416,14 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
                 auto parsed = table.parse_syllable(rv.substr(i, j - i));
                 // (digit keys read as zhuyin only in the normal order: 2024 is a number)
                 bool as_typed = parsed && (parsed->second || !(ordered_only || all_digit(rv.substr(i, j - 1 - i))));
+                // 注音自動校正: a punctuation key out of order after all when the keys after it spell
+                // nothing (;e is ㄍㄤ: 剛; ,u3 stays ,以) - and with digits among them, only after
+                // Chinese (你.2 is 你都; no.2 stays)
+                bool punct_order = parsed && !as_typed && ordered_only && correct &&
+                                   !table.parse_syllable(rv.substr(i + 1, j - i - 1));
+                bool after_zh = i > 0 && best[i].tok.kind == Kind::Zh;
+                for (size_t k = i + 1; punct_order && !after_zh && k + 1 < j; ++k)
+                    if (is_digit(raw[k])) punct_order = false;
                 if (as_typed)
                     offer(i, j, syllable_cost(table, parsed->first, parsed->second) + crosses(i, j),
                           Token{Kind::Zh, raw.substr(i, j - i), parsed->first, ii});
@@ -424,6 +436,12 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
                     // picked as this syllable: read so, wherever (si3 = 你 on its own too)
                     offer(i, j, syllable_cost(table, *picked, true) + crosses(i, j),
                           Token{Kind::Zh, raw.substr(i, j - i), *picked, ii, "learned"});
+                    continue;
+                }
+                if (punct_order) {
+                    // (a correction like the others: ↓ offers the keys as typed, picked twice they stay)
+                    offer(i, j, syllable_cost(table, parsed->first, parsed->second) + crosses(i, j),
+                          Token{Kind::Zh, raw.substr(i, j - i), parsed->first, ii, "punct"});
                     continue;
                 }
                 if (as_typed || !correct) {
@@ -459,6 +477,26 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
                             if (table.score(r) > table.score(*reading)) reading = &r;
                         offer(i, j, syllable_cost(table, *reading, true) + cost,
                               Token{Kind::Zh, raw.substr(i, j - i), *reading, ii, "adjacent"});
+                    }
+                    // the tone key (or the space of a first tone) left out, a syllable right after
+                    // it (5k1u0 = 這邊): the most common tone for now; the words around it choose
+                    // (check_corrections). Not before a final on its own (2u + .4 ㄡˋ is the
+                    // 2u.4 掉 with a key next to the right one)
+                    // Nor right after English (su5k1u0 stays su5k邊: keys of a word, more likely)
+                    bool after_en = i > 0 && best[i].tok.kind == Kind::En && !best[i].tok.raw.empty() &&
+                                    best[i].tok.raw.back() != ' ';
+                    std::vector<ustr> forms;
+                    if (j < n && raw[j] != ' ' && !after_en && !is_final(table.symbol(raw[j])))
+                        forms = table.toned_forms(rv.substr(i, j - i));
+                    bool next = false;
+                    for (size_t k = j + 2; !forms.empty() && !next && k <= std::min(j + MAX_SYL_KEYS, n); ++k)
+                        if (table.parse_syllable(rv.substr(j, k - j))) next = true;
+                    if (next) {
+                        const ustr* reading = &forms[0];
+                        for (auto& r : forms)
+                            if (table.score(r) > table.score(*reading)) reading = &r;
+                        offer(i, j, syllable_cost(table, *reading, true) + COST_NO_TONE + crosses(i, j),
+                              Token{Kind::Zh, raw.substr(i, j - i), *reading, ii, "tone"});
                     }
                 }
             }
@@ -614,15 +652,42 @@ std::vector<std::vector<size_t>> zh_runs(const std::vector<Token>& tokens) {
     return out;
 }
 
+bool makes_user_word(const std::vector<ustr>& readings, size_t k, const UserModel* user) {
+    // syllable k makes, with the ones around it, a word of the personal dictionary or one the
+    // user picked (learned), of any length (市現役區 too)
+    if (!user) return false;
+    for (size_t l = 2; l <= static_cast<size_t>(MAX_PHRASE_LEN); ++l) {
+        if (readings.size() < l) continue;
+        size_t a0 = k + 1 >= l ? k + 1 - l : 0, a1 = std::min(k, readings.size() - l);
+        for (size_t a = a0; a <= a1; ++a) {
+            ustr key = join(std::vector<ustr>(readings.begin() + a, readings.begin() + a + l), U'-');
+            if (auto it = user->custom.find(key); it != user->custom.end() && !it->second.empty()) return true;
+            if (auto* ps = user->phrases.find(key))
+                for (auto& [p, _] : *ps)
+                    if (user->phrase_count(key, p) > 0) return true;
+        }
+    }
+    return false;
+}
+
+// run_score results kept across keys (the dictionary's and the context model's alone, so the
+// same syllables always score the same)
+std::unordered_map<ustr, double>& run_scores() {
+    static std::unordered_map<ustr, double> kept;
+    return kept;
+}
+
 std::vector<Token> check_corrections(std::vector<Token> tokens, const SyllableTable& table, const Lexicon* lexicon,
-                                     const UserModel* user, const std::set<int>& exact) {
+                                     const UserModel* user, const std::set<int>& exact, const BigramModel* bigram) {
     // the 注音自動校正 that needs the words around a syllable (see engine/composer.py): digits
     // out of order stay zhuyin on their own (吧) or in a word likelier than the characters apart
     // (好吧), else they are a number (有813個, you are 817); a syllable read with a key next to the one typed takes the
-    // one that makes the best word; a syllable that spells something but makes no word with
-    // the ones around it is swapped for its neighbour's when that makes a word likelier than
-    // the characters apart by COST_ADJACENT_VALID (老嗎 -> 好嗎, not 有把 -> 也把; 你老 is a word,
-    // kept). Settled before conversion, so picks (by reading) keep.
+    // one that makes the best word; a syllable typed without its tone takes the tone that reads
+    // best in the sentence (5k邊: 這邊); a syllable that spells something is swapped for its
+    // neighbour's (one that makes a word around it) when the sentence around it reads better by
+    // SWAP_GAIN_NO_WORD (老嗎 -> 好嗎), or by SWAP_GAIN_WORD if the keys typed make a word of the
+    // dictionary (你老嗎 -> 你好嘛; tuned, not larger) - never if they make one of the user's own.
+    // Settled before conversion, so picks (by reading) keep.
     const CorrectionMemory* memory = user ? &user->corrections : nullptr;
     auto picked = [&](const Token& t) -> std::optional<ustr> {
         if (!memory || contains(exact, t.start)) return std::nullopt;
@@ -672,6 +737,20 @@ std::vector<Token> check_corrections(std::vector<Token> tokens, const SyllableTa
         tokens = std::move(out);
     }
     if (!lexicon) return tokens;
+    // run_score of the syllables around k (SWAP_WINDOW on each side) with k read so
+    auto in_sentence = [&](const std::vector<ustr>& rds, size_t k, const ustr& reading) {
+        size_t a = k >= static_cast<size_t>(SWAP_WINDOW) ? k - SWAP_WINDOW : 0;
+        size_t b = std::min(rds.size(), k + SWAP_WINDOW + 1);
+        std::vector<ustr> window(rds.begin() + a, rds.begin() + b);
+        window[k - a] = reading;
+        // (the syllables alone are the key: the dictionary and the context model are the same files)
+        ustr key = join(window, U'-');
+        auto& kept = run_scores();
+        if (auto it = kept.find(key); it != kept.end()) return it->second;
+        if (kept.size() >= RUN_SCORES_KEPT) kept.clear();
+        auto score = run_score(window, *lexicon, nullptr, bigram);
+        return kept[key] = score ? *score : -99.0 * static_cast<double>(window.size());
+    };
     for (auto& run : zh_runs(tokens)) {
         std::vector<ustr> rds;
         for (size_t i : run) rds.push_back(tokens[i].value);
@@ -697,6 +776,30 @@ std::vector<Token> check_corrections(std::vector<Token> tokens, const SyllableTa
                 swapped = false;
                 continue;
             }
+            if (t.corrected == "tone") {
+                auto forms = table.toned_forms(t.raw);
+                // (a tone that makes a word the user taught first: 5km3 is 哲宇 with 哲宇 in the
+                // personal dictionary, whatever reads best otherwise)
+                std::vector<ustr> mine;
+                for (auto& r : forms) {
+                    auto trial = rds;
+                    trial[k] = r;
+                    if (makes_user_word(trial, k, user)) mine.push_back(r);
+                }
+                if (!mine.empty()) forms = mine;
+                const ustr* best_form = nullptr;
+                double best = 0;
+                for (auto& r : forms) {
+                    double score = in_sentence(rds, k, r);
+                    if (!best_form || score > best) {
+                        best_form = &r;
+                        best = score;
+                    }
+                }
+                if (best_form) t.value = rds[k] = *best_form;
+                swapped = false;
+                continue;
+            }
             std::optional<ustr> choice = t.corrected.empty() ? picked(t) : std::nullopt;
             if (choice && !choice->empty() && *choice != AS_ENGLISH) {
                 if (*choice != t.value) {  // (picked twice as another syllable: xl3 as ㄏㄠˇ)
@@ -712,17 +815,34 @@ std::vector<Token> check_corrections(std::vector<Token> tokens, const SyllableTa
                 swapped = false;
                 continue;
             }
-            // the keys typed make a word already (門檻, 你老): left alone, whatever else is likelier
-            if (word_score(rds, k, *lexicon, user)) {
+            // the keys typed make a word the user taught (a name in the personal dictionary, a
+            // learned word): left alone, whatever else is likelier
+            if (makes_user_word(rds, k, user)) {
                 swapped = false;
                 continue;
             }
-            auto apart = apart_score(rds, k, *lexicon);
-            if (!apart) continue;  // (a syllable on its own: nothing to make a word with)
+            if (!apart_score(rds, k, *lexicon)) continue;  // (a syllable on its own: nothing to make a word with)
+            // of the syllables keys next to the ones typed make, those that make a word around it
+            // (most syllables have none: no sentence to score), the one the sentence reads best with
             std::optional<ustr> best_alt;
             double best = 0;
-            best_word(best_alt, best);
-            if (best_alt && best - COST_ADJACENT_VALID > *apart) {
+            for (auto& alt : table.adjacent_parses(t.raw)) {
+                auto trial = rds;
+                trial[k] = alt;
+                if (!word_score(trial, k, *lexicon, user)) continue;
+                double score = in_sentence(rds, k, alt);
+                if (!best_alt || score > best) {
+                    best_alt = alt;
+                    best = score;
+                }
+            }
+            if (!best_alt) {
+                swapped = false;
+                continue;
+            }
+            double typed = in_sentence(rds, k, t.value);
+            double gain = word_score(rds, k, *lexicon, nullptr) ? SWAP_GAIN_WORD : SWAP_GAIN_NO_WORD;
+            if (best - typed > gain) {
                 t.orig = t.value;
                 t.value = *best_alt;
                 t.corrected = "valid";
@@ -742,7 +862,7 @@ std::vector<Token> tokenize(const std::string& raw, const SyllableTable& table, 
                             const English& english, const std::set<int>& forced, bool after_english,
                             bool digits_as_zhuyin, const std::set<int>& literal, const std::set<int>& chinese,
                             const Fixed* fixed, const Lexicon* lexicon, const std::set<int>* breaks,
-                            const std::set<int>* exact, const Fixed* taken) {
+                            const std::set<int>* exact, const Fixed* taken, const BigramModel* bigram) {
     // literal: raw offsets of keys that are always themselves (numpad); fixed: keys shown
     // as picked from the replacement bar (ㄏㄠˇ, clˇ); taken: keys read as a syllable picked
     // from the list (注音自動校正: si3 as ㄋㄧˇ). They cut the text in two.
@@ -766,7 +886,7 @@ std::vector<Token> tokenize(const std::string& raw, const SyllableTable& table, 
     const std::set<int>& brk = breaks ? *breaks : no_breaks;
     const std::set<int>& ex = exact ? *exact : no_breaks;
     auto checked = [&](std::vector<Token> toks) {
-        return table.autocorrect ? check_corrections(std::move(toks), table, lexicon, user, ex) : toks;
+        return table.autocorrect ? check_corrections(std::move(toks), table, lexicon, user, ex, bigram) : toks;
     };
     if (cuts.empty())
         return checked(tokenize_run(raw, table, user, english, forced, after_english, digits_as_zhuyin, chinese,
@@ -973,10 +1093,18 @@ static void repick(std::vector<Segment>& path, const std::vector<ustr>& readings
     }
 }
 
+std::optional<double> run_score(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user,
+                                const BigramModel* bigram) {
+    std::optional<double> score;
+    convert(readings, lexicon, user, {}, bigram, std::nullopt, &score);
+    return score;
+}
+
 std::vector<Segment> convert(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user,
                              const std::map<std::pair<int, int>, ustr>& overrides, const BigramModel* bigram,
-                             const std::optional<ustr>& prev_word) {
-    // beam search over (position, previous phrase) so that context counts
+                             const std::optional<ustr>& prev_word, std::optional<double>* score_only) {
+    // beam search over (position, previous phrase) so that context counts; score_only: the
+    // best score instead (run_score), nothing returned
     const int n = static_cast<int>(readings.size());
     std::vector<std::optional<std::pair<int, int>>> locked(n);
     for (auto& [span, _] : overrides)
@@ -1062,6 +1190,12 @@ std::vector<Segment> convert(const std::vector<ustr>& readings, const Lexicon& l
         }
     }
     std::vector<Segment> out;
+    if (score_only) {  // (run_score)
+        score_only->reset();
+        for (auto& [_, st] : states[n])
+            if (!*score_only || st.score > **score_only) *score_only = st.score;
+        return out;
+    }
     if (states[n].empty()) {  // should not happen: every valid syllable has a char
         for (int i = 0; i < n; ++i) out.push_back(Segment{i, 1, readings[i]});
         return out;
@@ -1145,7 +1279,7 @@ void Composer::settings_changed() {
 
 std::vector<Token> Composer::retokenize(const std::set<int>& chinese) const {
     return tokenize(raw, table_, &user, english_, forced_, after_english_, digits_as_zhuyin_, literal_, chinese,
-                    &fixed_, &lexicon_, &breaks_, &exact_, &taken_);
+                    &fixed_, &lexicon_, &breaks_, &exact_, &taken_, bigram_);
 }
 
 void Composer::refresh() {
@@ -1183,6 +1317,10 @@ void Composer::refresh() {
                 t.value = t.orig;
                 t.orig.clear();
                 t.corrected.clear();
+            } else if (t.corrected == "tone") {
+                // (the tone of the pick, not the one the sentence now prefers)
+                auto forms = table_.toned_forms(t.raw);
+                if (std::find(forms.begin(), forms.end(), want) != forms.end()) t.value = want;
             } else if (t.corrected.empty()) {
                 auto alts = table_.adjacent_parses(t.raw);
                 if (std::find(alts.begin(), alts.end(), want) != alts.end()) {
@@ -2047,7 +2185,7 @@ std::optional<std::pair<int, std::vector<ustr>>> Composer::reads_as_chinese(int 
         if (a != unfix) fixed[a] = v;
     auto trial =
         tokenize(raw, table_, &user, english_, forced, after_english_, digits_as_zhuyin_, lit, ch, &fixed, &lexicon_,
-                 &breaks_, &exact_, &taken_);
+                 &breaks_, &exact_, &taken_, bigram_);
     std::vector<const Token*> inside;
     for (auto& t : trial)
         if (s <= t.start && t.start < end) inside.push_back(&t);
@@ -2899,6 +3037,17 @@ std::vector<CorrectionMemory::Change> Composer::learn_corrections(int upto) {
         } else if (choice.empty() && contains(exact_, start) && raw.compare(start, keys.size(), keys) == 0 &&
                    is_code(keys)) {
             // (a code read as before 代碼記憶 learned it)
+        } else if (choice.empty() && contains(forced_, start) && raw.compare(start, keys.size(), keys) == 0 &&
+                   [&] {
+                       for (auto& t : tokens) {
+                           if (t.start == start && t.raw == keys) return false;
+                           if (t.kind == Kind::Zh && t.start <= start &&
+                               start < t.start + static_cast<int>(t.raw.size()))
+                               return false;
+                       }
+                       return true;
+                   }()) {
+            // (put back as typed and split since: e; of e;e; read as e + ;, no syllable there)
         } else {
             const Token* tok = nullptr;
             for (auto& t : tokens)

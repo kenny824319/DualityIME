@@ -164,6 +164,14 @@ class SyllableTable:
         parsed = keys_to_symbols(keys, self.keymap)
         return parsed if parsed and parsed[0] in self.prefixes else None
 
+    def toned_forms(self, keys):
+        """The syllables the keys spell with each tone there is, typed in order and no tone key
+        (5k: ㄓㄜ ㄓㄜˊ ㄓㄜˇ ㄓㄜˋ ㄓㄜ˙ as far as they exist); sorted. [] if they spell none."""
+        parsed = keys_to_symbols(keys, self.keymap)
+        if not parsed or not parsed[0] or not parsed[1]:
+            return []
+        return sorted(r for r in (parsed[0] + mark for mark in TONES.values()) if r in self.toned)
+
     def score(self, reading):
         """How common the most common phrase with this reading is (log10)."""
         return self.toned.get(reading, -99.0)

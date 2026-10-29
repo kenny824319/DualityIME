@@ -21,3 +21,12 @@ si3{ENTER} => si3
 si3{DOWN}1{ENTER} => 你
 si3{DOWN}1{ENTER} => 你
 si3{ENTER} => 你
+# with the sentence around it: a tone left out, a punctuation key out of order, a key next to the
+# right one spelling a word (現役 -> 信義, 你老 -> 你好); typed right stays
+5k1u0 {ENTER} => 這邊
+e; ;e {ENTER} => 剛剛
+e;e; {ENTER} => 剛剛
+w961o3g4vu04u4fm {ENTER} => 台北市信義區
+su3xl3a87{ENTER} => 你好嘛
+xl3g {ENTER} => 老師
+ok {ENTER} => ok 

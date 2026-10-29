@@ -37,7 +37,8 @@ std::vector<Token> tokenize(const std::string& raw, const SyllableTable& table, 
                             bool digits_as_zhuyin, const std::set<int>& literal, const std::set<int>& chinese,
                             const Fixed* fixed = nullptr, const Lexicon* lexicon = nullptr,
                             const std::set<int>* breaks = nullptr, const std::set<int>* exact = nullptr,
-                            const Fixed* taken = nullptr);  // taken: start -> (end, reading) picked (注音自動校正)
+                            const Fixed* taken = nullptr,  // taken: start -> (end, reading) picked (注音自動校正)
+                            const BigramModel* bigram = nullptr);
 
 struct Segment {
     int start, length;
@@ -56,7 +57,12 @@ using Overrides = std::map<std::pair<int, int>, Pin>;  // span -> pin
 std::vector<Scored> phrase_candidates(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user);
 std::vector<Segment> convert(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user,
                              const std::map<std::pair<int, int>, ustr>& overrides, const BigramModel* bigram,
-                             const std::optional<ustr>& prev_word);
+                             const std::optional<ustr>& prev_word, std::optional<double>* score_only = nullptr);
+// log10 score of the best way to write these syllables (convert's search, no picks, nothing
+// before): how well a reading of a syllable reads with the ones around it, for 注音自動校正
+// (老 or 好 in 你老嗎). Empty if some syllable has no character.
+std::optional<double> run_score(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user,
+                                const BigramModel* bigram);
 double log10_add(double x, double y);
 ustr to_full_width(const ustr& text);
 // English words worth remembering in text sent (UTF-8): 4 letters or more, each once

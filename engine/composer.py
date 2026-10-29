@@ -7,6 +7,7 @@ import re
 from . import symbols
 from .config import Config
 from .lexicon import AS_ENGLISH, MAX_PHRASE_LEN, ZHUYIN_TEXT, is_code, is_email, is_zhuyin_text
+from .zhuyin import FINALS
 
 # keys that become full-width punctuation outside English words
 PUNCT = {
@@ -72,8 +73,13 @@ COST_REORDERED = 0.4    # zhuyin parts typed out of order ("us3" for ㄋㄧˇ)
 # 注音自動校正 (tuned with tools/autocorrect_eval.py)
 COST_ADJACENT = 1.5     # syllable read with one key swapped for the one next to it (si3 = 你), only
                         # with Chinese right before or after it (not gpt4 = 神4, pythong = 嗯thong)
-COST_ADJACENT_VALID = 3.0  # log10: how much likelier than the characters apart a word must be to swap a
-                           # syllable that spells something for its neighbour's (老嗎 -> 好嗎)
+COST_NO_TONE = 1.0      # syllable typed without its tone key, another one right after it (5k1u0 = 這邊)
+SWAP_GAIN_NO_WORD = 3.5   # log10: how much better the sentence must read to swap a syllable that spells
+                          # something, but makes no word, for its neighbour's (老嗎 -> 好嗎)
+SWAP_GAIN_WORD = 3.0      # ...and one that makes a word of the dictionary (你老嗎 -> 你好嗎)
+SWAP_WINDOW = 3           # syllables on each side of it that count (run_score)
+RUN_SCORES_KEPT = 50000   # run_score results kept across keys (then all dropped and started again)
+_RUN_SCORES = {}
 ORDER_DIGITS_GAIN = 1.0    # ...and for digits out of order to stay zhuyin (好吧, not 有813個 -> 有把個)
 COST_RARE = 3.0         # syllable whose most common character is obscure (ㄙㄟ 㩙)
 RARE_SCORE = -6.0       # log10 frequency below which a syllable counts as obscure
@@ -101,7 +107,7 @@ class Token:
 
 def tokenize(raw, table, user=None, english=(), forced=(), after_english=False,
              digits_as_zhuyin=False, literal=(), chinese=(), fixed=None, lexicon=None, breaks=(), exact=(),
-             taken=None):
+             taken=None, bigram=None):
     """Split raw keys into the cheapest sequence of tokens.
 
     literal: raw offsets of keys that are always themselves (numpad digits and
@@ -121,7 +127,7 @@ def tokenize(raw, table, user=None, english=(), forced=(), after_english=False,
     if not cuts:
         tokens = _tokenize_run(raw, table, user, english, forced, after_english, digits_as_zhuyin, chinese, lexicon,
                                breaks, exact)
-        return _check_corrections(tokens, table, lexicon, user, exact) if table.autocorrect else tokens
+        return _check_corrections(tokens, table, lexicon, user, exact, bigram) if table.autocorrect else tokens
     tokens, start = [], 0
     for a, b, text in cuts + [(len(raw), len(raw), None)]:
         if a < start:
@@ -144,7 +150,7 @@ def tokenize(raw, table, user=None, english=(), forced=(), after_english=False,
             else:
                 tokens.append(Token("fix", raw[a:b], text, a))
         start = b
-    return _check_corrections(tokens, table, lexicon, user, exact) if table.autocorrect else tokens
+    return _check_corrections(tokens, table, lexicon, user, exact, bigram) if table.autocorrect else tokens
 
 
 def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=False,
@@ -232,6 +238,12 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
             for j in range(i + 2, min(i + MAX_SYL_KEYS, n) + 1):
                 parsed = table.parse_syllable(raw[i:j])
                 as_typed = parsed and (parsed[1] or not (ordered_only or raw[i:j - 1].isdigit()))
+                # 注音自動校正: a punctuation key out of order after all when the keys after it spell
+                # nothing (;e is ㄍㄤ: 剛; ,u3 stays ,以) - and with digits among them, only after
+                # Chinese (你.2 is 你都; no.2 stays)
+                punct_order = parsed and not as_typed and ordered_only and correct and \
+                    not table.parse_syllable(raw[i + 1:j]) and \
+                    (not any(k.isdigit() for k in raw[i + 1:j - 1]) or (prev[1] and prev[1][-1].kind == "zh"))
                 if as_typed:
                     offer(j, syllable_cost(table, *parsed) + crosses(i, j), prev, Token("zh", raw[i:j], parsed[0], i))
                 picked = memory.choice(raw[i:j]) if memory is not None and i not in exact else None
@@ -244,6 +256,11 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
                     # picked as this syllable: read so, wherever (si3 = 你 on its own too)
                     offer(j, syllable_cost(table, picked, True) + crosses(i, j), prev,
                           Token("zh", raw[i:j], picked, i, "learned"))
+                    continue
+                if punct_order:
+                    # (a correction like the others: ↓ offers the keys as typed, picked twice they stay)
+                    offer(j, syllable_cost(table, *parsed) + crosses(i, j), prev,
+                          Token("zh", raw[i:j], parsed[0], i, "punct"))
                     continue
                 if as_typed or not correct:
                     continue
@@ -273,6 +290,19 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
                         reading = max(near, key=table.score)
                         offer(j, syllable_cost(table, reading, True) + cost, prev,
                               Token("zh", raw[i:j], reading, i, "adjacent"))
+                    # the tone key (or the space of a first tone) left out, a syllable right after
+                    # it (5k1u0 = 這邊): the most common tone for now; the words around it choose
+                    # (_check_corrections). Not before a final on its own (2u + .4 ㄡˋ is the
+                    # 2u.4 掉 with a key next to the right one)
+                    # Nor right after English (su5k1u0 stays su5k邊: keys of a word, more likely)
+                    after_en = prev[1] and prev[1][-1].kind == "en" and not prev[1][-1].raw.endswith(" ")
+                    forms = table.toned_forms(raw[i:j]) if j < n and raw[j] != " " and not after_en and \
+                        table.keymap.get(raw[j]) not in FINALS else []
+                    if forms and any(table.parse_syllable(raw[j:k])
+                                     for k in range(j + 2, min(j + MAX_SYL_KEYS, n) + 1)):
+                        reading = max(forms, key=table.score)
+                        offer(j, syllable_cost(table, reading, True) + COST_NO_TONE + crosses(i, j), prev,
+                              Token("zh", raw[i:j], reading, i, "tone"))
             # incomplete syllable at the very end
             parsed = table.parse_partial(raw[i:])
             if parsed and (parsed[1] or not (ordered_only or raw[i:].isdigit())):
@@ -477,14 +507,19 @@ def _zh_runs(tokens):
         yield run
 
 
-def _check_corrections(tokens, table, lexicon, user=None, exact=()):
+def _check_corrections(tokens, table, lexicon, user=None, exact=(), bigram=None):
     """The 注音自動校正 that needs the words around a syllable, once the keys are split:
     digits read out of order (817) stay zhuyin on their own (吧) or in a word (好吧), else they
     are a number (有813個: 把個 is a word, but no likelier than 把 and 個 apart; you are 817); a syllable read with a key
     next to the one typed takes, of the ones it may be, the one that makes the best word
-    around it; and a syllable that spells something but makes no word with the ones around it
-    is swapped for one a key next to it makes when that makes a word likelier than the
-    characters apart by COST_ADJACENT_VALID (老嗎 -> 好嗎, not 有把 -> 也把; 你老 is a word, kept). The readings are settled here, before conversion, so picks (by reading) keep."""
+    around it; a syllable typed without its tone takes the tone that reads best in the sentence
+    (5k邊: 這邊); and a syllable that spells something is swapped for one a key next to it makes
+    (one that makes a word around it) when the sentence around it reads better by
+    SWAP_GAIN_NO_WORD (老嗎 -> 好嗎), or by SWAP_GAIN_WORD if the keys typed make a word of the
+    dictionary (你老嗎 -> 你好嘛; tuned with tools/autocorrect_eval.py, not larger: a word typed
+    is no likelier right than a syllable that makes none) - never if they make one of the
+    user's own (the personal dictionary, a learned word). The
+    readings are settled here, before conversion, so picks (by reading) keep."""
     memory = user.corrections if user is not None else None
 
     def picked(t):
@@ -516,6 +551,21 @@ def _check_corrections(tokens, table, lexicon, user=None, exact=()):
         tokens = out
     if lexicon is None:
         return tokens
+    def in_sentence(readings, k, reading):
+        """run_score of the syllables around k (SWAP_WINDOW on each side) with k read so; the
+        dictionary's and the context model's alone (what the user taught has its own rule,
+        _makes_user_word), so the same syllables always score the same: kept across keys."""
+        a, b = max(0, k - SWAP_WINDOW), min(len(readings), k + SWAP_WINDOW + 1)
+        window = tuple(readings[a:k]) + (reading,) + tuple(readings[k + 1:b])
+        # (the syllables alone are the key: the dictionary and the context model are the same files)
+        score = _RUN_SCORES.get(window)
+        if score is None:
+            if len(_RUN_SCORES) >= RUN_SCORES_KEPT:
+                _RUN_SCORES.clear()
+            score = run_score(list(window), lexicon, None, bigram)
+            score = _RUN_SCORES[window] = -99.0 * len(window) if score is None else score
+        return score
+
     for run in _zh_runs(tokens):
         readings = [t.value for t in run]
         swapped = False  # (two syllables side by side are not both swapped)
@@ -524,6 +574,15 @@ def _check_corrections(tokens, table, lexicon, user=None, exact=()):
                 best_alt, best = _best_neighbour(table, t, readings, k, lexicon, user)
                 if best_alt is not None:
                     t.value = readings[k] = best_alt
+                swapped = False
+                continue
+            if t.corrected == "tone":
+                forms = table.toned_forms(t.raw)
+                # (a tone that makes a word the user taught first: 5km3 is 哲宇 with 哲宇 in the
+                # personal dictionary, whatever reads best otherwise)
+                mine = [r for r in forms if _makes_user_word(readings[:k] + [r] + readings[k + 1:], k, user)]
+                best_form = max(mine or forms, key=lambda r: in_sentence(readings, k, r))
+                t.value = readings[k] = best_form
                 swapped = False
                 continue
             choice = picked(t) if not t.corrected else None
@@ -536,21 +595,47 @@ def _check_corrections(tokens, table, lexicon, user=None, exact=()):
             if swapped or t.corrected or t.start in exact or t.raw.rstrip(" ").isdigit() or choice in ("", AS_ENGLISH):
                 swapped = False
                 continue
-            # the keys typed make a word already (門檻, 你老): left alone, whatever else is likelier
-            if _word_score(readings, k, lexicon, user) is not None:
+            # the keys typed make a word the user taught (a name in the personal dictionary, a
+            # learned word): left alone, whatever else is likelier
+            if _makes_user_word(readings, k, user):
                 swapped = False
                 continue
-            typed = _apart_score(readings, k, lexicon)
-            if typed is None:
+            if _apart_score(readings, k, lexicon) is None:
                 continue  # (a syllable on its own: nothing to make a word with)
-            best_alt, best = _best_neighbour(table, t, readings, k, lexicon, user)
-            if best_alt is not None and best - COST_ADJACENT_VALID > typed:
+            # of the syllables keys next to the ones typed make, those that make a word around it
+            # (most syllables have none: no sentence to score), the one the sentence reads best with
+            best_alt, best = None, None
+            for alt in table.adjacent_parses(t.raw):
+                if _word_score(readings[:k] + [alt] + readings[k + 1:], k, lexicon, user) is None:
+                    continue
+                score = in_sentence(readings, k, alt)
+                if best is None or score > best:
+                    best_alt, best = alt, score
+            if best_alt is None:
+                swapped = False
+                continue
+            typed = in_sentence(readings, k, t.value)
+            gain = SWAP_GAIN_WORD if _word_score(readings, k, lexicon, None) is not None else SWAP_GAIN_NO_WORD
+            if best - typed > gain:
                 t.orig, t.value, t.corrected = t.value, best_alt, "valid"
                 readings[k] = best_alt
                 swapped = True
             else:
                 swapped = False
     return tokens
+
+
+def _makes_user_word(readings, k, user):
+    """Syllable k makes, with the ones around it, a word of the personal dictionary or one the
+    user picked (learned), of any length (市現役區 too)."""
+    if user is None:
+        return False
+    for l in range(2, MAX_PHRASE_LEN + 1):
+        for a in range(max(0, k - l + 1), min(k, len(readings) - l) + 1):
+            key = "-".join(readings[a:a + l])
+            if user.custom.get(key) or any(user.phrase_count(key, p) > 0 for p in user.phrases.get(key, ())):
+                return True
+    return False
 
 
 def syllable_cost(table, reading, in_order):
@@ -697,6 +782,23 @@ def convert(readings, lexicon, user=None, overrides=None, bigram=None, prev_word
     prev_word: phrase just before this run (e.g. from the last commit).
     Returns [(start, length, phrase)].
     """
+    ends, options, full = _search(readings, lexicon, user, overrides or {}, bigram, prev_word)
+    if not ends:  # should not happen: every valid syllable has a char
+        return [(i, 1, readings[i]) for i in range(len(readings))]
+    path = max(ends.values(), key=lambda v: v[0])[1]
+    return repick(path, readings, lexicon, options, full, user, bigram, prev_word, overrides or {})
+
+
+def run_score(readings, lexicon, user, bigram):
+    """log10 score of the best way to write these syllables (convert's search, no picks, nothing
+    before): how well a reading of a syllable reads with the ones around it, for 注音自動校正
+    (老 or 好 in 你老嗎). None if some syllable has no character."""
+    ends, _, _ = _search(readings, lexicon, user, {}, bigram, None)
+    return max(v[0] for v in ends.values()) if ends else None
+
+
+def _search(readings, lexicon, user, overrides, bigram, prev_word):
+    """convert's beam search: ({last phrase: (score, path)} at the end, options, full)."""
     n = len(readings)
     overrides = overrides or {}
     locked = [None] * n
@@ -744,10 +846,7 @@ def convert(readings, lexicon, user=None, overrides=None, bigram=None, prev_word
                     c = score + transition(bigram, prev, phrase, unigram)
                     if phrase not in nxt or c > nxt[phrase][0]:
                         nxt[phrase] = (c, path + [(i, l, phrase)])
-    if not states[n]:  # should not happen: every valid syllable has a char
-        return [(i, 1, readings[i]) for i in range(n)]
-    path = max(states[n].values(), key=lambda v: v[0])[1]
-    return repick(path, readings, lexicon, options, full, user, bigram, prev_word, overrides)
+    return states[n], options, full
 
 
 def strong_homophone(reading, lexicon, user):
@@ -938,7 +1037,7 @@ class Composer:
                     pinned[old[s + k].start] = (old[s + k].raw, v[0][k])
         self.tokens = tokenize(self.raw, self.table, self.user, self.english, self.forced,
                                self.after_english, self.digits_as_zhuyin, self.literal, self.chinese, self.fixed,
-                               self.lexicon, self.breaks, self.exact, self.taken)
+                               self.lexicon, self.breaks, self.exact, self.taken, self.bigram)
         if self.table.autocorrect:
             for t in self.tokens:
                 pin = pinned.get(t.start)
@@ -946,6 +1045,8 @@ class Composer:
                     continue
                 if t.corrected == "valid" and pin[1] == t.orig:
                     t.value, t.orig, t.corrected = t.orig, None, None
+                elif t.corrected == "tone" and pin[1] in self.table.toned_forms(t.raw):
+                    t.value = pin[1]  # (the tone of the pick, not the one the sentence now prefers)
                 elif not t.corrected and pin[1] in self.table.adjacent_parses(t.raw):
                     t.orig, t.value, t.corrected = t.value, pin[1], "valid"
         self.readings = [t.value for t in self.tokens if t.kind == "zh"]
@@ -1699,7 +1800,7 @@ class Composer:
         trial = tokenize(self.raw, self.table, self.user, self.english, forced, self.after_english,
                          self.digits_as_zhuyin, self.literal - set(unlit), (self.chinese - set(unchinese)) | {s},
                          {a: v for a, v in self.fixed.items() if a != unfix}, self.lexicon, self.breaks,
-                         self.exact, self.taken)
+                         self.exact, self.taken, self.bigram)
         inside = [t for t in trial if s <= t.start < end]
         if not inside or inside[0].start != s or any(t.kind != "zh" for t in inside) or \
                 inside[-1].start + len(inside[-1].raw) != end:
@@ -2159,6 +2260,10 @@ class Composer:
                     continue
             elif choice == "" and start in self.exact and self.raw[start:start + len(keys)] == keys and is_code(keys):
                 pass  # (a code read as before 代碼記憶 learned it)
+            elif choice == "" and start in self.forced and self.raw[start:start + len(keys)] == keys and \
+                    not any(t.start == start and t.raw == keys for t in self.tokens) and \
+                    not any(t.kind == "zh" and t.start <= start < t.start + len(t.raw) for t in self.tokens):
+                pass  # (put back as typed and split since: e; of e;e; read as e + ;, no syllable there)
             else:
                 tok = next((t for t in self.tokens if t.start == start and t.raw == keys), None)
                 if tok is None:
