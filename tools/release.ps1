@@ -81,11 +81,21 @@ function Get-ReleaseArguments {
     return $a
 }
 
+# Messages: whole commit messages, newest first. Each item line ( * / + ) is a line of its own (git's
+# %s joins the lines of the first paragraph); trailers and the version bump are left out; a message
+# in another format gives its first line.
 function Get-ReleaseNotes {
-    param([string]$Version, [string[]]$Subjects)
-    $s = @($Subjects | Where-Object { $_ -and $_.Trim() })
-    if ($s.Count -eq 0) { return "兩儀輸入法 $Version" }
-    return ($s -join "`n")
+    param([string]$Version, [string[]]$Messages)
+    $lines = @()
+    foreach ($m in $Messages) {
+        $all = @(($m -split "\r?\n") | Where-Object { $_.Trim() })
+        if ($all.Count -eq 0) { continue }
+        $items = @($all | Where-Object { $_ -match '^\s*[*+] ' })
+        if ($items.Count -eq 0) { $lines += $all[0]; continue }
+        $lines += @($items | Where-Object { $_ -notmatch '^\s*\* 版本 \d+\.\d+\.\d+\s*$' })
+    }
+    if ($lines.Count -eq 0) { return "兩儀輸入法 $Version" }
+    return ($lines -join "`n")
 }
 
 # ---- everything below runs only when the script is run, not when a test dot-sources it ----
@@ -233,9 +243,10 @@ if (-not (Test-Path $installer)) {
 
 $prev = (& git describe --tags --abbrev=0 HEAD)
 if ($LASTEXITCODE -eq 0 -and $prev) {
-    $subjects = @(Invoke-Git log "$prev..HEAD" --format=%s)
-} else { $subjects = @() }
-$notes = Get-ReleaseNotes -Version $ver -Subjects $subjects
+    # (%x1e ends each message: a message has several lines)
+    $messages = @(((Invoke-Git log "$prev..HEAD" --format=%B%x1e) -join "`n") -split [char]0x1e)
+} else { $messages = @() }
+$notes = Get-ReleaseNotes -Version $ver -Messages $messages
 $notesFile = Join-Path $env:TEMP "dualityime-release-notes-$ver.txt"
 [IO.File]::WriteAllText($notesFile, $notes + "`n", (New-Object Text.UTF8Encoding($false)))
 if ($WhatIf) { Write-Host "[WhatIf] release notes ($notesFile):"; Write-Host ($notes -replace '(?m)^', '           ') }
