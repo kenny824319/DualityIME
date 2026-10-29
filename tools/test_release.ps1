@@ -53,8 +53,13 @@ Check "sync develop fast-forward" ((Get-SyncDevelopCommands -DevelopIsAncestor $
 Check "sync develop merge" ((Get-SyncDevelopCommands -DevelopIsAncestor $false) -join " | ") "git checkout develop | git merge main | git push origin develop | git checkout main"
 
 # release notes
-Check "notes no tag" (Get-ReleaseNotes -Version "3.0.0" -Subjects @()) "兩儀輸入法 3.0.0"
-Check "notes subjects" (Get-ReleaseNotes -Version "3.0.1" -Subjects @(" * a", " + b")) " * a`n + b"
+# (whole commit messages, newest first: one line per item, trailers and the version bump left out)
+Check "notes no tag" (Get-ReleaseNotes -Version "3.0.0" -Messages @()) "兩儀輸入法 3.0.0"
+Check "notes items" (Get-ReleaseNotes -Version "3.0.1" -Messages @(" * a`n + b`n`nCo-Authored-By: x <y>`nClaude-Session: z", " * c")) " * a`n + b`n * c"
+Check "notes crlf" (Get-ReleaseNotes -Version "3.0.1" -Messages @(" * a`r`n * b`r`n")) " * a`n * b"
+Check "notes no bump" (Get-ReleaseNotes -Version "3.0.2" -Messages @(" * 版本 3.0.2`n`nCo-Authored-By: x <y>", " * a")) " * a"
+Check "notes only bump" (Get-ReleaseNotes -Version "3.0.2" -Messages @(" * 版本 3.0.2")) "兩儀輸入法 3.0.2"
+Check "notes other format" (Get-ReleaseNotes -Version "3.0.1" -Messages @("fix the thing`n`nsome body text", "")) "fix the thing"
 
 if ($fail -gt 0) { Write-Host "$fail FAILED"; exit 1 }
 Write-Host "ALL PASSED"
