@@ -1791,6 +1791,89 @@ class AutocorrectTest(Base):
         self.assertEqual(self.type("817"), "817")
         self.assertNotEqual(self.type("ssu3"), "你")
 
+    # B: a punctuation key typed first, out of order (;e for ㄍㄤ): only when the rest is no syllable
+    def test_a_punctuation_key_out_of_order_is_read_as_zhuyin(self):
+        self.assertEqual(self.type("e; ;e "), "剛剛")
+
+    def test_a_punctuation_key_before_a_syllable_stays_punctuation(self):
+        self.assertEqual(self.type(",u3"), ",以")  # (u3 is 以: ,以, not 也)
+
+    def test_a_punctuation_key_before_digits_stays_after_english(self):
+        # (no.2, 3.2: an abbreviation or a number, not .2 for 2. 都)
+        for raw in ("no.2 ", "ch.2 ", "you are 3.2 ", "3.2 "):
+            with self.subTest(raw=raw):
+                on = self.type(raw)
+                self.c.config.set(autocorrect=False)
+                self.c.settings_changed()
+                off = self.type(raw)
+                self.c.config.set(autocorrect=True)
+                self.c.settings_changed()
+                self.assertEqual(on, off)
+
+    def test_a_punctuation_key_before_digits_after_chinese_is_reordered(self):
+        self.assertEqual(self.type("su3.2 "), "你都")  # (2. typed .2)
+
+    def test_a_punctuation_key_out_of_order_offers_the_keys_as_typed(self):
+        c = self.c
+        for _ in range(2):  # (the keys as typed are last; picked twice, they stay so)
+            cands = self.candidates_at("su3;e ", 1)
+            self.assertEqual(cands[-1], ";e")
+            c._pick(len(cands) - 1)
+            c.key(special="ENTER")
+        self.assertNotIn("剛", self.type("su3;e "))
+
+    def test_a_punctuation_key_out_of_order_as_before_with_it_off(self):
+        self.c.config.set(autocorrect=False)
+        self.c.settings_changed()
+        self.assertEqual(self.type("e; ;e "), "剛;e ")
+
+    # E: a tone key (or the space of a first tone) left out, another syllable right after it
+    def test_a_tone_left_out_is_put_back(self):
+        self.assertEqual(self.type("5k1u0 "), "這邊")  # (5k for 5k4 這)
+
+    def test_the_space_of_a_first_tone_left_out_is_put_back(self):
+        self.assertEqual(self.type("e;e; "), "剛剛")
+
+    def test_a_tone_left_out_picked_back_as_typed_twice_stays(self):
+        # (e; read as typed is e + ; once more: still learned)
+        c = self.c
+        for _ in range(2):
+            cands = self.candidates_at("e;e; ", 0)
+            self.assertEqual(cands[-1], "e;")
+            c._pick(len(cands) - 1)
+            c.key(special="ENTER")
+        self.assertEqual(c.user.corrections.choice("e;"), "")
+        self.assertNotEqual(self.type("e;e; "), "剛剛")
+
+    def test_a_tone_left_out_takes_a_personal_word(self):
+        saved = self.c.user.custom
+        self.c.user.custom = {"ㄓㄜˊ-ㄩˇ": ["哲宇"]}  # (5k6m3 typed right)
+        try:
+            self.assertEqual(self.type("5km3"), "哲宇")
+        finally:
+            self.c.user.custom = saved
+
+    def test_a_tone_left_out_right_after_english_is_not_put_back(self):
+        self.assertEqual(self.type("su5k1u0 "), "su5k邊")  # (as with it off)
+        self.assertEqual(self.type("ji35k1u0 "), "我這邊")
+        self.assertEqual(self.type("hello 5k1u0 "), "hello 這邊")
+
+    def test_a_tone_left_out_as_before_with_it_off(self):
+        self.c.config.set(autocorrect=False)
+        self.c.settings_changed()
+        self.assertEqual(self.type("5k1u0 "), "5k邊")
+
+    def test_short_english_is_not_read_without_tones(self):
+        for raw in ("ok ", "hi ", "go ", "mp3 ", "ios ", "abc ", "su "):
+            with self.subTest(raw=raw):
+                on = self.type(raw)
+                self.c.config.set(autocorrect=False)
+                self.c.settings_changed()
+                off = self.type(raw)
+                self.c.config.set(autocorrect=True)
+                self.c.settings_changed()
+                self.assertEqual(on, off)
+
     # C: a key typed twice
     def test_key_typed_twice_is_dropped(self):
         for raw in ("ssu3", "suu3", "su33"):
@@ -1866,6 +1949,61 @@ class AutocorrectTest(Base):
         self.assertEqual(self.type("xl3"), "老")        # on its own
         self.assertEqual(self.type("xl3g "), "老師")    # a word as typed
         self.assertEqual(self.type("su3xl3"), "你老")   # 你老 is a word too: not 你好
+
+    XIANYI = "w961o3g4vu04u4fm "  # 台北市信義區 with 0 for p in ㄒㄧㄣˋ: ㄒㄧㄢˋ, 現役 (a word)
+
+    def test_a_neighbour_that_reads_far_better_in_the_sentence_is_taken(self):
+        # 現役 is a word, but 台北市信義區 reads far better than 台北市現役區
+        self.assertEqual(self.type(self.XIANYI), "台北市信義區")
+
+    def test_a_word_typed_is_swapped_too_when_the_sentence_reads_better(self):
+        # 你老 is a word, but 你好嘛 reads better than 你老嗎 by more than SWAP_GAIN_WORD (x is next to c)
+        self.assertEqual(self.type("su3xl3a87"), "你好嘛")
+
+    def test_a_personal_word_typed_is_never_swapped(self):
+        saved = self.c.user.custom
+        self.c.user.custom = {"ㄒㄧㄢˋ-ㄧˋ": ["現役"]}
+        try:
+            self.assertEqual(self.type(self.XIANYI), "台北市現役區")
+        finally:
+            self.c.user.custom = saved
+
+    def test_a_long_personal_word_typed_is_never_swapped(self):
+        saved = self.c.user.custom
+        self.c.user.custom = {"ㄕˋ-ㄒㄧㄢˋ-ㄧˋ-ㄑㄩ": ["市現役區"]}  # (4 syllables)
+        try:
+            self.assertEqual(self.type(self.XIANYI), "台北市現役區")
+        finally:
+            self.c.user.custom = saved
+
+    def test_a_pick_on_a_syllable_typed_without_its_tone_stays(self):
+        # 5k (no tone) picked as 浙: more syllables after it may not take the pick away
+        c = self.c
+        self.type("5ke; ", enter=False)
+        c.key(special="HOME")
+        c.key(special="DOWN")
+        c._pick(c.candidates.index("浙"))
+        c.key(special="END")
+        self.type("e; ", enter=False)
+        self.assertTrue(c.composition.startswith("浙"), c.composition)
+
+    def test_a_learned_word_typed_is_never_swapped(self):
+        user = self.c.user
+        user.learn_phrase("ㄒㄧㄢˋ-ㄧˋ", "現役")
+        try:
+            self.assertEqual(self.type(self.XIANYI), "台北市現役區")
+        finally:
+            user.forget_phrase("ㄒㄧㄢˋ-ㄧˋ", "現役")
+
+    def test_a_sentence_swap_picked_back_twice_stays_as_typed(self):
+        c = self.c
+        for _ in range(2):
+            cands = self.candidates_at(self.XIANYI, 3)
+            c._pick(cands.index("現"))
+            c.key(special="ENTER")
+            self.assertTrue(c.commit.startswith("台北市現"), c.commit)  # (the keys as typed: ㄒㄧㄢˋ)
+        # (現 was learned by the picks too: 現 + 一 now; what matters is no 信 again)
+        self.assertTrue(self.type(self.XIANYI).startswith("台北市現"))
 
     def test_original_char_offered(self):
         c = self.c
@@ -2273,19 +2411,21 @@ class CodeMemoryTest(AutocorrectMemoryTest):
         c = self.c
         self.config.set(autocorrect=True)
         c.settings_changed()
+        raw = "w961o3g4vu04u4fm "  # 台北市信義區 with 0 for p: 現役 typed, 信義 read
         for _ in range(2):
-            self.type("1j4cjo3au4", enter=False)
-            tok = next(t for t in c.tokens if t.raw == "cjo3")
+            self.type(raw, enter=False)
+            tok = next(t for t in c.tokens if t.raw == "vu04")
             self.assertEqual(tok.corrected, "valid")
             orig = c.lexicon.lookup((tok.orig,))[0][0]
             c.key(special="HOME")
-            c.key(special="RIGHT")             # (before 會, the second character)
+            for _ in range(3):
+                c.key(special="RIGHT")         # (before 信, the fourth character)
             c.key(special="DOWN")
             c._pick(c.candidates.index(orig))
             c.key(special="ENTER")
-        self.assertEqual(self.user.corrections.choice("cjo3"), "")
-        self.type("1j4cjo3au4", enter=False)
-        tok = next(t for t in c.tokens if t.raw == "cjo3")
+        self.assertEqual(self.user.corrections.choice("vu04"), "")
+        self.type(raw, enter=False)
+        tok = next(t for t in c.tokens if t.raw == "vu04")
         self.assertEqual((tok.kind, tok.corrected), ("zh", None))  # as typed: not English, not corrected
 
     def test_off_corrects_nothing(self):

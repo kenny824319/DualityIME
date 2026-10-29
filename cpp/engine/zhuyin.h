@@ -19,6 +19,7 @@ struct Layout {
 const Layout& standard_layout();
 
 bool is_tone_mark(char32_t c);
+bool is_final(char32_t sym);  // ㄚ ... ㄦ: neither an initial nor a medial
 
 // key -> the keys next to it on the physical keyboard (注音自動校正):
 // same row left and right, the row above at (i, i + 1), the row below at (i - 1, i); the
@@ -57,6 +58,9 @@ public:
     // the zhuyin the keys stand for as typed, whatever they spell (注音文: 1j8 is ㄅㄨㄚ, cc is
     // ㄏㄏ), a tone key last as its mark; empty if a key is no zhuyin key
     ustr bare(std::string_view keys) const;
+    // the syllables the keys spell with each tone there is, typed in order and no tone key
+    // (5k: ㄓㄜ ㄓㄜˊ ㄓㄜˇ ㄓㄜˋ ㄓㄜ˙ as far as they exist); sorted. Empty if they spell none
+    std::vector<ustr> toned_forms(std::string_view keys) const;
     double score(const ustr& reading) const;
 
 private:

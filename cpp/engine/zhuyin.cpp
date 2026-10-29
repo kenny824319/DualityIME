@@ -1,5 +1,6 @@
 #include "zhuyin.h"
 
+#include <algorithm>
 #include <set>
 
 #include "lexicon.h"
@@ -63,6 +64,8 @@ static int rank(char32_t sym) {
     if (medials.find(sym) != ustr::npos) return 1;
     return 2;
 }
+
+bool is_final(char32_t sym) { return sym != 0 && rank(sym) == 2; }
 
 Parsed keys_to_symbols(std::string_view keys, const std::unordered_map<char, char32_t>& keymap) {
     // Like other zhuyin IMEs, the parts may be typed in any order: "us" gives
@@ -195,6 +198,16 @@ Parsed SyllableTable::parse_partial(std::string_view keys) const {
     Parsed parsed = keys_to_symbols(keys, keymap_);
     if (parsed && prefixes_.count(parsed->first)) return parsed;
     return std::nullopt;
+}
+
+std::vector<ustr> SyllableTable::toned_forms(std::string_view keys) const {
+    std::vector<ustr> out;
+    Parsed parsed = keys_to_symbols(keys, keymap_);
+    if (!parsed || parsed->first.empty() || !parsed->second) return out;
+    for (auto& [_, mark] : standard_layout().tones)
+        if (toned_.count(parsed->first + mark)) out.push_back(parsed->first + mark);
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 double SyllableTable::score(const ustr& reading) const {

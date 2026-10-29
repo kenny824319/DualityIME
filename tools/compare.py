@@ -25,6 +25,17 @@ from engine.zhuyin import reading_to_keys  # noqa: E402
 EXE = os.path.join(ROOT, "cpp", "build", "x64-Release", "sz_trace.exe")
 
 CASES = [
+    # 注音自動校正 with the sentence around it: a tone left out (5k邊: 這邊), a punctuation key out of
+    # order (;e: 剛), a key next to the right one spelling a word (現役 -> 信義, 你老 -> 你好), and 現 picked
+    # back twice (31st in the list): as typed from then on
+    "5k1u0 {ENTER}e;e; {ENTER}e; ;e {ENTER},u3{ENTER}su3xl3a87{ENTER}w961o3g4vu04u4fm {ENTER}",
+    ("w961o3g4vu04u4fm {HOME}{RIGHT}{RIGHT}{RIGHT}" + "{DOWN}" * 31 + "{ENTER}{ENTER}") * 2 + "w961o3g4vu04u4fm {ENTER}",
+    "ok hi go su ios 5k ", "5ke; {HOME}{DOWN}3{END}e; 1u0 {ENTER}",  # (浙 picked for 5k: kept as more comes)
+    # (no punctuation key reordered before digits after English, but after Chinese; no tone put back right after English; a tone that
+    # makes a word of the personal dictionary: 哲宇; ;e back as typed from the end of the list, twice)
+    "no.2 ch.2 ji3.24{ENTER}v3.2 su3.2 {ENTER}you are 3.2 {ENTER}su5k1u0 ji35k1u0 {ENTER}5km3{ENTER}",
+    ("su3;e {HOME}{RIGHT}" + "{DOWN}" * 35 + "{ENTER}{ENTER}") * 2 + "su3;e {ENTER}",
+    ("e;e; {HOME}" + "{DOWN}" * 36 + "{ENTER}{ENTER}") * 2 + "e;e; {ENTER}",  # (e; back as typed, last of 36, twice)
     # words the dictionary has with other tones (下載 is ㄗㄞˇ there): learned from a pick, and back
     "vu84y94{DOWN}3{ENTER}vu84y94{ENTER}vu84y94{DOWN}1{ENTER}vu84y94{ENTER}",
     "ji3vu84y94{DOWN}3{ENTER}vu84y94{ENTER}", "s83vu, {HOME}{DOWN}3{ENTER}s83vu, {ENTER}",
@@ -137,7 +148,8 @@ CONFIGS = [
     {"autocorrect": True},  # 注音自動校正
 ]
 DICTIONARY = {
-    "words": [["華碩", "ㄏㄨㄚˊ ㄕㄨㄛˋ"], ["史芸", "ㄕˇㄩㄣˊ"], ["好", "ㄏㄠˇ"], ["ㄎㄎ", ""], ["Kazuma", ""]],
+    "words": [["華碩", "ㄏㄨㄚˊ ㄕㄨㄛˋ"], ["史芸", "ㄕˇㄩㄣˊ"], ["好", "ㄏㄠˇ"], ["ㄎㄎ", ""], ["Kazuma", ""],
+              ["哲宇", "ㄓㄜˊ ㄩˇ"]],
     "shortcuts": [["addr", "台北市信義區"], ["sig", "祝 順心"], ["cl3", "你好嗎"], ["台灣", "Taiwan"], ["KFC", "肯德基"]],
 }
 
