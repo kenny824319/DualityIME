@@ -193,7 +193,9 @@ private:
     bool key_symbols(std::optional<char32_t> ch, const std::string& special);
     void pick(int i, bool from_bar = false);
     void learn_overrides();
-    void learn_broken_words();  // a word corrected by a pick inside it (部隊 to 不對)
+    // before: the conversion without the picks
+    void learn_broken_words(const std::vector<Segment>& before);  // a word corrected by a pick inside it (部隊 to 不對)
+    void learn_tone_variant_words(const std::vector<Segment>& before);  // a pick making a word the dictionary has with other tones (下載)
     void keep_rest(int s, int l);  // a pick broke a word: the rest of it stays as it was
     void drop_orphans();           // kept characters go with the pick that kept them
     void learn_group(const std::vector<std::tuple<int, std::vector<ustr>, ustr>>& group);

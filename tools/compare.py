@@ -25,6 +25,11 @@ from engine.zhuyin import reading_to_keys  # noqa: E402
 EXE = os.path.join(ROOT, "cpp", "build", "x64-Release", "sz_trace.exe")
 
 CASES = [
+    # words the dictionary has with other tones (下載 is ㄗㄞˇ there): learned from a pick, and back
+    "vu84y94{DOWN}3{ENTER}vu84y94{ENTER}vu84y94{DOWN}1{ENTER}vu84y94{ENTER}",
+    "ji3vu84y94{DOWN}3{ENTER}vu84y94{ENTER}", "s83vu, {HOME}{DOWN}3{ENTER}s83vu, {ENTER}",
+    # ... forgotten when picked back (巴西 -> 八西), and none beside a pick that makes a word (打工|作)
+    "18 vu7{HOME}{DOWN}3{ENTER}18 vu7{HOME}{DOWN}3{ENTER}18 vu7{ENTER}", "283ej/ yji {HOME}{RIGHT}{DOWN}2{ENTER}ej/ yji {ENTER}",
     # 注音自動校正 and its memories (keys.json in AUTOCORRECT): a pick kept when 813 is picked as 把,
     # a learned reading not in an address, 代碼記憶 back as before
     "u.3813ek7cl3{LEFT}{DOWN}2{HOME}{RIGHT}{DOWN}1{ENTER}", "abc@si3.com si3{ENTER}", "mp3{DOWN}1{ENTER}mp3{ENTER}",

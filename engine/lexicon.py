@@ -13,6 +13,11 @@ def _is_han(text):
     """Chinese characters only (肯德基)."""
     return bool(text) and all("㐀" <= ch <= "鿿" or "豈" <= ch <= "﫿" for ch in text)
 
+def _toneless(reading_key):
+    """ㄒㄧㄚˋ-ㄗㄞˋ -> ㄒㄧㄚ-ㄗㄞ"""
+    return "-".join(s.rstrip("ˊˇˋ˙") for s in reading_key.split("-"))
+
+
 class Lexicon:
     def __init__(self, path=None):
         path = path or os.path.join(DATA_DIR, "lexicon.txt")
@@ -30,9 +35,31 @@ class Lexicon:
         # share of the phrase is 10 ** (score - reading_mass[phrase])
         self.reading_mass = {p: math.log10(m) for p, m in mass.items()}
         self._by_start = None  # first reading -> phrases of 2+ syllables, see completions()
+        self._by_toneless = None  # readings without tones -> reading keys, see reads_with_other_tones()
 
     def lookup(self, readings):
         return self.entries.get("-".join(readings), [])
+
+    def has(self, readings, phrase):
+        """phrase is the dictionary's for these readings."""
+        return any(p == phrase for p, _ in self.lookup(readings))
+
+    def reads_with_other_tones(self, readings, phrase):
+        """The dictionary has phrase under readings that differ from these only in tones (下載 is
+        ㄒㄧㄚˋ ㄗㄞˇ there; 教育部 reads ㄒㄧㄚˋ ㄗㄞˋ), and each character of it has its syllable here
+        (載 is a ㄗㄞˋ too). Words of 2+ syllables only."""
+        if len(readings) < 2 or len(phrase) != len(readings):
+            return False
+        if self._by_toneless is None:  # built on first use
+            self._by_toneless = {}
+            for reading in self.entries:
+                if "-" in reading:
+                    self._by_toneless.setdefault(_toneless(reading), []).append(reading)
+        key = "-".join(readings)
+        if not any(r != key and any(p == phrase for p, _ in self.entries[r])
+                   for r in self._by_toneless.get(_toneless(key), ())):
+            return False
+        return all(self.has([syl], ch) for ch, syl in zip(phrase, readings))
 
     def completions(self, readings, min_score=-6.5):
         """Longer phrases whose readings start with `readings`:

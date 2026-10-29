@@ -39,6 +39,13 @@ public:
     // Longer phrases whose readings start with `readings`: ㄕㄣˊ -> 神奇, 神經...
     std::vector<const Completion*> completions(const std::vector<ustr>& readings) const;
 
+    // phrase is the dictionary's for these readings
+    bool has(const std::vector<ustr>& readings, const ustr& phrase) const;
+    // The dictionary has phrase under readings that differ from these only in tones (下載 is
+    // ㄒㄧㄚˋ ㄗㄞˇ there; 教育部 reads ㄒㄧㄚˋ ㄗㄞˋ), and each character of it has its syllable here
+    // (載 is a ㄗㄞˋ too). Words of 2+ syllables only.
+    bool reads_with_other_tones(const std::vector<ustr>& readings, const ustr& phrase) const;
+
 private:
     bool ok_ = false;
     std::unordered_map<ustr, std::vector<Scored>> entries_;
@@ -46,6 +53,8 @@ private:
     std::unordered_map<ustr, double> reading_mass_;
     mutable bool by_start_built_ = false;
     mutable std::unordered_map<ustr, std::vector<Completion>> by_start_;
+    mutable bool by_toneless_built_ = false;
+    mutable std::unordered_map<ustr, std::vector<ustr>> by_toneless_;  // readings without tones -> reading keys
 };
 
 // {word: rank}, most common first; english_tech.txt ranked after english.txt
