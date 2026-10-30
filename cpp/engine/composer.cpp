@@ -3093,10 +3093,13 @@ void Composer::learn_pairs(const std::vector<Segment>& before) {
     // a character picked beside a character on its own, the two no word of the dictionary (繪 after
     // 重, 重會 written: 重繪): half a pick of the pair, so the second time it is a word - a pick
     // alone never beats a common homophone picked a few times too (會), and nothing knows what it
-    // was picked beside. Once a sentence; not a name picked once (你郝), nor a pick inside a word or
-    // next to a character of one (自訂 + 蟲: no 訂蟲); not where both are picked (learn_group). The
-    // pair is learned for good as any word (corrected back, it is forgotten: learn_broken_words).
-    // before: what it would be without the picks.
+    // was picked beside. One pair a pick, with the character on the left if it is on its own, else
+    // the one on the right (重繪了: 重繪, never 繪了 too - 了 is on its own almost always, 我會了 would
+    // turn 我繪了). Once a sentence; only a pick that changed the character (not one just looked
+    // at); not a name picked once (你郝), nor a pick inside a word or next to a character of one
+    // (自訂 + 蟲: no 訂蟲); not where both are picked (learn_group). The pair is learned for good as
+    // any word (corrected back, it is forgotten: learn_broken_words). before: what it would be
+    // without the picks.
     std::set<int> alone, now, picked;
     for (auto& seg : before)
         if (seg.length == 1 && seg.phrase.size() == 1) alone.insert(seg.start);
@@ -3105,26 +3108,34 @@ void Composer::learn_pairs(const std::vector<Segment>& before) {
     for (auto& [span, v] : overrides_)
         if (!v.kept)
             for (int k = span.first; k < span.first + span.second; ++k) picked.insert(k);
-    auto chars = chars_of(segments_);
+    auto chars = chars_of(segments_), was = chars_of(before);
     std::set<std::pair<ustr, ustr>> done;
     for (auto& [span, v] : overrides_) {
         int s = span.first;
         if (v.kept || span.second != 1 || !alone.count(s) || !now.count(s)) continue;
+        if (auto w = was.find(s), c = chars.find(s); w != was.end() && c != chars.end() && w->second == c->second)
+            continue;
+        std::optional<std::pair<int, int>> pair;
         for (auto [a, b] : {std::pair<int, int>{s - 1, s}, std::pair<int, int>{s, s + 1}}) {
             int other = b == s ? a : b;
             bool in_run = false;
             for (auto& [x, y] : runs_)
                 if (x <= a && b < y) in_run = true;
-            if (picked.count(other) || !alone.count(other) || !now.count(other) || !in_run) continue;
-            std::vector<ustr> rd(readings.begin() + a, readings.begin() + b + 1);
-            ustr text{chars.at(a), chars.at(b)};
-            ustr key = join(rd, U'-');
-            if (done.count({key, text}) || lexicon_.has(rd, text) || lexicon_.reads_with_other_tones(rd, text) ||
-                user.phrase_count(key, text) >= 1)
-                continue;
-            done.insert({key, text});
-            user.learn_half(key, text);
+            if (!picked.count(other) && alone.count(other) && now.count(other) && in_run) {
+                pair = {a, b};
+                break;
+            }
         }
+        if (!pair) continue;
+        auto [a, b] = *pair;
+        std::vector<ustr> rd(readings.begin() + a, readings.begin() + b + 1);
+        ustr text{chars.at(a), chars.at(b)};
+        ustr key = join(rd, U'-');
+        if (done.count({key, text}) || lexicon_.has(rd, text) || lexicon_.reads_with_other_tones(rd, text) ||
+            user.phrase_count(key, text) >= 1)
+            continue;
+        done.insert({key, text});
+        user.learn_half(key, text);
     }
 }
 
