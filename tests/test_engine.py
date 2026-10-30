@@ -1218,13 +1218,27 @@ class LearnedSinglesTest(Base):
 
     def test_a_character_picked_once_or_twice_does_not_take_its_syllable_everywhere(self):
         # 輸 picked once for ㄕㄨ, 話 twice for ㄏㄨㄚˋ: the words around still decide (這本書, 畫出;
-        # a user's 216 such picks had turned 76% of sentences right into 50%)
+        # a user's single-character picks had made 73% of sentences right 48%: decisions.md)
         self.learn("ㄕㄨ", "輸")
         self.learn("ㄏㄨㄚˋ", "話", 2)
         self.learn("ㄏㄨㄚˋ", "畫", 3)
         self.assertEqual(self.type(keys("ㄓㄜˋ ㄅㄣˇ ㄕㄨ ㄏㄣˇ ㄏㄠˇ ㄎㄢˋ")), "這本書很好看")
         self.assertEqual(self.type(keys("ㄋㄧˇ ㄧˋ ㄓˊ ㄏㄨㄚˋ ㄔㄨ ㄧˋ ㄓㄨㄥˇ ㄕㄡˇ ㄊㄠˋ ㄍㄢˇ")), "你一直畫出一種手套感")
         self.assertEqual(self.type(keys("ㄕㄨ")), "輸")  # (on its own it is as picked)
+
+    def test_two_homophones_picked_about_as_often_keep_the_dictionary_words(self):
+        # 妳 5 times, 你 4: no habit yet (one pick more must not turn every 你們 into 妳們)
+        self.learn("ㄋㄧˇ", "妳", 5)
+        self.learn("ㄋㄧˇ", "你", 4)
+        self.assertEqual(self.type(keys("ㄋㄧˇ ㄇㄣ˙")), "你們")
+        self.assertEqual(self.type(keys("ㄒㄧㄝˋ ㄒㄧㄝ˙ ㄋㄧˇ")), "謝謝你")
+
+    def test_a_syllable_with_english_around_is_in_a_sentence(self):
+        # 輸 picked once: ㄕㄨ after 讀 and an English word is still in a sentence, not typed alone
+        self.learn("ㄕㄨ", "輸")
+        self.assertEqual(self.type("2j6 python gj "), "讀 python 書")
+        self.assertEqual(self.type(keys("ㄕㄨ")), "輸")
+        self.assertEqual(self.type(keys("ㄕㄨ") + ","), "輸,")  # (punctuation: still on its own)
 
     def test_a_homophone_picked_once_does_not_go_into_words(self):
         self.learn("ㄒㄧㄢˋ", "線")
@@ -1437,6 +1451,23 @@ class LearnedSinglesTest(Base):
         self.assertEqual(self.c.user.phrase_count("ㄋㄚˇ-ㄒㄧㄝ", "那些"), 1)
         self.assertEqual(self.type(keys("ㄋㄚˇ ㄒㄧㄝ")), "那些")
 
+    def test_a_learned_word_corrected_twice_in_one_sentence_is_half_learned(self):
+        # 巴西 corrected to 八西 at two places of one sentence: still a half (twice, sent twice)
+        self.assertEqual(self.pick_at("ㄅㄚ ㄒㄧ˙", 0, "巴"), "巴西")
+        c = self.c
+        for ch in keys("ㄅㄚ ㄒㄧ˙ ㄏㄜˊ ㄅㄚ ㄒㄧ˙"):
+            c.key(ch)
+        for at in (0, 3):
+            c.key(special="HOME")
+            for _ in range(at):
+                c.key(special="RIGHT")
+            c.key(special="DOWN")
+            for _ in range(c.candidates.index("八")):
+                c.key(special="DOWN")
+            c.key(special="ENTER")
+        c.key(special="ENTER")
+        self.assertEqual(c.user.phrase_count("ㄅㄚ-ㄒㄧ˙", "八西"), 0.5)
+
     def test_a_learned_word_corrected_back_is_forgotten(self):
         # 巴西 learned for ㄅㄚ ㄒㄧ˙ (ㄅㄚ ㄒㄧ there); 八 picked back: 八西 again, though 八西 is no word
         self.assertEqual(self.pick_at("ㄅㄚ ㄒㄧ˙", 0, "巴"), "巴西")
@@ -1513,7 +1544,9 @@ class LearnedSinglesTest(Base):
 class PairPickTest(Base):
     """A character picked beside a character on its own, the two no word of the dictionary (繪
     after 重: 重繪): half a pick of the pair each time it is sent, so the second time it is a word
-    (a name typed once, 你郝, is not). 會 picked twice before: 繪 alone never beats it again."""
+    (a name typed once, 你郝, is not). As the user who reported it: 繪 picked 36 times, 會 twice -
+    a pick counts little in a sentence (place_weight), so after 自訂 the context's 會 comes (重會)
+    and the pair is what makes 重繪 stay; where the context favours 繪 (我要重繪了) it comes as is."""
 
     TYPED = "ㄗˋ ㄉㄧㄥˋ ㄔㄨㄥˊ ㄏㄨㄟˋ"
     learn = LearnedSinglesTest.learn

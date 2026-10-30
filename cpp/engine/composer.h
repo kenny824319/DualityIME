@@ -58,7 +58,8 @@ using Overrides = std::map<std::pair<int, int>, Pin>;  // span -> pin
 std::vector<Scored> phrase_candidates(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user);
 std::vector<Segment> convert(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user,
                              const std::map<std::pair<int, int>, ustr>& overrides, const BigramModel* bigram,
-                             const std::optional<ustr>& prev_word, const LmScorer* lm = nullptr);  // lm: 長句選字加強
+                             const std::optional<ustr>& prev_word, const LmScorer* lm = nullptr,  // lm: 長句選字加強
+                             std::optional<bool> alone = std::nullopt);  // the syllable is all that is typed (none: a run of one)
 // log10 score of the best way to write these syllables (convert's search, no picks, nothing
 // before): how well a reading of a syllable reads with the ones around it, for 注音自動校正
 // (老 or 好 in 你老嗎). Empty if some syllable has no character.

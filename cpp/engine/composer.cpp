@@ -1031,41 +1031,61 @@ static void single_scores(const ustr& reading, std::vector<std::pair<ustr, doubl
 
 using Options = std::map<std::pair<int, int>, std::vector<std::pair<ustr, double>>>;
 
-// in the personal dictionary or picked STRONG_PICKS times for this syllable
-static bool strongly_picked(const ustr& reading, const ustr& ch, const UserModel& user) {
-    auto it = user.custom.find(reading);
-    bool mine = it != user.custom.end() && std::find(it->second.begin(), it->second.end(), ch) != it->second.end();
-    return mine || user.phrase_count(reading, ch) >= STRONG_PICKS;
-}
-
 // the dictionary's first character for this syllable (不 for ㄅㄨˋ, 他 for ㄊㄚ)
 static ustr usual_char(const ustr& reading, const Lexicon& lexicon) {
     auto cands = phrase_candidates({reading}, lexicon, nullptr);
     return cands.empty() ? ustr() : cands[0].first;
 }
 
-// How much more the user picks ch than the syllable's usual character: what of a learned character
-// goes into words. 妳 picked, 你 not: all of it (謝謝妳); the usual character itself, or one picked
-// no more than it (舊 and 就 once each): none (全部 stays, not 全不; 就是, not 舊式).
+static bool in_custom(const ustr& reading, const ustr& ch, const UserModel& user) {
+    auto it = user.custom.find(reading);
+    return it != user.custom.end() && std::find(it->second.begin(), it->second.end(), ch) != it->second.end();
+}
+
+// The user writes ch for this syllable for good: in the personal dictionary, or picked
+// STRONG_PICKS times and at least twice as often as the syllable's usual character (妳 10 times,
+// 你 never: yes; 妳 5 times, 你 4: no - one pick more must not turn every 你 into 妳).
+static bool strongly_picked(const ustr& reading, const ustr& ch, const UserModel& user, const Lexicon& lexicon) {
+    if (in_custom(reading, ch, user)) return true;
+    double n = user.phrase_count(reading, ch);
+    if (n < STRONG_PICKS) return false;
+    ustr usual = usual_char(reading, lexicon);
+    return ch == usual || n >= 2 * user.phrase_count(reading, usual);
+}
+
 // log10(1 + times picked): a character picked counts this, more the more often
 static double picked_weight(const ustr& reading, const ustr& ch, const UserModel& user) {
     double n = user.phrase_count(reading, ch);
     return n >= 1 ? std::log10(1 + n) : 0.0;  // (one faded below a whole pick: nothing, as in bonus)
 }
 
-// What the user taught of a character for a syllable, as it counts in a sentence: in full if the
-// user writes it for good (strongly_picked: the personal dictionary, STRONG_PICKS picks - 妳 for
-// someone who always writes it), else picked_weight - not the whole learned bonus, which made a
-// character picked once or twice take its syllable in every word around (國際 written 國記, 旗艦
-// 歧見; a user's picks: 76% of sentences right without them, 50% with).
-static double single_weight(const ustr& reading, const ustr& ch, const UserModel& user) {
-    return strongly_picked(reading, ch, user) ? user.bonus(reading, ch) : picked_weight(reading, ch, user);
+// What the user taught of a character for a place left to it in a sentence: the personal
+// dictionary in full, a pick picked_weight however often - 輸 picked once would take every ㄕㄨ on
+// its own (書) whatever the words around; picks pile up where something would not stay (載 23 times
+// before 下載 was learned, 繪 36 for 重繪), and in full they took every 在 and 會 (a user's picks:
+// 73% of sentences right without them, 48% with, 70% so, 66.7% with strongly_picked in full). A
+// place is the user's for good through the personal dictionary; a pick beside a character, through
+// learn_pairs.
+static double place_weight(const ustr& reading, const ustr& ch, const UserModel& user) {
+    return in_custom(reading, ch, user) ? user.bonus(reading, ch) : picked_weight(reading, ch, user);
 }
 
+// What the user taught of a character for a syllable, as it counts in a word: in full if the user
+// writes it for good (strongly_picked: 謝謝妳), else picked_weight - not the whole learned bonus,
+// which made a character picked a few times take its syllable in every word around (國際 written
+// 國記, 旗艦 歧見). A place left to one character: place_weight.
+static double single_weight(const ustr& reading, const ustr& ch, const UserModel& user, const Lexicon& lexicon) {
+    return strongly_picked(reading, ch, user, lexicon) ? user.bonus(reading, ch) : picked_weight(reading, ch, user);
+}
+
+// How much more the user picks ch than the syllable's usual character: what of a learned character
+// goes into words. 妳 picked, 你 not: all of it (謝謝妳); the usual character itself, or one picked
+// no more than it (舊 and 就 once each): none (全部 stays, not 全不; 就是, not 舊式).
 static double preference(const ustr& reading, const ustr& ch, const Lexicon& lexicon, const UserModel& user) {
     ustr usual = usual_char(reading, lexicon);
     if (ch == usual) return 0.0;
-    return std::max(0.0, single_weight(reading, ch, user) - (usual.empty() ? 0.0 : single_weight(reading, usual, user)));
+    return std::max(0.0, single_weight(reading, ch, user, lexicon) -
+                             (usual.empty() ? 0.0 : single_weight(reading, usual, user, lexicon)));
 }
 
 // The character the user writes for this syllable for good: first among its homophones, and in
@@ -1075,7 +1095,7 @@ static std::optional<char32_t> strong_homophone(const ustr& reading, const Lexic
     auto cands = phrase_candidates({reading}, lexicon, &user);
     if (cands.empty() || cands[0].first.size() != 1) return std::nullopt;
     const ustr& p = cands[0].first;
-    if (strongly_picked(reading, p, user) && preference(reading, p, lexicon, user) > 0) return p[0];
+    if (strongly_picked(reading, p, user, lexicon) && preference(reading, p, lexicon, user) > 0) return p[0];
     return std::nullopt;
 }
 
@@ -1116,8 +1136,8 @@ static void repick(std::vector<Segment>& path, const std::vector<ustr>& readings
             if (u == m.usual.end()) u = m.usual.emplace(reading, usual_char(reading, lexicon)).first;
             ustr ch(1, p[j]);
             if (ch != u->second)
-                b += std::max(0.0, single_weight(reading, ch, user) -
-                                       (u->second.empty() ? 0.0 : single_weight(reading, u->second, user)));
+                b += std::max(0.0, single_weight(reading, ch, user, lexicon) -
+                                       (u->second.empty() ? 0.0 : single_weight(reading, u->second, user, lexicon)));
         }
         return b;
     };
@@ -1139,7 +1159,8 @@ static void repick(std::vector<Segment>& path, const std::vector<ustr>& readings
                 for (int j = 0; j < l; ++j) {
                     auto s = strong.find(readings[i + j]);
                     if (s == strong.end()) s = strong.emplace(readings[i + j], strong_homophone(readings[i + j], lexicon, user)).first;
-                    if (s->second && !strongly_picked(readings[i + j], ustr(1, phrase[j]), user)) variant[j] = *s->second;
+                    if (s->second && !strongly_picked(readings[i + j], ustr(1, phrase[j]), user, lexicon))
+                        variant[j] = *s->second;
                 }
                 bool known = false;
                 for (auto& [p, _] : cands)
@@ -1239,9 +1260,11 @@ double lm_term(const LmScorer& lm, const ustr& text, const std::vector<ustr>& re
 
 static Search search(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user,
                      const std::map<std::pair<int, int>, ustr>& overrides, const BigramModel* bigram,
-                     const std::optional<ustr>& prev_word) {
-    // beam search over (position, previous phrase) so that context counts
+                     const std::optional<ustr>& prev_word, std::optional<bool> alone_ = std::nullopt) {
+    // beam search over (position, previous phrase) so that context counts; alone: the syllable is
+    // all that is typed (none: a run of one syllable)
     const int n = static_cast<int>(readings.size());
+    const bool alone = alone_ ? *alone_ : n == 1;
     std::vector<std::optional<std::pair<int, int>>> locked(n);
     for (auto& [span, _] : overrides)
         for (int k = span.first; k < span.first + span.second; ++k)
@@ -1281,24 +1304,23 @@ static Search search(const std::vector<ustr>& readings, const Lexicon& lexicon, 
                 }
                 cands = std::move(kept);
             }
-            if (!cands.empty()) {
+            if (!cands.empty() && l == 1 && user && ov == overrides.end()) {
+                // a place left to one character: the corpus's score of each, then what the user
+                // taught of it - typed on its own the whole bonus, in a sentence place_weight
+                const ustr& r = readings[i];
+                auto& opt = options[span];
+                for (size_t k = 0; k < cands.size() && k < PER_SPAN; ++k) {
+                    const ustr& p = cands[k].first;
+                    double b = user->bonus(r, p);
+                    opt.emplace_back(p, corpus_unigram(bigram, lexicon, p, cands[k].second - b) +
+                                            (alone ? b : place_weight(r, p, *user)));
+                }
+                full[span] = opt;
+                single_scores(r, opt, lexicon, *user, bigram);
+            } else if (!cands.empty()) {
                 auto& opt = options[span];
                 for (size_t k = 0; k < cands.size() && k < PER_SPAN; ++k)
                     opt.emplace_back(cands[k].first, corpus_unigram(bigram, lexicon, cands[k].first, cands[k].second));
-                if (l == 1 && user && ov == overrides.end()) {
-                    // in a sentence a pick counts picked_weight there, not the whole learned bonus,
-                    // however often (輸 picked once would take every ㄕㄨ on its own, 書 whatever the
-                    // words around; 重繪 is learned as a pair instead); the personal dictionary in
-                    // full, a syllable typed on its own too
-                    if (n > 1) {
-                        auto it = user->custom.find(readings[i]);
-                        for (auto& [p, u] : opt)
-                            if (it == user->custom.end() || std::find(it->second.begin(), it->second.end(), p) == it->second.end())
-                                u = u - user->bonus(readings[i], p) + picked_weight(readings[i], p, *user);
-                    }
-                    full[span] = opt;
-                    single_scores(readings[i], opt, lexicon, *user, bigram);
-                }
             }
         }
     }
@@ -1451,8 +1473,8 @@ static std::vector<Segment> with_lm(double score, std::vector<Segment> path, con
 
 std::vector<Segment> convert(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user,
                              const std::map<std::pair<int, int>, ustr>& overrides, const BigramModel* bigram,
-                             const std::optional<ustr>& prev_word, const LmScorer* lm) {
-    Search found = search(readings, lexicon, user, overrides, bigram, prev_word);
+                             const std::optional<ustr>& prev_word, const LmScorer* lm, std::optional<bool> alone) {
+    Search found = search(readings, lexicon, user, overrides, bigram, prev_word, alone);
     const int n = static_cast<int>(readings.size());
     std::vector<Segment> out;
     if (found.ends.empty()) {  // should not happen: every valid syllable has a char
@@ -1648,7 +1670,12 @@ std::vector<Segment> Composer::convert_all(const Overrides* instead) {
             if (a <= span.first && span.first + span.second <= b) ov[{span.first - a, span.second}] = v.second;
         std::optional<ustr> prev = a == 0 && starts_buffer ? context_word_ : std::nullopt;
         std::vector<ustr> part(readings.begin() + a, readings.begin() + b);
-        for (auto& seg : convert(part, lexicon_, &user, ov, bigram_, prev, model))
+        // (one syllable and no English word: punctuation, or the next syllable being typed, do not
+        // make it a sentence - 輸, is as picked)
+        bool alone = readings.size() == 1;
+        for (auto& t : tokens)
+            if (t.kind == Kind::En) alone = false;
+        for (auto& seg : convert(part, lexicon_, &user, ov, bigram_, prev, model, alone))
             out.push_back(Segment{a + seg.start, seg.length, seg.phrase});
     }
     runs_ = runs;
@@ -3072,6 +3099,7 @@ void Composer::learn_broken_words(const std::vector<Segment>& before) {
     // only the user taught (巴西 for ㄅㄚ ㄒㄧ˙) is forgotten, and what it now reads (八西) is half
     // learned: a word the second time. before: what it would be without the picks.
     auto now = chars_of(segments_);
+    std::set<std::pair<ustr, ustr>> halved;  // (once a sentence: a word the second time it is sent so)
     for (auto& seg : before) {
         int s = seg.start, l = seg.length;
         if (l < 2 || static_cast<int>(seg.phrase.size()) != l) continue;
@@ -3106,7 +3134,7 @@ void Composer::learn_broken_words(const std::vector<Segment>& before) {
                 // (a word only the user taught, corrected: what it now reads is half learned, a
                 // word the second time - as a pair, learn_pairs)
                 user.forget_phrase(key, seg.phrase);
-                if (user.phrase_count(key, text) < 1) user.learn_half(key, text);
+                if (user.phrase_count(key, text) < 1 && halved.insert({key, text}).second) user.learn_half(key, text);
             }
             continue;
         }
