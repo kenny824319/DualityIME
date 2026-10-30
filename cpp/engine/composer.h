@@ -208,6 +208,7 @@ private:
     void keep_rest(int s, int l);  // a pick broke a word: the rest of it stays as it was
     void drop_orphans();           // kept characters go with the pick that kept them
     void learn_group(const std::vector<std::tuple<int, std::vector<ustr>, ustr>>& group);
+    void learn_pairs(const std::vector<Segment>& before);  // 繪 picked after 重 (no word): half of 重繪
     void do_commit();
     void remember(const ustr& text);
     bool may_split(const std::string& raw) const;

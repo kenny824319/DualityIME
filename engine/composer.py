@@ -636,7 +636,7 @@ def _makes_user_word(readings, k, user):
     for l in range(2, MAX_PHRASE_LEN + 1):
         for a in range(max(0, k - l + 1), min(k, len(readings) - l) + 1):
             key = "-".join(readings[a:a + l])
-            if user.custom.get(key) or any(user.phrase_count(key, p) > 0 for p in user.phrases.get(key, ())):
+            if user.custom.get(key) or any(user.learned(key, p) for p in user.phrases.get(key, ())):
                 return True
     return False
 
@@ -805,7 +805,7 @@ def convert(readings, lexicon, user=None, overrides=None, bigram=None, prev_word
 
 def _taught(key, phrase, user):
     """phrase is in the personal dictionary under this reading key, or the user picked it (learned)."""
-    return user is not None and (phrase in user.custom.get(key, ()) or user.phrase_count(key, phrase) > 0)
+    return user is not None and (phrase in user.custom.get(key, ()) or user.learned(key, phrase))
 
 
 def _with_lm(score, path, readings, lexicon, user, overrides, bigram, prev_word, options, full, lm):
@@ -2239,6 +2239,36 @@ class Composer:
         self.overrides = {sp: v for sp, v in self.overrides.items()
                           if len(v) == 2 or len(self.overrides.get(v[3], ())) == 2}
 
+    def _learn_pairs(self, before):
+        """A character picked beside a character on its own, the two no word of the dictionary (繪
+        after 重, 重會 written: 重繪): half a pick of the pair, so the second time it is a word -
+        a pick alone never beats a common homophone picked a few times too (會), and nothing knows
+        what it was picked beside. Once a sentence; not a name picked once (你郝), nor a pick inside
+        a word or next to a character of one (自訂 + 蟲: no 訂蟲); not where both are picked
+        (_learn_group). The pair is learned for good as any word (corrected back, it is forgotten:
+        _learn_broken_words). before: what it would be without the picks."""
+        alone = {s for s, l, p in before if l == 1 and len(p) == 1}
+        now = {s for s, l, p in self.segments if l == 1 and len(p) == 1}
+        chars = _chars(self.segments)
+        picked = {s for (s, l), v in self.overrides.items() if len(v) == 2 for s in range(s, s + l)}
+        done = set()
+        for (s, l), v in sorted(self.overrides.items()):
+            if len(v) != 2 or l != 1 or s not in alone or s not in now:
+                continue
+            for a, b in ((s - 1, s), (s, s + 1)):
+                other = a if b == s else b
+                if other in picked or other not in alone or other not in now or \
+                        not any(x <= a and b < y for x, y in self.runs):
+                    continue
+                rd = self.readings[a:b + 1]
+                text = chars[a] + chars[b]
+                key = "-".join(rd)
+                if (key, text) in done or self.lexicon.has(rd, text) or \
+                        self.lexicon.reads_with_other_tones(rd, text) or self.user.phrase_count(key, text) >= 1:
+                    continue
+                done.add((key, text))
+                self.user.learn_half(key, text)
+
     def _learn_group(self, group):
         if len(group) < 2:
             return
@@ -2260,6 +2290,7 @@ class Composer:
             self._learn_broken_words(before_picks)
             self._learn_tone_variant_words(before_picks)
             self._learn_overrides()
+            self._learn_pairs(before_picks)
             learned = self.user.phrases_changed(before)
             self.user.save()
         last = self.tokens[-1] if self.tokens else None

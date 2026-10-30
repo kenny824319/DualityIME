@@ -2,3 +2,4 @@
 - [Doc claims vs code](project_doc_claims_vs_code.md) — no left/right Shift setting; 遊戲模式 is pass-through; Shift+Backspace undo not wired (wants_undo false)
 - [Bigram file silent fallback](project_bigram_missing_file_silent.md) — BigramModel on a missing path is empty, no error; _RUN_SCORES ignores which bigram
 - [push_audit new data file](project_push_audit_new_data_file.md) — a new file name (lm.bin) in shipped code blocks the push; run push_audit.scan on the branch
+- [phrase_count thresholds](project_phrase_count_thresholds.md) — `> 0` checks (autocorrect, _taught) treat counts < 1 as learned; grep both engines
