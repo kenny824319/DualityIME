@@ -98,6 +98,9 @@ class CharLM:
         self.ids = {c: i for i, c in enumerate(vocab)}
         self.layers = int(t["layers"])
         self.hidden = int(t["hidden"])
+        # the matrices every step multiplies, widened once (the same products, not made again each step)
+        self.wide = {name: t[name].astype(np.int64) for name in
+                     [f"w_{k}_q{l}" for l in range(self.layers) for k in ("ih", "hh")] + ["proj_q"]}
 
     def _read(self, path):
         with open(path, "rb") as f:
@@ -156,8 +159,8 @@ class CharLM:
         out = np.empty_like(state)
         for l in range(self.layers):
             h = state[l]
-            gi = requant(t[f"w_ih_q{l}"].astype(np.int64) @ x, t[f"w_ih_m{l}"]) + t[f"b_ih{l}"]
-            gh = requant(t[f"w_hh_q{l}"].astype(np.int64) @ h, t[f"w_hh_m{l}"]) + t[f"b_hh{l}"]
+            gi = requant(self.wide[f"w_ih_q{l}"] @ x, t[f"w_ih_m{l}"]) + t[f"b_ih{l}"]
+            gh = requant(self.wide[f"w_hh_q{l}"] @ h, t[f"w_hh_m{l}"]) + t[f"b_hh{l}"]
             r = act(t["sigmoid"], gi[:H] + gh[:H])
             zz = act(t["sigmoid"], gi[H:2 * H] + gh[H:2 * H])
             n = act(t["tanh"], gi[2 * H:] + ((r * gh[2 * H:]) >> Q))
@@ -169,7 +172,7 @@ class CharLM:
     def logits(self, state, cands):
         """Q10 logits of the candidate character ids."""
         t = self.t
-        p = requant(t["proj_q"].astype(np.int64) @ state[-1], t["proj_m"]) + t["proj_b"]
+        p = requant(self.wide["proj_q"] @ state[-1], t["proj_m"]) + t["proj_b"]
         e = t["emb_q"][cands].astype(np.int64)
         return requant(e @ p, t["emb_m"][cands]) + t["bias"][cands]
 
