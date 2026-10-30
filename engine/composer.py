@@ -78,6 +78,8 @@ COST_NO_TONE = 1.0      # syllable typed without its tone key, another one right
 SWAP_GAIN_NO_WORD = 3.5   # log10: how much better the sentence must read to swap a syllable that spells
                           # something, but makes no word, for its neighbour's (老嗎 -> 好嗎)
 SWAP_GAIN_WORD = 3.0      # ...and one that makes a word of the dictionary (你老嗎 -> 你好嗎)
+SWAP_GAIN_NO_WORD_LM = 4.0   # ...the same with 長句選字加強 on: the model joins the sentence score and finds more
+SWAP_GAIN_WORD_LM = 3.5      # to swap, in sentences typed right too (tuned with tools/autocorrect_eval.py, as above)
 SWAP_WINDOW = 3           # syllables on each side of it that count (run_score)
 RUN_SCORES_KEPT = 50000   # run_score results kept across keys (then all dropped and started again)
 _RUN_SCORES = {}
@@ -108,7 +110,7 @@ class Token:
 
 def tokenize(raw, table, user=None, english=(), forced=(), after_english=False,
              digits_as_zhuyin=False, literal=(), chinese=(), fixed=None, lexicon=None, breaks=(), exact=(),
-             taken=None, bigram=None):
+             taken=None, bigram=None, lm=None):
     """Split raw keys into the cheapest sequence of tokens.
 
     literal: raw offsets of keys that are always themselves (numpad digits and
@@ -119,6 +121,8 @@ def tokenize(raw, table, user=None, english=(), forced=(), after_english=False,
         user picked the character of the keys typed).
     taken: {start: (end, reading)} keys read as the given syllable (注音自動校正: picked from
         the list, si3 as ㄋㄧˇ); they cut the text too.
+    lm: the language model's scorer while 長句選字加強 is on (it joins the sentence score of
+        注音自動校正, _check_corrections), else None.
     Other arguments: see _tokenize_run.
     """
     cuts = sorted([(p, p + 1, None) for p in literal if p < len(raw)] +
@@ -128,7 +132,7 @@ def tokenize(raw, table, user=None, english=(), forced=(), after_english=False,
     if not cuts:
         tokens = _tokenize_run(raw, table, user, english, forced, after_english, digits_as_zhuyin, chinese, lexicon,
                                breaks, exact)
-        return _check_corrections(tokens, table, lexicon, user, exact, bigram) if table.autocorrect else tokens
+        return _check_corrections(tokens, table, lexicon, user, exact, bigram, lm) if table.autocorrect else tokens
     tokens, start = [], 0
     for a, b, text in cuts + [(len(raw), len(raw), None)]:
         if a < start:
@@ -151,7 +155,7 @@ def tokenize(raw, table, user=None, english=(), forced=(), after_english=False,
             else:
                 tokens.append(Token("fix", raw[a:b], text, a))
         start = b
-    return _check_corrections(tokens, table, lexicon, user, exact, bigram) if table.autocorrect else tokens
+    return _check_corrections(tokens, table, lexicon, user, exact, bigram, lm) if table.autocorrect else tokens
 
 
 def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=False,
@@ -508,7 +512,7 @@ def _zh_runs(tokens):
         yield run
 
 
-def _check_corrections(tokens, table, lexicon, user=None, exact=(), bigram=None):
+def _check_corrections(tokens, table, lexicon, user=None, exact=(), bigram=None, lm=None):
     """The 注音自動校正 that needs the words around a syllable, once the keys are split:
     digits read out of order (817) stay zhuyin on their own (吧) or in a word (好吧), else they
     are a number (有813個: 把個 is a word, but no likelier than 把 and 個 apart; you are 817); a syllable read with a key
@@ -520,7 +524,9 @@ def _check_corrections(tokens, table, lexicon, user=None, exact=(), bigram=None)
     dictionary (你老嗎 -> 你好嘛; tuned with tools/autocorrect_eval.py, not larger: a word typed
     is no likelier right than a syllable that makes none) - never if they make one of the
     user's own (the personal dictionary, a learned word). The
-    readings are settled here, before conversion, so picks (by reading) keep."""
+    readings are settled here, before conversion, so picks (by reading) keep.
+    lm: the language model (長句選字加強 on): it joins the sentence score of the swaps, which then
+    need the gains of the _LM thresholds; the tones are chosen without it."""
     memory = user.corrections if user is not None else None
 
     def picked(t):
@@ -552,19 +558,24 @@ def _check_corrections(tokens, table, lexicon, user=None, exact=(), bigram=None)
         tokens = out
     if lexicon is None:
         return tokens
-    def in_sentence(readings, k, reading):
+    def in_sentence(readings, k, reading, lm=lm):
         """run_score of the syllables around k (SWAP_WINDOW on each side) with k read so; the
-        dictionary's and the context model's alone (what the user taught has its own rule,
-        _makes_user_word), so the same syllables always score the same: kept across keys."""
+        dictionary's, the context model's and the language model's alone (what the user taught
+        has its own rule, _makes_user_word), so the same syllables always score the same: kept
+        across keys. lm: the language model, or None for the plain score (the tone of a syllable
+        is chosen by that: the model's tones read worse than the dictionary's and the context
+        model's, measured with tools/autocorrect_eval.py kind E)."""
         a, b = max(0, k - SWAP_WINDOW), min(len(readings), k + SWAP_WINDOW + 1)
         window = tuple(readings[a:k]) + (reading,) + tuple(readings[k + 1:b])
-        # (the syllables alone are the key: the dictionary and the context model are the same files)
-        score = _RUN_SCORES.get(window)
+        # (the syllables and whether the language model counts are the key: the dictionary and
+        # the models are the same files)
+        key = (lm is not None, window)
+        score = _RUN_SCORES.get(key)
         if score is None:
             if len(_RUN_SCORES) >= RUN_SCORES_KEPT:
                 _RUN_SCORES.clear()
-            score = run_score(list(window), lexicon, None, bigram)
-            score = _RUN_SCORES[window] = -99.0 * len(window) if score is None else score
+            score = run_score(list(window), lexicon, None, bigram, lm)
+            score = _RUN_SCORES[key] = -99.0 * len(window) if score is None else score
         return score
 
     for run in _zh_runs(tokens):
@@ -582,7 +593,7 @@ def _check_corrections(tokens, table, lexicon, user=None, exact=(), bigram=None)
                 # (a tone that makes a word the user taught first: 5km3 is 哲宇 with 哲宇 in the
                 # personal dictionary, whatever reads best otherwise)
                 mine = [r for r in forms if _makes_user_word(readings[:k] + [r] + readings[k + 1:], k, user)]
-                best_form = max(mine or forms, key=lambda r: in_sentence(readings, k, r))
+                best_form = max(mine or forms, key=lambda r: in_sentence(readings, k, r, None))
                 t.value = readings[k] = best_form
                 swapped = False
                 continue
@@ -616,7 +627,11 @@ def _check_corrections(tokens, table, lexicon, user=None, exact=(), bigram=None)
                 swapped = False
                 continue
             typed = in_sentence(readings, k, t.value)
-            gain = SWAP_GAIN_WORD if _word_score(readings, k, lexicon, None) is not None else SWAP_GAIN_NO_WORD
+            word = _word_score(readings, k, lexicon, None) is not None
+            if lm is None:
+                gain = SWAP_GAIN_WORD if word else SWAP_GAIN_NO_WORD
+            else:
+                gain = SWAP_GAIN_WORD_LM if word else SWAP_GAIN_NO_WORD_LM
             if best - typed > gain:
                 t.orig, t.value, t.corrected = t.value, best_alt, "valid"
                 readings[k] = best_alt
@@ -871,12 +886,27 @@ def nbest(readings, options, bigram, prev_word, k, n):
     return out
 
 
-def run_score(readings, lexicon, user, bigram):
+def run_score(readings, lexicon, user, bigram, lm=None):
     """log10 score of the best way to write these syllables (convert's search, no picks, nothing
     before): how well a reading of a syllable reads with the ones around it, for 注音自動校正
-    (老 or 好 in 你老嗎). None if some syllable has no character."""
-    ends, _, _ = _search(readings, lexicon, user, {}, bigram, None)
-    return max(v[0] for v in ends.values()) if ends else None
+    (老 or 好 in 你老嗎). None if some syllable has no character.
+    lm (長句選字加強): the best of the n-best that write one character per syllable by score +
+    LM_WEIGHT * the model's log10 probability (the model's is never above 0: the engine's own
+    best without it would always win a max with it), the plain score if there is none."""
+    ends, options, _ = _search(readings, lexicon, user, {}, bigram, None)
+    if not ends:
+        return None
+    base = max(v[0] for v in ends.values())
+    if lm is None:
+        return base
+    n, best = len(readings), None
+    for s, hyp in nbest(readings, options, bigram, None, NBEST_K, NBEST_N):
+        text = "".join(p for _, _, p in hyp)
+        if len(text) == n:
+            s = s + LM_WEIGHT * (lm.text_score(text, readings) / (1024 * LN10))
+            if best is None or s > best:
+                best = s
+    return base if best is None else best
 
 
 def _search(readings, lexicon, user, overrides, bigram, prev_word):
@@ -1130,7 +1160,7 @@ class Composer:
                     pinned[old[s + k].start] = (old[s + k].raw, v[0][k])
         self.tokens = tokenize(self.raw, self.table, self.user, self.english, self.forced,
                                self.after_english, self.digits_as_zhuyin, self.literal, self.chinese, self.fixed,
-                               self.lexicon, self.breaks, self.exact, self.taken, self.bigram)
+                               self.lexicon, self.breaks, self.exact, self.taken, self.bigram, self._lm())
         if self.table.autocorrect:
             for t in self.tokens:
                 pin = pinned.get(t.start)
@@ -1899,7 +1929,7 @@ class Composer:
         trial = tokenize(self.raw, self.table, self.user, self.english, forced, self.after_english,
                          self.digits_as_zhuyin, self.literal - set(unlit), (self.chinese - set(unchinese)) | {s},
                          {a: v for a, v in self.fixed.items() if a != unfix}, self.lexicon, self.breaks,
-                         self.exact, self.taken, self.bigram)
+                         self.exact, self.taken, self.bigram, self._lm())
         inside = [t for t in trial if s <= t.start < end]
         if not inside or inside[0].start != s or any(t.kind != "zh" for t in inside) or \
                 inside[-1].start + len(inside[-1].raw) != end:

@@ -3260,5 +3260,74 @@ class LongSentenceTest(unittest.TestCase):
         self.assertEqual(lm.LM_STATES_KEPT, 20000)
 
 
+class AutocorrectLMTest(AutocorrectTest):
+    """Every case of AutocorrectTest with 長句選字加強 on: the model joins the sentence score
+    (run_score) and the swaps need the gains of the _LM thresholds. Those are larger than the
+    others (tuned so that Chinese typed right changes at most 1%), so a swap that wins by less
+    stays unmade: 今篇 for 今天 (3.67 against 4.0) and 你老嗎 for 你好嗎 (3.05 against 3.5). The
+    cases that need such a swap to go on to what they test run with the gains of 3.5 / 3.0."""
+
+    NEEDS_THE_SWAP = {"test_original_char_offered", "test_pick_survives_more_keys",
+                      "test_exact_mark_moves_with_edit", "test_valid_neighbour_in_a_word"}
+
+    def setUp(self):
+        super().setUp()
+        self.c.config.set(long_sentence=True)
+        self.c.settings_changed()
+        self.gains = composer.SWAP_GAIN_NO_WORD_LM, composer.SWAP_GAIN_WORD_LM
+        if self._testMethodName in self.NEEDS_THE_SWAP:
+            composer.SWAP_GAIN_NO_WORD_LM, composer.SWAP_GAIN_WORD_LM = 3.5, 3.0
+            self.c.reset()
+
+    def tearDown(self):
+        composer.SWAP_GAIN_NO_WORD_LM, composer.SWAP_GAIN_WORD_LM = self.gains
+        super().tearDown()
+        self.c.config.set(long_sentence=False)
+        self.c.settings_changed()
+
+    def test_a_word_typed_is_swapped_too_when_the_sentence_reads_better(self):
+        # (the swap of ㄌㄠˇ for ㄏㄠˇ reads better by 3.05 only: under SWAP_GAIN_WORD_LM)
+        self.assertEqual(self.type("su3xl3a87"), "你老嗎")
+        composer.SWAP_GAIN_NO_WORD_LM, composer.SWAP_GAIN_WORD_LM = 3.5, 3.0
+        self.c.reset()
+        self.assertEqual(self.type("su3xl3a87"), "你好嗎")  # (the model writes 嗎 for ㄇㄚ˙, not 嘛)
+
+    def test_a_small_gain_is_not_enough_with_the_model(self):
+        self.assertEqual(self.type("rup qu0 "), "今篇")  # (reads better by 3.67, under SWAP_GAIN_NO_WORD_LM)
+        self.assertGreater(composer.SWAP_GAIN_NO_WORD_LM, composer.SWAP_GAIN_NO_WORD)
+
+    def test_run_score_adds_the_model(self):
+        from engine import lm
+        scorer = lm.shared(lexicon=self.c.lexicon)
+        self.assertIsNotNone(scorer)
+        rd = ["ㄋㄧˇ", "ㄏㄠˇ", "ㄇㄚ˙"]
+        plain = composer.run_score(rd, self.c.lexicon, None, self.c.bigram)
+        self.assertEqual(composer.run_score(rd, self.c.lexicon, None, self.c.bigram, None), plain)
+        with_lm = composer.run_score(rd, self.c.lexicon, None, self.c.bigram, scorer)
+        _, options, _ = composer._search(rd, self.c.lexicon, None, {}, self.c.bigram, None)
+        want = max(s + composer.LM_WEIGHT * (scorer.text_score("".join(p for _, _, p in hyp), rd)
+                                             / (1024 * composer.LN10))
+                   for s, hyp in composer.nbest(rd, options, self.c.bigram, None, composer.NBEST_K, composer.NBEST_N)
+                   if len("".join(p for _, _, p in hyp)) == len(rd))
+        self.assertEqual(with_lm, want)
+        self.assertNotEqual(with_lm, plain)
+        # (a syllable with no character: None, with the model too)
+        self.assertIsNone(composer.run_score(["ㄅㄅㄅ"], self.c.lexicon, None, self.c.bigram, scorer))
+
+    def test_run_scores_kept_apart(self):
+        # (the same syllables score differently with the model: one cache, the model in its key)
+        composer._RUN_SCORES.clear()
+        self.type("su3xl3a87")
+        self.assertTrue(composer._RUN_SCORES)
+        self.assertTrue(all(k[0] for k in composer._RUN_SCORES))
+        self.c.config.set(long_sentence=False)
+        self.c.settings_changed()
+        self.c.reset()
+        composer._RUN_SCORES.clear()
+        self.type("su3xl3a87")
+        self.assertTrue(composer._RUN_SCORES)
+        self.assertTrue(all(not k[0] for k in composer._RUN_SCORES))
+
+
 if __name__ == "__main__":
     unittest.main()

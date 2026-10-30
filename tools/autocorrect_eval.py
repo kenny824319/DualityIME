@@ -1,7 +1,9 @@
 """Measures 注音自動校正 (the autocorrect setting) on made-up typos, and what it costs
 the text typed right.
 
-    py tools/autocorrect_eval.py [--seed N] [--count N] [--natural-count N] [--show] [--bigram FILE]
+    py tools/autocorrect_eval.py [--seed N] [--count N] [--natural-count N] [--show] [--bigram FILE] [--no-lm]
+
+--no-lm turns 長句選字加強 (the setting long_sentence) off: the 3.0.2 numbers; --lm (the default) on.
 
 Fixed (setting on): a sentence of common words with one syllable mistyped comes out
 as the sentence typed right does with the setting off. Kinds of mistakes:
@@ -163,6 +165,10 @@ def main(argv):
     if "--bigram" in argv:  # (another context model file: tools/build_bigram.py --keep)
         c.bigram = load_other(c.lexicon, argv[argv.index("--bigram") + 1])
     c.config.set(remember_words=False)  # (nothing typed here may be learned as English)
+    # 長句選字加強 (the language model in the sentence score and in what is typed): on, or --no-lm = 3.0.2
+    c.config.set(long_sentence="--no-lm" not in argv)
+    c.settings_changed()
+    print("long_sentence", "off (--no-lm)" if "--no-lm" in argv else "on", flush=True)
 
     # fixed: the random word strings (rng, as before E existed: the same sentences and typos), and
     # the repo's own sentences (rng_natural); E draws from its own generator so as not to move them
