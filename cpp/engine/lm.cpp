@@ -142,13 +142,18 @@ std::unique_ptr<CharLM> CharLM::load(const std::wstring& path) {
     lm->layers_ = static_cast<int>(layers);
     std::string text(text_len, '\0');
     if (!file.read(text.data(), text.size())) return nullptr;
-    std::vector<ustr> vocab = split(from_utf8(text), U'\n');
+    // (valid UTF-8 only, as Python's decode: a file loads in both engines or in neither)
+    ustr chars = from_utf8(text);
+    if (to_utf8(chars) != text) return nullptr;  // (bytes that are not UTF-8, or written too long)
+    for (char32_t cp : chars)
+        if ((cp >= 0xD800 && cp <= 0xDFFF) || cp > 0x10FFFF) return nullptr;
+    std::vector<ustr> vocab = split(chars, U'\n');
     if (vocab.size() != V) return nullptr;
     for (size_t i = 0; i < vocab.size(); ++i)
         if (vocab[i].size() == 1) lm->ids_[vocab[i][0]] = static_cast<int>(i);  // (later ones win, like a dict)
     bool ok = file.array(lm->emb_q_, V * E) && file.array(lm->emb_m_, V) && file.array(lm->bias_, V);
-    lm->layer_.resize(layers);
-    for (uint64_t l = 0; ok && l < layers; ++l) {
+    lm->layer_.resize(static_cast<size_t>(layers));  // (all sizes checked small above: they fit size_t)
+    for (size_t l = 0; ok && l < lm->layer_.size(); ++l) {
         Layer& y = lm->layer_[l];
         y.n_in = static_cast<int>(l == 0 ? E : H);
         ok = file.array(y.w_ih_q, 3 * H * y.n_in) && file.array(y.w_ih_m, 3 * H) && file.array(y.w_hh_q, 3 * H * H) &&
@@ -158,11 +163,16 @@ std::unique_ptr<CharLM> CharLM::load(const std::wstring& path) {
          file.array(lm->sigmoid_, 2 * ACT_RANGE + 1) && file.array(lm->tanh_, 2 * ACT_RANGE + 1) &&
          file.array(lm->exp_, EXP_RANGE + 1) && file.array(lm->log_, LOG_SIZE);
     if (!ok) return nullptr;
+    // int8 weights within -127..127 (the bounds behind the int32 sums; engine/lm.py checks the same)
+    auto full_range = [](const std::vector<int8_t>& w) { return std::find(w.begin(), w.end(), -128) != w.end(); };
+    if (full_range(lm->emb_q_) || full_range(lm->proj_q_)) return nullptr;
+    for (auto& y : lm->layer_)
+        if (full_range(y.w_ih_q) || full_range(y.w_hh_q)) return nullptr;
     // what keeps the sums in 32 bits and the states within -1..1: embedded characters within
     // EMBED_MAX, gates within 0..1, tanh within -1..1; and the best candidate's exp() above 0
-    for (uint64_t c = 0; c < V; ++c)
-        for (uint64_t j = 0; j < E; ++j) {
-            int64_t x = requant(lm->emb_q_[c * E + j] * ONE, lm->emb_m_[c]);
+    for (size_t c = 0; c < static_cast<size_t>(V); ++c)
+        for (size_t j = 0; j < static_cast<size_t>(E); ++j) {
+            int64_t x = requant(lm->emb_q_[c * static_cast<size_t>(E) + j] * ONE, lm->emb_m_[c]);
             if (x > EMBED_MAX || x < -EMBED_MAX) return nullptr;
         }
     for (int32_t v : lm->sigmoid_)
@@ -202,37 +212,32 @@ CharLM::State CharLM::step(const State& state, int c) const {
     for (int j = 0; j < E_; ++j)
         x[j] = static_cast<int16_t>(requant(emb_q_[static_cast<size_t>(c) * E_ + j] * ONE, emb_m_[c]));
     State out(state.size());
-    std::vector<int16_t> h16(H);
     std::vector<int64_t> gi, gh;
     for (int l = 0; l < layers_; ++l) {
         const Layer& y = layer_[l];
-        const int32_t* h = state.data() + static_cast<size_t>(l) * H;
-        for (int j = 0; j < H; ++j) h16[j] = static_cast<int16_t>(h[j]);
+        const int16_t* h = state.data() + static_cast<size_t>(l) * H;
         matvec(y.w_ih_q, y.w_ih_m, x.data(), 3 * H, y.n_in, gi);
-        matvec(y.w_hh_q, y.w_hh_m, h16.data(), 3 * H, H, gh);
+        matvec(y.w_hh_q, y.w_hh_m, h, 3 * H, H, gh);
         for (int j = 0; j < 3 * H; ++j) {
             gi[j] += y.b_ih[j];
             gh[j] += y.b_hh[j];
         }
-        int32_t* o = out.data() + static_cast<size_t>(l) * H;
+        int16_t* o = out.data() + static_cast<size_t>(l) * H;
         for (int j = 0; j < H; ++j) {
             int64_t r = act(sigmoid_, gi[j] + gh[j]);
             int64_t z = act(sigmoid_, gi[H + j] + gh[H + j]);
             int64_t n = act(tanh_, gi[2 * H + j] + ((r * gh[2 * H + j]) >> Q));
-            o[j] = static_cast<int32_t>(((ONE - z) * n + z * h[j]) >> Q);
+            // (within -1..1: a mix of n and h, both within it, the tables checked at load)
+            o[j] = static_cast<int16_t>(((ONE - z) * n + z * h[j]) >> Q);
         }
-        x.resize(H);
-        for (int j = 0; j < H; ++j) x[j] = static_cast<int16_t>(o[j]);
+        x.assign(o, o + H);
     }
     return out;
 }
 
 std::vector<int64_t> CharLM::logits(const State& state, const std::vector<int>& cands) const {
-    std::vector<int16_t> h16(H_);
-    const int32_t* h = state.data() + static_cast<size_t>(layers_ - 1) * H_;
-    for (int j = 0; j < H_; ++j) h16[j] = static_cast<int16_t>(h[j]);
     std::vector<int64_t> p;
-    matvec(proj_q_, proj_m_, h16.data(), E_, H_, p);
+    matvec(proj_q_, proj_m_, state.data() + static_cast<size_t>(layers_ - 1) * H_, E_, H_, p);
     int64_t total = 0, top = 0;
     for (int j = 0; j < E_; ++j) {
         p[j] += proj_b_[j];
