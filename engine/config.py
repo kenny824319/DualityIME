@@ -5,6 +5,7 @@ import os
 
 DEFAULTS = {
     "autocorrect": False,       # 注音自動校正: keys next to the right one, parts out of order, a key typed twice
+    "long_sentence": True,      # 長句選字加強: the language model (data/lm.bin) judges the whole run of Chinese
     "punctuation": "half",      # "half": , . ?   "full": ，。？
     "space": "half",            # "half" or "full" (　) when typing a space on its own
     "full_width": False,        # 全形 mode (Shift+Space): letters, digits, marks, spaces all full width

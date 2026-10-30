@@ -10,6 +10,11 @@ from engine import DEFAULTS, Config, composer, create_composer  # noqa: E402
 from engine.lexicon import FORGET_DAYS, UserModel  # noqa: E402
 from engine.zhuyin import KEYMAP, TONES  # noqa: E402
 
+# The tests of other features run with 長句選字加強 off (LongSentenceTest turns it on itself):
+# every Config and Composer here starts from DEFAULTS. DUALITYIME_TEST_LONG_SENTENCE=1 runs
+# them all with it on, to see what the model changes.
+DEFAULTS["long_sentence"] = os.environ.get("DUALITYIME_TEST_LONG_SENTENCE") == "1"
+
 _REV = {v: k for k, v in KEYMAP.items()}
 _TONE_KEY = {v: k for k, v in TONES.items() if v}
 
@@ -3007,6 +3012,229 @@ class LanguageModelFileTest(unittest.TestCase):
         with open(out, "wb") as f:
             f.write(data[:-5])
         self.assertIsNone(lm.load(self.dir))
+
+
+class LongSentenceTest(unittest.TestCase):
+    """長句選字加強: convert's n-best scored again with the language model (data/lm.bin)."""
+
+    # sentences the model puts right (tools/lm/evaluate_lm.py --examples)
+    FIXED = ["雖然輪船的左舷已經被拆毀", "原味炸雞的雞肉部分", "這個做法說慢不是很慢"]
+    # held-out sentences (tools/lm/evaluate_lm.py's eval_samples, 6-20 characters)
+    HELD_OUT = [
+        "普朗蒂耶爾是法國摩澤爾省的一箇舊市鎮", "普朗蒂耶爾併入梅斯", "成為了梅斯的街區",
+        "普朗蒂耶爾位於法國大東部大區摩澤爾省", "該省份為法國東北部內陸省份", "是洛林的一部分",
+        "西南接默爾特", "東臨下萊茵省", "北與盧森堡和德國接壤", "普朗蒂耶爾的時區為",
+        "普朗蒂耶爾的郵政編碼為", "普朗蒂耶爾於", "年時的人口數量為", "泛代數幾何將環上的幾何推廣到了任意簇上",
+        "每個代數都有自己的代數幾何", "注意不要混淆簇與代數簇", "勒薩布隆是法國摩澤爾省的一箇舊市鎮",
+        "勒薩布隆併入梅斯", "上次的四隻翼就祇有四個窿", "現在在每一個大窿之內加上紗網", "上星期收到的郵件",
+        "四隻翼上總有過百個窿吧", "其實我要做的散氣口需要兩種形狀的膠片", "上面的三十四片是大的",
+        "而小一點的則是在其中十六片的弧邊處再切去", "些少膠料便成", "於是乎我把上圖用黃色圈起來的模修一修改",
+        "就成為另一個模去切那十六片膠板", "昨晚補影的就是關於這步驟的相片", "但我相信縱沒有相片大家也猜到大概是怎樣的",
+        "我就是如此這般切了三十四塊一模一樣的小膠", "至少我在兩小時多就做好了", "包括度好第一塊所需膠板的外形",
+        "做模和休息上網的時間", "我的做法其實與大陸工廠的女工替扭蛋上色一", "要上白色就用一個專為上白色的",
+        "再要上紅色就用另一個專為紅色而設的", "就是這麼簡單", "上回發覺很多卜友都以為切三十多片一模一樣",
+        "的膠板要花很多功夫", "但事實上的確是花功夫", "祇不過並非很多人想像般花功夫吧",
+        "今天天氣很好", "我們下午去開會", "這個問題需要解決", "請幫我確認一下", "他說他明天不能來",
+        "電腦的輸入法有問題", "我想買一台新的手機", "目前也沒看到官方的修正",
+    ]
+
+    @classmethod
+    def setUpClass(cls):
+        from engine import load_resources, lm
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.table, cls.lexicon, cls.english, _, cls.bigram, _ = load_resources(None)
+        cls.scorer = lm.shared(lexicon=cls.lexicon)
+        best = {}
+        for reading, lst in cls.lexicon.entries.items():
+            for p, s in lst:
+                if s > best.get(p, ("", -99))[1]:
+                    best[p] = (reading, s)
+        cls.best = {p: r for p, (r, _) in best.items()}
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def setUp(self):
+        self.assertIsNotNone(self.scorer, "data/lm.bin or numpy missing")
+
+    def user(self, words=()):
+        """A fresh user in a folder of its own, with these (phrase, reading) in 個人詞庫."""
+        d = tempfile.mkdtemp(dir=self.tmp.name)
+        if words:
+            with open(os.path.join(d, "dictionary.json"), "w", encoding="utf-8") as f:
+                json.dump({"words": [list(w) for w in words]}, f, ensure_ascii=False)
+        return UserModel(os.path.join(d, "user.json"))
+
+    def readings(self, text):
+        """The dictionary's usual readings of text, longest words first (as tools/evaluate.py)."""
+        out, i = [], 0
+        while i < len(text):
+            for l in range(min(8, len(text) - i), 0, -1):
+                r = self.best.get(text[i:i + l])
+                if r:
+                    out.extend(r.split("-"))
+                    i += l
+                    break
+            else:
+                self.fail(f"no reading for {text[i:]}")
+        return out
+
+    def text(self, readings, user=None, overrides=None, lm=None):
+        return "".join(p for _, _, p in composer.convert(readings, self.lexicon, user, overrides, self.bigram, None, lm))
+
+    def composer(self, on, user=None):
+        config = Config()
+        config.set(long_sentence=on)
+        return composer.Composer(self.table, self.lexicon, self.english, user or self.user(), self.bigram, config)
+
+    def zhuyin(self, readings):
+        """Keys for the readings (first tone: a space)."""
+        return keys(" ".join(readings))
+
+    def test_fixes_long_sentence(self):
+        for sentence in self.FIXED:
+            rd = self.readings(sentence)
+            user = self.user()
+            off = self.text(rd, user)
+            self.assertNotEqual(off, sentence)  # (what 3.0.2 writes)
+            self.assertEqual(self.text(rd, user, lm=self.scorer), sentence)
+        # through the Composer, and the setting turned off again
+        sentence = self.FIXED[-1]
+        rd = self.readings(sentence)
+        c = self.composer(True)
+        for ch in self.zhuyin(rd):
+            c.key(ch)
+        self.assertEqual(c.readings, rd)
+        self.assertEqual(c.composition, sentence)
+        c.config.set(long_sentence=False)
+        c.settings_changed()
+        self.assertEqual(c.composition, self.text(rd, c.user))
+
+    def test_off_is_unchanged(self):
+        c = self.composer(False)
+        self.assertEqual(len(self.HELD_OUT), 50)
+        for sentence in self.HELD_OUT:
+            rd = self.readings(sentence)
+            c.reset()
+            for ch in self.zhuyin(rd):
+                c.key(ch)
+            self.assertEqual(c.readings, rd)
+            plain = composer.convert(rd, self.lexicon, c.user, {}, self.bigram)
+            self.assertEqual(c.segments, plain, sentence)
+            self.assertEqual(composer.convert(rd, self.lexicon, c.user, {}, self.bigram, None, None), plain)
+
+    def test_override_kept(self):
+        sentence = self.FIXED[0]
+        rd = self.readings(sentence)
+        off = self.text(rd)
+        k = next(i for i, (a, b) in enumerate(zip(off, sentence)) if a != b)
+        on = self.text(rd, overrides={(k, 1): off[k]}, lm=self.scorer)
+        self.assertEqual(on[k], off[k])
+
+    def check_word_kept(self, user):
+        rd = self.readings("這個介面很好用")
+        self.assertEqual(self.text(rd, user), "這個界面很好用")
+        # (the model prefers 介面; turned up, it would win without the protection)
+        self.assertGreater(self.scorer.text_score("這個介面很好用", rd), self.scorer.text_score("這個界面很好用", rd))
+        saved = composer.LM_WEIGHT
+        composer.LM_WEIGHT = 1000.0
+        try:
+            hyps = composer.nbest(rd, composer._search(rd, self.lexicon, user, {}, self.bigram, None)[1],
+                                  self.bigram, None, composer.NBEST_K, composer.NBEST_N)
+            self.assertIn("這個介面很好用", ["".join(p for _, _, p in path) for _, path in hyps])
+            self.assertEqual(self.text(rd, user, lm=self.scorer), "這個界面很好用")
+        finally:
+            composer.LM_WEIGHT = saved
+
+    def test_custom_word_kept(self):
+        self.check_word_kept(self.user([("界面", "ㄐㄧㄝˋ ㄇㄧㄢˋ")]))
+
+    def test_learned_word_kept(self):
+        user = self.user()
+        user.learn_phrase("ㄐㄧㄝˋ-ㄇㄧㄢˋ", "界面")
+        self.check_word_kept(user)
+
+    def test_single_pick_can_lose(self):
+        user = self.user()
+        user.learn_phrase("ㄒㄧㄢˋ", "線")
+        rd = self.readings("我現在要去吃飯")
+        self.assertEqual(self.text(rd, user, lm=self.scorer), "我現在要去吃飯")
+
+    def test_single_syllable_untouched(self):
+        user = self.user()
+        for _ in range(3):
+            user.learn_phrase("ㄋㄧˇ", "妳")
+        for rd in (["ㄋㄧˇ"], ["ㄉㄜ˙"], ["ㄒㄧㄢˋ"], ["ㄊㄚ"]):
+            for u in (None, user):
+                self.assertEqual(self.text(rd, u, lm=self.scorer), self.text(rd, u))
+        self.assertEqual(self.text(["ㄋㄧˇ"], user, lm=self.scorer), "妳")
+
+    def test_tie_keeps_engine_choice(self):
+        saved = composer.LM_WEIGHT
+        composer.LM_WEIGHT = 0.0
+        try:
+            for sentence in self.FIXED + self.HELD_OUT[:10]:
+                rd = self.readings(sentence)
+                self.assertEqual(self.text(rd, lm=self.scorer), self.text(rd))
+        finally:
+            composer.LM_WEIGHT = saved
+
+    def test_char_outside_syllable_list(self):
+        import numpy as np
+        s, lm = self.scorer, self.scorer.lm
+        cands = s.candidates("ㄒㄧㄢˋ")
+        scores = lm.scores(lm.start(), cands)
+        self.assertEqual(s.text_score("現", ["ㄒㄧㄢˋ"]), int(scores[int(np.searchsorted(cands, lm.ids["現"]))]))
+        self.assertEqual(s.text_score("我", ["ㄒㄧㄢˋ"]), int(scores.min()))  # (not a ㄒㄧㄢˋ)
+        # unknown to the model: <unk>'s score where the list has it (a character of the dictionary
+        # the model does not know), else the lowest
+        unknown = "\U0010fffd"
+        self.assertEqual(cands[0], 0)
+        self.assertEqual(s.text_score(unknown, ["ㄒㄧㄢˋ"]), int(scores[0]))
+        syl = next(r for r in sorted(self.lexicon.entries)
+                   if "-" not in r and s.candidates(r) is not None and s.candidates(r)[0] != 0)
+        self.assertEqual(s.text_score(unknown, [syl]), int(lm.scores(lm.start(), s.candidates(syl)).min()))
+        self.assertIsNone(s.candidates("ㄒㄧㄢˋㄒ"))
+        self.assertEqual(s.text_score("我", ["ㄒㄧㄢˋㄒ"]), 0)  # (a syllable with no list)
+        two = s.text_score("現在", ["ㄒㄧㄢˋ", "ㄗㄞˋ"])
+        self.assertIsInstance(two, int)
+        self.assertEqual(two, s.text_score("現", ["ㄒㄧㄢˋ"]) + int(
+            lm.scores(lm.step(lm.start(), lm.ids["現"]), s.candidates("ㄗㄞˋ"))[
+                int(np.searchsorted(s.candidates("ㄗㄞˋ"), lm.ids["在"]))]))
+
+    def test_state_cache_bounded(self):
+        import numpy as np
+        from engine import lm
+
+        class Fake:  # (the cache, not the model: a model that steps in no time)
+            vocab, ids = self.scorer.lm.vocab, self.scorer.lm.ids
+
+            def start(self):
+                return 0
+
+            def step(self, state, c):
+                return state * 31 + c
+
+            def scores(self, state, cands):
+                return -(np.arange(len(cands), dtype=np.int64) + state % 7)
+
+        saved = lm.LM_STATES_KEPT
+        lm.LM_STATES_KEPT = 100
+        try:
+            s = lm.Scorer(Fake(), self.lexicon)
+            chars = [ch for ch, _ in self.lexicon.entries["ㄧ"]][:20]
+            first = s.text_score(chars[0] + chars[1], ["ㄧ", "ㄧ"])
+            for a in chars:
+                for b in chars[:15]:
+                    s.text_score(a + b, ["ㄧ", "ㄧ"])
+                    self.assertLessEqual(len(s.states), lm.LM_STATES_KEPT)
+                    self.assertLessEqual(len(s.score_cache), lm.LM_STATES_KEPT)
+            self.assertIn("", s.states)
+            self.assertEqual(s.text_score(chars[0] + chars[1], ["ㄧ", "ㄧ"]), first)  # (the same after a clear)
+        finally:
+            lm.LM_STATES_KEPT = saved
+        self.assertEqual(lm.LM_STATES_KEPT, 20000)
 
 
 if __name__ == "__main__":
