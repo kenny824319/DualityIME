@@ -195,3 +195,95 @@ def load(data_dir=DATA_DIR):
         return CharLM(path)
     except Exception:
         return None
+
+
+LM_STATES_KEPT = 20000  # states (and scored syllables) kept across keys, then all dropped but the start
+
+
+class Scorer:
+    """The model's score of a text written for some syllables, as convert() uses it: each
+    character among the characters its syllable may be (every one a word of the dictionary
+    writes for it), the text from the start of the run of Chinese (<s>, nothing before it).
+
+    States depend only on the text before: kept by text, so the hypotheses of one key and the
+    keys after it share their beginnings (LM_STATES_KEPT, then started again)."""
+
+    def __init__(self, lm, lexicon):
+        self.lm, self.lexicon = lm, lexicon
+        self._cands = None  # syllable -> sorted ids, made on first use
+        self._clear()
+
+    def _clear(self):
+        self.states = {"": self.lm.start()}
+        self.score_cache = {}  # (text before, syllable) -> scores of the syllable's candidates
+
+    def candidates(self, syllable):
+        """Sorted vocabulary ids of every character a word of the dictionary writes for the
+        syllable (0 for one the model does not know), or None."""
+        if self._cands is None:
+            ids, out = self.lm.ids, {}
+            for reading, lst in self.lexicon.entries.items():
+                syls = reading.split("-")
+                for p, _ in lst:
+                    if len(p) == len(syls):
+                        for s, ch in zip(syls, p):
+                            out.setdefault(s, set()).add(ids.get(ch, 0))
+            self._cands = {s: _numpy().array(sorted(v), dtype=np.int64) for s, v in out.items()}
+        return self._cands.get(syllable)
+
+    def _room(self):
+        if len(self.states) >= LM_STATES_KEPT or len(self.score_cache) >= LM_STATES_KEPT:
+            self._clear()
+
+    def state(self, text):
+        k = len(text)
+        while text[:k] not in self.states:
+            k -= 1
+        st = self.states[text[:k]]
+        for j in range(k, len(text)):
+            st = self.lm.step(st, self.lm.ids.get(text[j], 0))
+            self._room()
+            self.states[text[:j + 1]] = st
+        return st
+
+    def char_score(self, before, ch, syllable):
+        """Q10 natural log probability of ch after before, among the syllable's characters; one
+        not among them (or unknown to the model, if <unk> is not) gets the lowest of theirs, and a
+        syllable with no list 0."""
+        cands = self.candidates(syllable)
+        if cands is None:
+            return 0
+        key = (before, syllable)
+        scores = self.score_cache.get(key)
+        if scores is None:
+            scores = self.lm.scores(self.state(before), cands)
+            self._room()
+            self.score_cache[key] = scores
+        c = self.lm.ids.get(ch, 0)
+        i = int(np.searchsorted(cands, c))
+        return int(scores[i]) if i < len(cands) and cands[i] == c else int(scores.min())
+
+    def text_score(self, text, readings):
+        """The sum of the characters' scores (Q10), one character per syllable."""
+        return sum(self.char_score(text[:k], ch, readings[k]) for k, ch in enumerate(text))
+
+
+_shared = None
+_loaded = False
+
+
+def shared(data_dir=None, lexicon=None):
+    """The Scorer of data_dir's model, loaded once for the whole process (later calls get the
+    same one, whatever they pass), or None without the model. lexicon: the one the engine uses
+    (else data_dir's is read)."""
+    global _shared, _loaded
+    if not _loaded:
+        _loaded = True
+        data_dir = data_dir or DATA_DIR
+        lm = load(data_dir)
+        if lm is not None:
+            if lexicon is None:
+                from .lexicon import Lexicon
+                lexicon = Lexicon(os.path.join(data_dir, "lexicon.txt"))
+            _shared = Scorer(lm, lexicon)
+    return _shared

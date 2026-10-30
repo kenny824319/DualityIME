@@ -4,6 +4,7 @@ import copy
 import math
 import re
 
+from . import lm as language_model
 from . import symbols
 from .config import Config
 from .lexicon import AS_ENGLISH, MAX_PHRASE_LEN, ZHUYIN_TEXT, is_code, is_email, is_zhuyin_text
@@ -773,20 +774,98 @@ def single_scores(reading, scored, lexicon, user, bigram):
     return [(p, u - shift) for p, u in scored]
 
 
-def convert(readings, lexicon, user=None, overrides=None, bigram=None, prev_word=None):
+LM_WEIGHT = 0.5    # 長句選字加強: log10 of the model's probability counts this much against the engine's score
+LN10 = 2.302585092994046  # (written out: the C++ engine uses the same digits)
+NBEST_K = 5        # n-best: paths kept per (position, last phrase)
+NBEST_N = 10       # ...and distinct texts the model scores
+
+
+def convert(readings, lexicon, user=None, overrides=None, bigram=None, prev_word=None, lm=None):
     """Best phrase sequence for a syllable run.
 
     Beam search over (position, previous phrase) so that context counts:
     after 我 the reading ㄉㄜ˙ prefers 的, after 跑 it prefers 得.
     overrides: {(start, length): phrase} picked by the user; always kept.
     prev_word: phrase just before this run (e.g. from the last commit).
+    lm: an engine.lm.Scorer (長句選字加強) or None.
     Returns [(start, length, phrase)].
     """
-    ends, options, full = _search(readings, lexicon, user, overrides or {}, bigram, prev_word)
+    overrides = overrides or {}
+    ends, options, full = _search(readings, lexicon, user, overrides, bigram, prev_word)
     if not ends:  # should not happen: every valid syllable has a char
         return [(i, 1, readings[i]) for i in range(len(readings))]
-    path = max(ends.values(), key=lambda v: v[0])[1]
-    return repick(path, readings, lexicon, options, full, user, bigram, prev_word, overrides or {})
+    score, path = max(ends.values(), key=lambda v: v[0])
+    path = repick(path, readings, lexicon, options, full, user, bigram, prev_word, overrides)
+    if lm is None or len(readings) < 2:  # (one syllable: the model sees only <s>, the user's 妳 would lose)
+        return path
+    return _with_lm(score, path, readings, lexicon, user, overrides, bigram, prev_word, options, full, lm)
+
+
+def _taught(key, phrase, user):
+    """phrase is in the personal dictionary under this reading key, or the user picked it (learned)."""
+    return user is not None and (phrase in user.custom.get(key, ()) or user.phrase_count(key, phrase) > 0)
+
+
+def _with_lm(score, path, readings, lexicon, user, overrides, bigram, prev_word, options, full, lm):
+    """長句選字加強: the best of the n-best by score + LM_WEIGHT * the model's log10 probability.
+    Each text as repick makes it (同音字偏好 still counts, and the model judges what is shown); the
+    engine's own choice comes first and only a strictly better one replaces it. What the user
+    taught is never changed: picks are in every path already (+1000 in options), and a word of
+    two syllables or more in the personal dictionary or learned must stay where it is, as it is."""
+    n = len(readings)
+    text = "".join(p for _, _, p in path)
+    if len(text) != n:  # (one character per syllable, or the model cannot read it)
+        return path
+    kept = [(i, l, p) for i, l, p in path if l > 1 and _taught("-".join(readings[i:i + l]), p, user)]
+    best, best_score = path, score + LM_WEIGHT * (lm.text_score(text, readings) / (1024 * LN10))
+    seen = {text}
+    for s, hyp in nbest(readings, options, bigram, prev_word, NBEST_K, NBEST_N):
+        hyp = repick(hyp, readings, lexicon, options, full, user, bigram, prev_word, overrides, True)
+        text = "".join(p for _, _, p in hyp)
+        if text in seen:
+            continue
+        seen.add(text)
+        if len(text) != n or any(text[i:i + l] != p for i, l, p in kept):
+            continue
+        s = s + LM_WEIGHT * (lm.text_score(text, readings) / (1024 * LN10))
+        if s > best_score:
+            best, best_score = hyp, s
+    return best
+
+
+def nbest(readings, options, bigram, prev_word, k, n):
+    """The n best paths with distinct texts [(score, path)], best first: _search's beam, but k
+    paths kept for each (position, last phrase) instead of one (the beam's ends differ only in
+    their last phrase: a choice in the middle of the sentence never comes up again). options as
+    _search gives them (the user's bonuses and picks in)."""
+    states = [dict() for _ in range(len(readings) + 1)]  # last phrase -> [(score, path)] best first, at most k
+    states[0][prev_word] = [(0.0, [])]
+    for i in range(len(readings)):
+        if not states[i]:
+            continue
+        beam = sorted(states[i].items(), key=lambda kv: -kv[1][0][0])[:BEAM]
+        for l in range(1, min(MAX_PHRASE_LEN, len(readings) - i) + 1):
+            cands = options.get((i, l))
+            if not cands:
+                continue
+            nxt = states[i + l]
+            for phrase, unigram in cands:
+                lst = nxt.setdefault(phrase, [])
+                for prev, hyps in beam:
+                    t = transition(bigram, prev, phrase, unigram)
+                    for score, path in hyps:
+                        lst.append((score + t, path + [(i, l, phrase)]))
+                lst.sort(key=lambda h: -h[0])
+                del lst[k:]
+    out, seen = [], set()
+    for score, path in sorted((h for lst in states[-1].values() for h in lst), key=lambda h: -h[0]):
+        text = "".join(p for _, _, p in path)
+        if text not in seen:
+            seen.add(text)
+            out.append((score, path))
+            if len(out) >= n:
+                break
+    return out
 
 
 def run_score(readings, lexicon, user, bigram):
@@ -886,7 +965,7 @@ def strongly_picked(reading, ch, user):
     return ch in user.custom.get(reading, ()) or user.phrase_count(reading, ch) >= STRONG_PICKS
 
 
-def repick(path, readings, lexicon, options, full, user, bigram, prev_word, overrides=()):
+def repick(path, readings, lexicon, options, full, user, bigram, prev_word, overrides=(), keep=False):
     """The words are where single_scores let them be; now each takes, among the ways the
     dictionary writes the same syllables, the one with the homophones the user picked and the
     words on either side: 妳 for someone who writes 妳, alone or inside 謝謝妳 (the dictionary has
@@ -895,7 +974,11 @@ def repick(path, readings, lexicon, options, full, user, bigram, prev_word, over
     word, a homophone the user prefers for good (strong_homophone) takes the place of the
     dictionary's (她說 for someone with 她 in the personal dictionary, though it has only 他說),
     unless the user picks the dictionary's one for good too (始 in 開始, with 使 picked as often).
-    A word the user picked from the list stays as picked (開駛)."""
+    A word the user picked from the list stays as picked (開駛).
+    keep: a path of the n-best (長句選字加強): each place keeps its phrase unless the user prefers
+    another one (its characters, or the single character, carry more of what the user taught).
+    (Else the context model's own choice would come back each time: 肌肉 for 雞肉 in 炸雞的雞肉,
+    and the language model would never see the other.)"""
     if not user:
         return path
     path = list(path)
@@ -905,6 +988,10 @@ def repick(path, readings, lexicon, options, full, user, bigram, prev_word, over
         if len(p) != l:
             return 0.0
         return sum(preference(readings[i + j], ch, lexicon, user) for j, ch in enumerate(p))
+
+    def taught(i, l, p):
+        """How much of what the user taught p carries (keep)."""
+        return user.bonus(readings[i], p) if (i, l) in full else char_bonus(i, l, p)
 
     for k, (i, l, phrase) in enumerate(path):
         if any(a < i + l and i < a + b for a, b in overrides):
@@ -925,6 +1012,9 @@ def repick(path, readings, lexicon, options, full, user, bigram, prev_word, over
                     cands.append((variant, u + char_bonus(i, l, variant)))
         else:
             continue
+        if keep:
+            own = taught(i, l, phrase)
+            cands = [(p, u) for p, u in cands if p == phrase or taught(i, l, p) > own]
         prev = path[k - 1][2] if k else prev_word
         after = None
         if k + 1 < len(path):
@@ -1019,7 +1109,7 @@ class Composer:
         self.user.forget_words(self.config.forget_words)
         self.user.forget_emails(self.config.forget_emails)
         self.user.import_memory(self.config.import_memory)
-        if self.table.autocorrect != (self.config.autocorrect):
+        if self.table.autocorrect != (self.config.autocorrect) or self._lm_on != self.config.long_sentence:
             self.table.autocorrect = self.config.autocorrect
             self._refresh()
         self._render()
@@ -1062,6 +1152,11 @@ class Composer:
         self.segments = self._convert_all()
         self._render()
 
+    def _lm(self):
+        """The language model's scorer while 長句選字加強 is on (None without the model)."""
+        self._lm_on = self.config.long_sentence
+        return language_model.shared(lexicon=self.lexicon) if self._lm_on else None
+
     def _convert_all(self, overrides=None):
         """Convert each maximal run of zh tokens; returns per-syllable phrases. overrides:
         instead of the user's picks ({}: what it would be without them)."""
@@ -1082,10 +1177,11 @@ class Composer:
         if in_run:
             runs.append((run_start, idx))
         starts_buffer = bool(self.tokens) and self.tokens[0].kind == "zh"
+        lm = self._lm()
         for a, b in runs:
             ov = {(s - a, l): v[1] for (s, l), v in overrides.items() if a <= s and s + l <= b}
             prev = self.context_word if a == 0 and starts_buffer else None
-            for s, l, p in convert(self.readings[a:b], self.lexicon, self.user, ov, self.bigram, prev):
+            for s, l, p in convert(self.readings[a:b], self.lexicon, self.user, ov, self.bigram, prev, lm):
                 out.append((a + s, l, p))
         self.runs = runs
         return out
