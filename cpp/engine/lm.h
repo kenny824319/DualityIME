@@ -23,6 +23,8 @@ public:
 
     State start() const;                          // after <s>: step() from zeros with id 1
     State step(const State& state, int c) const;  // after character id c
+    // step() for each state and character id at once (the same results; the weights read once)
+    std::vector<State> steps(const std::vector<const State*>& states, const std::vector<int>& cs) const;
     // Q10 natural log probability of each candidate id, among the candidates alone (<= 0)
     std::vector<int64_t> scores(const State& state, const std::vector<int>& cands) const;
     int id(char32_t ch) const;  // the character's vocabulary id, 0 (<unk>) if the model does not know it
@@ -41,6 +43,8 @@ private:
     int32_t dot(const int8_t* row, const int16_t* x, int n) const;
     void matvec(const std::vector<int8_t>& w, const std::vector<int32_t>& m, const int16_t* x, int rows, int n,
                 std::vector<int64_t>& out) const;
+    void matvecs(const std::vector<int8_t>& w, const std::vector<int32_t>& m, const std::vector<const int16_t*>& xs,
+                 int rows, int n, std::vector<std::vector<int64_t>>& outs) const;
 
     int V_ = 0, E_ = 0, H_ = 0, layers_ = 0;
     bool avx2_ = false;
@@ -63,7 +67,7 @@ constexpr size_t LM_STATES_KEPT = 3000;
 // one request at a time).
 class LmScorer {
 public:
-    LmScorer(const CharLM& lm, const Lexicon& lexicon) : lm_(lm), lexicon_(lexicon) { clear(); }
+    LmScorer(const CharLM& lm, const Lexicon& lexicon);
     // sorted ids of every character a word of the dictionary writes for the syllable (0 for one
     // the model does not know), or nullptr
     const std::vector<int>* candidates(const ustr& syllable) const;
@@ -72,6 +76,8 @@ public:
     int64_t char_score(const ustr& before, char32_t ch, const ustr& syllable) const;
     // the sum of the characters' scores (Q10), one character per syllable
     int64_t text_score(const ustr& text, const std::vector<ustr>& readings) const;
+    // the states of every beginning of the texts, stepped together (text_score then finds them)
+    void prepare(const std::vector<ustr>& texts) const;
     const CharLM& model() const { return lm_; }
 
 private:
@@ -81,10 +87,24 @@ private:
 
     const CharLM& lm_;
     const Lexicon& lexicon_;
-    mutable bool cands_built_ = false;
-    mutable std::unordered_map<ustr, std::vector<int>> cands_;
+    std::unordered_map<ustr, std::vector<int>> cands_;
     mutable std::unordered_map<ustr, CharLM::State> states_;
     mutable std::unordered_map<ustr, std::vector<int64_t>> score_cache_;  // before + U'\0' + syllable
+};
+
+// 長句選字加強's model and scorer, read from the file the first time they are asked for (with the
+// setting off the engine never reads it: no memory, no time). Not thread-safe, as LmScorer.
+class LanguageModel {
+public:
+    LanguageModel(std::wstring path, const Lexicon& lexicon) : path_(std::move(path)), lexicon_(lexicon) {}
+    const LmScorer* get() const;  // nullptr without the file, or one that cannot be read
+
+private:
+    std::wstring path_;
+    const Lexicon& lexicon_;
+    mutable bool tried_ = false;
+    mutable std::unique_ptr<CharLM> model_;
+    mutable std::unique_ptr<LmScorer> scorer_;  // (after model_: it uses it)
 };
 
 }  // namespace sz

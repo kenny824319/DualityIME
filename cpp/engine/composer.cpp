@@ -51,8 +51,6 @@ constexpr double COST_NO_TONE = 1.0;  // a syllable typed without its tone key, 
 constexpr double SWAP_GAIN_NO_WORD = 3.5;  // log10: how much better the sentence must read to swap a syllable that
                                            // spells something, but makes no word, for its neighbour's (老嗎 -> 好嗎)
 constexpr double SWAP_GAIN_WORD = 3.0;     // ...and one that makes a word of the dictionary (你老嗎 -> 你好嗎)
-constexpr double SWAP_GAIN_NO_WORD_LM = 4.0;  // ...the same with 長句選字加強 on: the model joins the sentence score and
-constexpr double SWAP_GAIN_WORD_LM = 3.5;     // finds more to swap, in sentences typed right too (tuned as above)
 constexpr int SWAP_WINDOW = 3;             // syllables on each side of it that count (run_score)
 constexpr size_t RUN_SCORES_KEPT = 50000;  // run_score results kept across keys (then all dropped and started again)
 constexpr double ORDER_DIGITS_GAIN = 1.0;    // ...and for digits out of order to stay zhuyin (好吧, not 有813個 -> 有把個)
@@ -676,16 +674,15 @@ bool makes_user_word(const std::vector<ustr>& readings, size_t k, const UserMode
     return false;
 }
 
-// run_score results kept across keys (the dictionary's, the context model's and the language
-// model's alone, so the same syllables always score the same)
+// run_score results kept across keys (the dictionary's and the context model's alone, so the
+// same syllables always score the same)
 std::unordered_map<ustr, double>& run_scores() {
     static std::unordered_map<ustr, double> kept;
     return kept;
 }
 
 std::vector<Token> check_corrections(std::vector<Token> tokens, const SyllableTable& table, const Lexicon* lexicon,
-                                     const UserModel* user, const std::set<int>& exact, const BigramModel* bigram,
-                                     const LmScorer* lm) {
+                                     const UserModel* user, const std::set<int>& exact, const BigramModel* bigram) {
     // the 注音自動校正 that needs the words around a syllable (see engine/composer.py): digits
     // out of order stay zhuyin on their own (吧) or in a word likelier than the characters apart
     // (好吧), else they are a number (有813個, you are 817); a syllable read with a key next to the one typed takes the
@@ -694,9 +691,8 @@ std::vector<Token> check_corrections(std::vector<Token> tokens, const SyllableTa
     // neighbour's (one that makes a word around it) when the sentence around it reads better by
     // SWAP_GAIN_NO_WORD (老嗎 -> 好嗎), or by SWAP_GAIN_WORD if the keys typed make a word of the
     // dictionary (你老嗎 -> 你好嘛; tuned, not larger) - never if they make one of the user's own.
-    // Settled before conversion, so picks (by reading) keep. lm: the language model (長句選字加強
-    // on): it joins the sentence score of the swaps, which then need the _LM gains; the tones are
-    // chosen without it.
+    // Settled before conversion, so picks (by reading) keep. Never the language model of
+    // 長句選字加強: it cost most of its time per key, for no measurable gain.
     const CorrectionMemory* memory = user ? &user->corrections : nullptr;
     auto picked = [&](const Token& t) -> std::optional<ustr> {
         if (!memory || contains(exact, t.start)) return std::nullopt;
@@ -746,22 +742,18 @@ std::vector<Token> check_corrections(std::vector<Token> tokens, const SyllableTa
         tokens = std::move(out);
     }
     if (!lexicon) return tokens;
-    // run_score of the syllables around k (SWAP_WINDOW on each side) with k read so; with_lm:
-    // the language model counts (not for the tone of a syllable: the model's tones read worse,
-    // measured with tools/autocorrect_eval.py kind E)
-    auto in_sentence = [&](const std::vector<ustr>& rds, size_t k, const ustr& reading, bool with_lm = true) {
-        const LmScorer* model = with_lm ? lm : nullptr;
+    // run_score of the syllables around k (SWAP_WINDOW on each side) with k read so
+    auto in_sentence = [&](const std::vector<ustr>& rds, size_t k, const ustr& reading) {
         size_t a = k >= static_cast<size_t>(SWAP_WINDOW) ? k - SWAP_WINDOW : 0;
         size_t b = std::min(rds.size(), k + SWAP_WINDOW + 1);
         std::vector<ustr> window(rds.begin() + a, rds.begin() + b);
         window[k - a] = reading;
-        // (the syllables and whether the language model counts are the key: the dictionary and
-        // the models are the same files)
-        ustr key = (model ? U"1:" : U"0:") + join(window, U'-');
+        // (the syllables alone are the key: the dictionary and the context model are the same files)
+        ustr key = join(window, U'-');
         auto& kept = run_scores();
         if (auto it = kept.find(key); it != kept.end()) return it->second;
         if (kept.size() >= RUN_SCORES_KEPT) kept.clear();
-        auto score = run_score(window, *lexicon, nullptr, bigram, model);
+        auto score = run_score(window, *lexicon, nullptr, bigram);
         return kept[key] = score ? *score : -99.0 * static_cast<double>(window.size());
     };
     for (auto& run : zh_runs(tokens)) {
@@ -803,7 +795,7 @@ std::vector<Token> check_corrections(std::vector<Token> tokens, const SyllableTa
                 const ustr* best_form = nullptr;
                 double best = 0;
                 for (auto& r : forms) {
-                    double score = in_sentence(rds, k, r, false);
+                    double score = in_sentence(rds, k, r);
                     if (!best_form || score > best) {
                         best_form = &r;
                         best = score;
@@ -854,9 +846,7 @@ std::vector<Token> check_corrections(std::vector<Token> tokens, const SyllableTa
                 continue;
             }
             double typed = in_sentence(rds, k, t.value);
-            bool word = word_score(rds, k, *lexicon, nullptr).has_value();
-            double gain = !lm ? (word ? SWAP_GAIN_WORD : SWAP_GAIN_NO_WORD)
-                              : (word ? SWAP_GAIN_WORD_LM : SWAP_GAIN_NO_WORD_LM);
+            double gain = word_score(rds, k, *lexicon, nullptr) ? SWAP_GAIN_WORD : SWAP_GAIN_NO_WORD;
             if (best - typed > gain) {
                 t.orig = t.value;
                 t.value = *best_alt;
@@ -877,12 +867,10 @@ std::vector<Token> tokenize(const std::string& raw, const SyllableTable& table, 
                             const English& english, const std::set<int>& forced, bool after_english,
                             bool digits_as_zhuyin, const std::set<int>& literal, const std::set<int>& chinese,
                             const Fixed* fixed, const Lexicon* lexicon, const std::set<int>* breaks,
-                            const std::set<int>* exact, const Fixed* taken, const BigramModel* bigram,
-                            const LmScorer* lm) {
+                            const std::set<int>* exact, const Fixed* taken, const BigramModel* bigram) {
     // literal: raw offsets of keys that are always themselves (numpad); fixed: keys shown
     // as picked from the replacement bar (ㄏㄠˇ, clˇ); taken: keys read as a syllable picked
-    // from the list (注音自動校正: si3 as ㄋㄧˇ). They cut the text in two. lm: the language
-    // model's scorer while 長句選字加強 is on (it joins the sentence score of 注音自動校正).
+    // from the list (注音自動校正: si3 as ㄋㄧˇ). They cut the text in two.
     struct Cut {
         int a, b;
         const ustr* text;
@@ -903,7 +891,7 @@ std::vector<Token> tokenize(const std::string& raw, const SyllableTable& table, 
     const std::set<int>& brk = breaks ? *breaks : no_breaks;
     const std::set<int>& ex = exact ? *exact : no_breaks;
     auto checked = [&](std::vector<Token> toks) {
-        return table.autocorrect ? check_corrections(std::move(toks), table, lexicon, user, ex, bigram, lm) : toks;
+        return table.autocorrect ? check_corrections(std::move(toks), table, lexicon, user, ex, bigram) : toks;
     };
     if (cuts.empty())
         return checked(tokenize_run(raw, table, user, english, forced, after_english, digits_as_zhuyin, chinese,
@@ -1043,15 +1031,31 @@ static std::optional<char32_t> strong_homophone(const ustr& reading, const Lexic
 // another one (its characters, or the single character, carry more of what the user taught).
 // (Else the context model's own choice would come back each time: 肌肉 for 雞肉 in 炸雞的雞肉,
 // and the language model would never see the other.)
+// What repick looks up of each syllable, kept while the user's data stays the same (the paths
+// of one convert share their syllables)
+struct RepickMemo {
+    std::unordered_map<ustr, ustr> usual;                          // usual_char
+    std::unordered_map<ustr, std::optional<char32_t>> strong;      // strong_homophone
+};
+
 static void repick(std::vector<Segment>& path, const std::vector<ustr>& readings, const Lexicon& lexicon,
                    const Options& options, const Options& full, const UserModel& user, const BigramModel* bigram,
                    const std::optional<ustr>& prev_word, const std::map<std::pair<int, int>, ustr>& overrides,
-                   bool keep = false) {
-    std::map<ustr, std::optional<char32_t>> strong;
-    // what the user prefers of each character: 謝謝妳 over 謝謝你; not 全不 for 全部
+                   bool keep = false, RepickMemo* memo = nullptr) {
+    RepickMemo own_memo;
+    RepickMemo& m = memo ? *memo : own_memo;
+    auto& strong = m.strong;
+    // what the user prefers of each character: 謝謝妳 over 謝謝你; not 全不 for 全部 (preference)
     auto char_bonus = [&](int i, const ustr& p) {
         double b = 0;
-        for (size_t j = 0; j < p.size(); ++j) b += preference(readings[i + j], ustr(1, p[j]), lexicon, user);
+        for (size_t j = 0; j < p.size(); ++j) {
+            const ustr& reading = readings[i + j];
+            auto u = m.usual.find(reading);
+            if (u == m.usual.end()) u = m.usual.emplace(reading, usual_char(reading, lexicon)).first;
+            ustr ch(1, p[j]);
+            if (ch != u->second)
+                b += std::max(0.0, user.bonus(reading, ch) - (u->second.empty() ? 0.0 : user.bonus(reading, u->second)));
+        }
         return b;
     };
     for (size_t k = 0; k < path.size(); ++k) {
@@ -1302,22 +1306,12 @@ static std::vector<std::pair<double, std::vector<Segment>>> nbest(const std::vec
 }
 
 std::optional<double> run_score(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user,
-                                const BigramModel* bigram, const LmScorer* lm) {
-    // lm (長句選字加強): the best of the n-best that write one character per syllable by score +
-    // LM_WEIGHT * the model's log10 probability, the plain score if there is none
+                                const BigramModel* bigram) {
     Search found = search(readings, lexicon, user, {}, bigram, std::nullopt);
-    std::optional<double> base;
-    for (auto& [_, st] : found.ends)
-        if (!base || st.score > *base) base = st.score;
-    if (!base || !lm) return base;
     std::optional<double> best;
-    for (auto& [s, hyp] : nbest(readings, found.options, bigram, std::nullopt, NBEST_K, NBEST_N)) {
-        ustr text = text_of(hyp);
-        if (text.size() != readings.size()) continue;
-        double score = s + lm_term(*lm, text, readings);
-        if (!best || score > *best) best = score;
-    }
-    return best ? best : base;
+    for (auto& [_, st] : found.ends)
+        if (!best || st.score > *best) best = st.score;
+    return best;
 }
 
 // phrase is in the personal dictionary under this reading key, or the user picked it (learned)
@@ -1353,11 +1347,12 @@ static std::vector<Segment> with_lm(double score, std::vector<Segment> path, con
             if (span.first < seg.start + seg.length && seg.start < span.first + span.second) keep = true;
         if (keep) kept.push_back(seg);
     }
-    std::vector<Segment> best = path;
-    double best_score = score + lm_term(lm, text, readings);
     std::unordered_set<ustr> seen{text};
+    std::vector<std::pair<double, std::vector<Segment>>> rivals;
+    std::vector<ustr> texts{text};
+    RepickMemo memo;
     for (auto& [s, hyp] : nbest(readings, found.options, bigram, prev_word, NBEST_K, NBEST_N)) {
-        if (user) repick(hyp, readings, lexicon, found.options, found.full, *user, bigram, prev_word, overrides, true);
+        if (user) repick(hyp, readings, lexicon, found.options, found.full, *user, bigram, prev_word, overrides, true, &memo);
         ustr t = text_of(hyp);
         if (!seen.insert(t).second) continue;
         if (t.size() != n) continue;
@@ -1365,9 +1360,16 @@ static std::vector<Segment> with_lm(double score, std::vector<Segment> path, con
         for (auto& seg : kept)
             if (t.substr(seg.start, seg.length) != seg.phrase) same = false;
         if (!same) continue;
-        double sc = s + lm_term(lm, t, readings);
+        rivals.emplace_back(s, hyp);
+        texts.push_back(std::move(t));
+    }
+    lm.prepare(texts);  // (the model's steps for all of them at once: the same scores, sooner)
+    std::vector<Segment> best = path;
+    double best_score = score + lm_term(lm, text, readings);
+    for (size_t k = 0; k < rivals.size(); ++k) {
+        double sc = rivals[k].first + lm_term(lm, texts[k + 1], readings);
         if (sc > best_score) {
-            best = hyp;
+            best = rivals[k].second;
             best_score = sc;
         }
     }
@@ -1400,15 +1402,14 @@ Resources Resources::load(const std::wstring& data_dir) {
     r.table = std::make_unique<SyllableTable>(*r.lexicon);
     r.english = load_english({data_dir + L"\\english.txt", data_dir + L"\\english_tech.txt"});
     r.bigram = std::make_unique<BigramModel>(*r.lexicon, data_dir + L"\\bigram.bin");
-    r.lm_model = CharLM::load(data_dir + L"\\lm.bin");
-    if (r.lm_model) r.lm = std::make_unique<LmScorer>(*r.lm_model, *r.lexicon);
+    r.lm = std::make_unique<LanguageModel>(data_dir + L"\\lm.bin", *r.lexicon);
     return r;
 }
 
 // ---- Composer --------------------------------------------------------------------------
 
 Composer::Composer(SyllableTable& table, const Lexicon& lexicon, const English& english, UserModel& user_,
-                   const BigramModel* bigram, Config& config_, const LmScorer* lm)
+                   const BigramModel* bigram, Config& config_, const LanguageModel* lm)
     : user(user_), config(config_), table_(table), lexicon_(lexicon), english_(english), bigram_(bigram), lm_(lm) {
     table_.autocorrect = config.flag("autocorrect");
     user.corrections.enable(true);  // (代碼記憶 counts with the setting off too)
@@ -1466,12 +1467,12 @@ void Composer::settings_changed() {
 
 std::vector<Token> Composer::retokenize(const std::set<int>& chinese) const {
     return tokenize(raw, table_, &user, english_, forced_, after_english_, digits_as_zhuyin_, literal_, chinese,
-                    &fixed_, &lexicon_, &breaks_, &exact_, &taken_, bigram_, lm());
+                    &fixed_, &lexicon_, &breaks_, &exact_, &taken_, bigram_);
 }
 
 const LmScorer* Composer::lm() const {
     lm_on_ = config.flag("long_sentence");
-    return lm_on_ ? lm_ : nullptr;
+    return lm_on_ && lm_ ? lm_->get() : nullptr;
 }
 
 void Composer::refresh() {
@@ -2378,7 +2379,7 @@ std::optional<std::pair<int, std::vector<ustr>>> Composer::reads_as_chinese(int 
         if (a != unfix) fixed[a] = v;
     auto trial =
         tokenize(raw, table_, &user, english_, forced, after_english_, digits_as_zhuyin_, lit, ch, &fixed, &lexicon_,
-                 &breaks_, &exact_, &taken_, bigram_, lm());
+                 &breaks_, &exact_, &taken_, bigram_);
     std::vector<const Token*> inside;
     for (auto& t : trial)
         if (s <= t.start && t.start < end) inside.push_back(&t);
