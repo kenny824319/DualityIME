@@ -4,3 +4,4 @@
 - [push_audit new data file](project_push_audit_new_data_file.md) — a new file name (lm.bin) in shipped code blocks the push; run push_audit.scan on the branch
 - [phrase_count thresholds](project_phrase_count_thresholds.md) — `> 0` / `if n` checks (autocorrect, _taught, picked_weight) treat counts < 1 as learned
 - [Tone-variant match loose](project_tone_variant_loose.md) — has_other_tones_word as an autocorrect guard blocks real slips (部分→必份); probe on/off
+- [alone boundary](project_alone_boundary.md) — "typed alone" by token kinds: punctuation/partial also break it; probe `gj ,` old vs new
