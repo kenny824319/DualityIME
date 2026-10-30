@@ -3257,7 +3257,7 @@ class LongSentenceTest(unittest.TestCase):
             self.assertEqual(s.text_score(chars[0] + chars[1], ["ㄧ", "ㄧ"]), first)  # (the same after a clear)
         finally:
             lm.LM_STATES_KEPT = saved
-        self.assertEqual(lm.LM_STATES_KEPT, 20000)
+        self.assertEqual(lm.LM_STATES_KEPT, 3000)
 
 
 class AutocorrectLMTest(AutocorrectTest):

@@ -132,6 +132,8 @@ class CharLM:
             if pos + n * dtype.itemsize > len(data):
                 raise ValueError(f"{path}: cut short")
             t[name] = np.frombuffer(data, dtype=dtype, count=n, offset=pos)
+            if is_int8(name) and (t[name] == -128).any():  # (the bounds behind the engines' int32 sums: |w| <= 127)
+                raise ValueError(f"{path}: {name} has -128")
             pos += n * dtype.itemsize
         if pos != len(data):
             raise ValueError(f"{path}: extra bytes at the end")
@@ -200,7 +202,9 @@ def load(data_dir=DATA_DIR):
         return None
 
 
-LM_STATES_KEPT = 20000  # states (and scored syllables) kept across keys, then all dropped but the start
+LM_STATES_KEPT = 3000  # states (and scored syllables) kept across keys, then all dropped but the start
+                       # (a sentence of 47 syllables typed with 注音自動校正 on makes about 1100; the
+                       # C++ engine keeps a state in 3 KB: about 10 MB)
 
 
 class Scorer:

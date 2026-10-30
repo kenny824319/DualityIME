@@ -16,7 +16,7 @@ class Lexicon;
 
 class CharLM {
 public:
-    using State = std::vector<int32_t>;  // Q10 [layers * hidden], each within -1..1
+    using State = std::vector<int16_t>;  // Q10 [layers * hidden], each within -1..1 (so int16: half the memory)
 
     // the model in the file, or nullptr (no file, another format, wrong sizes, cut short)
     static std::unique_ptr<CharLM> load(const std::wstring& path);
@@ -51,7 +51,9 @@ private:
     std::vector<int32_t> sigmoid_, tanh_, exp_, log_;
 };
 
-constexpr size_t LM_STATES_KEPT = 20000;  // states (and scored syllables) kept across keys, then all dropped but the start
+// states (and scored syllables) kept across keys, then all dropped but the start (the same as
+// engine/lm.py: a sentence of 47 syllables typed with 注音自動校正 on makes about 1100; a state is 3 KB)
+constexpr size_t LM_STATES_KEPT = 3000;
 
 // The model's score of a text written for some syllables, as convert() uses it (engine/lm.py
 // Scorer): each character among the characters its syllable may be (every one a word of the
