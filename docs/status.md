@@ -11,6 +11,7 @@
 | 範圍 | 內容 | 設計 |
 |---|---|---|
 | 選字學習 | 字典讀音聲調不同的詞（四聲打出的「下在」改成「下載」）改一次就記住；改回原本的字時忘掉學到的詞 | `docs/architecture/decisions.md`（2026-10-29） |
+| 選字 | 長句選字加強：自己訓練的小型語言模型看整句選字（預設開啟） | `docs/superpowers/specs/2026-10-29-long-sentence-lm-design.md` |
 | 注音自動校正 | 看整句：漏打聲調（5k邊 → 這邊）、標點鍵開頭的順序打反（剛;e → 剛剛）、按到隔壁鍵拼成另一個音（現役 → 信義） | `docs/superpowers/specs/2026-10-29-adjacent-valid-sentence-design.md` 第 1 階段 |
 
 ## 待開發與待驗收
@@ -19,7 +20,7 @@
 
 ### 選字與校正（`docs/superpowers/specs/2026-10-29-adjacent-valid-sentence-design.md`）
 
-1. 第 3 階段：小型語言模型（RTX 4090 自己訓練、避開 GPL，整數推論兩個引擎各一份），語料在 `C:\Users\kenny\Data\corpus`（第 2 階段停止，見 `docs/architecture/decisions.md` 2026-10-29）
+1. 長句選字加強在文書筆電上實測速度（目前只在開發機量過；沒有 AVX2 的 CPU 最慢一鍵約 70 ms）
 
 ## 仍有效的工作方式
 

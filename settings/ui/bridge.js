@@ -23,7 +23,7 @@ const api = (() => {
 
   // ---- stand-in (browser preview only) ----
   const config = {
-    autocorrect: false, punctuation: "half", space: "half", full_width: false, ctrl_punct: false,
+    autocorrect: false, long_sentence: true, punctuation: "half", space: "half", full_width: false, ctrl_punct: false,
     preview: "keys_hint", shift_toggle: true, start_mode: "mixed", completion: true, remember_words: true,
     forget_words: 0, forget_emails: 0, lookup: true, lookup_size: "small", game_mode: false,
     cand_font: "Microsoft JhengHei UI", cand_font_size: 18, cand_per_row: 1
