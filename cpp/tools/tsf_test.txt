@@ -109,3 +109,6 @@ ji3mp3{ENTER} => 我mp3
 # 下載 is ㄗㄞˇ in the dictionary: typed ㄗㄞˋ (教育部) and corrected once, it comes next time
 vu84y94{DOWN}3{ENTER} => 下載
 vu84y94{ENTER} => 下載
+# 長句選字加強 (on by default): the whole sentence decides (off: 肌肉, 左賢; cpp\tools\long_sentence_off.txt)
+m06jo4584ru 2k7ru b.41j4zp4{ENTER} => 原味炸雞的雞肉部分
+njo b06xjp6tj062k7yji3vu06u3ru/ 1o4t9 cjo3{ENTER} => 雖然輪船的左舷已經被拆毀

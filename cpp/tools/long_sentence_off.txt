@@ -1,0 +1,5 @@
+# End-to-end checks with 長句選字加強 off: the characters 3.0.2 chose
+#   powershell -ExecutionPolicy Bypass -File cpp\tools\e2e.ps1 cpp\tools\long_sentence_off.txt -Config cpp\tools\long_sentence_off.json
+m06jo4584ru 2k7ru b.41j4zp4{ENTER} => 原味炸雞的肌肉部分
+njo b06xjp6tj062k7yji3vu06u3ru/ 1o4t9 cjo3{ENTER} => 雖然輪船的左賢已經被拆毀
+su3cl3{ENTER} => 你好
