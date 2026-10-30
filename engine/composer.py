@@ -811,12 +811,15 @@ def _with_lm(score, path, readings, lexicon, user, overrides, bigram, prev_word,
     Each text as repick makes it (同音字偏好 still counts, and the model judges what is shown); the
     engine's own choice comes first and only a strictly better one replaces it. What the user
     taught is never changed: picks are in every path already (+1000 in options), and a word of
-    two syllables or more in the personal dictionary or learned must stay where it is, as it is."""
+    two syllables or more in the personal dictionary or learned, or one with a pick in it, must
+    stay where it is, as it is."""
     n = len(readings)
     text = "".join(p for _, _, p in path)
     if len(text) != n:  # (one character per syllable, or the model cannot read it)
         return path
-    kept = [(i, l, p) for i, l, p in path if l > 1 and _taught("-".join(readings[i:i + l]), p, user)]
+    # (and a word around a pick: 適時 for 時 picked in 事實, which 事 + 時 would carry the pick too)
+    kept = [(i, l, p) for i, l, p in path if l > 1 and (_taught("-".join(readings[i:i + l]), p, user)
+                                                         or any(a < i + l and i < a + b for a, b in overrides))]
     best, best_score = path, score + LM_WEIGHT * (lm.text_score(text, readings) / (1024 * LN10))
     seen = {text}
     for s, hyp in nbest(readings, options, bigram, prev_word, NBEST_K, NBEST_N):

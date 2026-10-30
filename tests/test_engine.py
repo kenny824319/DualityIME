@@ -3132,6 +3132,24 @@ class LongSentenceTest(unittest.TestCase):
         on = self.text(rd, overrides={(k, 1): off[k]}, lm=self.scorer)
         self.assertEqual(on[k], off[k])
 
+    def test_word_around_pick_kept(self):
+        # 時 picked in ㄕˋ ㄕˊ (事實): the word around the pick, 適時, is not outvoted by 事 + 時
+        user = self.user()
+        rd = ["ㄕˋ", "ㄕˊ"]
+        self.assertEqual(self.text(rd, user, {(1, 1): "時"}), "適時")
+        self.assertEqual(self.text(rd, user, {(1, 1): "時"}, lm=self.scorer), "適時")
+        # ...and through the Composer: picked from the list, sent
+        c = self.composer(True)
+        for ch in self.zhuyin(rd):
+            c.key(ch)
+        c.key(special="HOME")
+        c.key(special="RIGHT")
+        c.key(special="DOWN")
+        for _ in range(c.candidates.index("時")):
+            c.key(special="DOWN")
+        c.key(special="ENTER")
+        self.assertEqual(c.composition, "適時")
+
     def check_word_kept(self, user):
         rd = self.readings("這個介面很好用")
         self.assertEqual(self.text(rd, user), "這個界面很好用")
@@ -3156,10 +3174,15 @@ class LongSentenceTest(unittest.TestCase):
         self.check_word_kept(user)
 
     def test_single_pick_can_lose(self):
+        # 閒 picked once for ㄒㄧㄢˊ: it shows up with the setting off (左閒), the model outvotes it
+        # (a single character picked only adds to the score, it is not kept like a taught word)
         user = self.user()
-        user.learn_phrase("ㄒㄧㄢˋ", "線")
-        rd = self.readings("我現在要去吃飯")
-        self.assertEqual(self.text(rd, user, lm=self.scorer), "我現在要去吃飯")
+        user.learn_phrase("ㄒㄧㄢˊ", "閒")
+        sentence = "雖然輪船的左舷已經被拆毀"
+        rd = self.readings(sentence)
+        self.assertEqual(rd[6], "ㄒㄧㄢˊ")
+        self.assertEqual(self.text(rd, user), "雖然輪船的左閒已經被拆毀")
+        self.assertEqual(self.text(rd, user, lm=self.scorer), sentence)
 
     def test_single_syllable_untouched(self):
         user = self.user()
