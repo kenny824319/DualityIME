@@ -2,15 +2,25 @@
 // same format as tools/trace.py, so tools/compare.py can diff the two engines.
 //   sz_trace <data dir> <user.json> <script file> [config.json]
 //   sz_trace --lm-check <ids file> <data dir>: the language model's scores (tools/lm/check_cpp.py)
+//   sz_trace --time <data dir> <user.json> <script file> [config.json]: instead of the states, how long
+//     the engine takes (loading, every key) and its memory (tools/key_latency_cpp.py)
 // Script lines: characters as typed, {DOWN} {ENTER} ... special keys,
 // {#5} a numpad key, {CAPS} Caps Lock on/off, {UNDO} take back the last commit,
 // {FW} 全形 on/off, {RESET} focus change, {LB} a literal "{".
+#include <chrono>
 #include <cstdio>
 #include <crtdbg.h>
 #include <fcntl.h>
 #include <io.h>
 #include <iostream>
 #include <string>
+#include <vector>
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
 
 #include "../engine/composer.h"
 #include "../engine/lm.h"
@@ -104,6 +114,21 @@ static int lm_check(const char* ids_path, const char* data_dir) {
     return 0;
 }
 
+using Clock = std::chrono::steady_clock;
+static double ms_since(Clock::time_point t) { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); }
+
+struct KeyTime {
+    double ms;
+    int line, key;
+};
+
+static void print_memory(const char* when) {
+    PROCESS_MEMORY_COUNTERS_EX m = {};
+    GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&m), sizeof m);
+    std::printf("memory %s: working set %.1f MB, peak working set %.1f MB, private %.1f MB\n", when,
+                m.WorkingSetSize / 1048576.0, m.PeakWorkingSetSize / 1048576.0, m.PrivateUsage / 1048576.0);
+}
+
 int main(int argc, char** argv) {
     // (debug builds: a failed check is printed instead of opening a window)
     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
@@ -111,14 +136,25 @@ int main(int argc, char** argv) {
     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
     if (argc == 4 && std::string(argv[1]) == "--lm-check") return lm_check(argv[2], argv[3]);
+    bool timing = argc > 1 && std::string(argv[1]) == "--time";
+    if (timing) {  // (the other arguments as usual)
+        ++argv;
+        --argc;
+    }
     if (argc < 4) {
-        std::fprintf(stderr, "usage: sz_trace <data dir> <user.json> <script>\n");
+        std::fprintf(stderr, "usage: sz_trace [--time] <data dir> <user.json> <script> [config.json]\n");
         return 2;
     }
+    Clock::time_point started = Clock::now();
     Resources res = Resources::load(widen(argv[1]));
     UserModel user(widen(argv[2]), [] { return 20000; });
     Config config(argc > 4 ? widen(argv[4]) : L"");
     Composer c(*res.table, *res.lexicon, res.english, user, res.bigram.get(), config, res.lm.get());
+    if (config.flag("long_sentence")) res.lm->get();  // (as the engine does at start)
+    double load_ms = ms_since(started);
+    if (timing) print_memory("after loading");
+    std::vector<KeyTime> times;
+    int line_no = 0;
     std::string script;
     if (!read_file(widen(argv[3]), script)) return 1;
     std::string out;
@@ -130,10 +166,13 @@ int main(int argc, char** argv) {
         pos = nl + 1;
         if (!line.empty() && line.back() == '\r') line.pop_back();
         out += "# " + line + "\n";
+        ++line_no;
         bool caps = false;
+        int key_no = 0;
         for (size_t i = 0; i < line.size();) {
           try {
             std::string extra;
+            Clock::time_point t0 = Clock::now();
             if (line[i] == '{') {
                 size_t close = line.find('}', i);
                 std::string name = line.substr(i + 1, close - i - 1);
@@ -154,6 +193,7 @@ int main(int argc, char** argv) {
                 extra = c.key(ch, "", caps) ? "1" : "0";
                 i += len;
             }
+            if (timing) times.push_back({ms_since(t0), line_no, ++key_no});
             out += state(c, extra) + "\n";
           } catch (const std::exception& e) {  // (shown, not hidden: the engine must never throw)
             std::fprintf(stderr, "exception \"%s\" in line \"%s\" at key %zu; raw before: \"%s\"\n", e.what(),
@@ -165,9 +205,19 @@ int main(int argc, char** argv) {
         if (c.symbol_page) c.key(std::nullopt, "ESC");
         if (!c.candidates.empty()) c.key(std::nullopt, "ESC");
         if (!c.raw.empty()) {
+            Clock::time_point t0 = Clock::now();
             c.key(std::nullopt, "ENTER");
+            if (timing) times.push_back({ms_since(t0), line_no, ++key_no});
             out += state(c, "end") + "\n";
         }
+    }
+    if (timing) {
+        std::printf("load %.1f ms, first key %.1f ms, to the first result %.1f ms\n", load_ms,
+                    times.empty() ? 0.0 : times[0].ms, load_ms + (times.empty() ? 0.0 : times[0].ms));
+        print_memory("at the end");
+        // one line per key: "key <ms> <line> <key in line>" (both from 1; the last of a line is the Enter that ends it)
+        for (const KeyTime& k : times) std::printf("key %.4f %d %d\n", k.ms, k.line, k.key);
+        return 0;
     }
     _setmode(_fileno(stdout), _O_BINARY);  // keep plain LF line ends
     std::fwrite(out.data(), 1, out.size(), stdout);

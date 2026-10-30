@@ -313,6 +313,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
         g->config->keep_file();
     }
     if (!g->res.lexicon->ok()) return 1;
+    if (g->config->flag("long_sentence")) g->res.lm->get();  // (now, not on the first key typed)
 
     for (;;) {
         BOOL connected = ConnectNamedPipe(pipe, nullptr) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
