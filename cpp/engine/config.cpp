@@ -6,6 +6,7 @@ const Json& Config::defaults() {
     static const Json d = [] {
         Json j = Json::object();
         j["autocorrect"] = Json(false);      // 注音自動校正: keys next to the right one, parts out of order, a key typed twice
+        j["long_sentence"] = Json(true);     // 長句選字加強: the language model (data/lm.bin) judges the whole run of Chinese
         j["punctuation"] = Json("half");     // "half": , . ?   "full": ，。？
         j["space"] = Json("half");           // "half" or "full" (　) when typing a space on its own
         j["full_width"] = Json(false);       // 全形 mode (Shift+Space)

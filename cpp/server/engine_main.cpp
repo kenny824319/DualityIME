@@ -241,7 +241,7 @@ void serve(HANDLE pipe) {
     {
         std::lock_guard<std::mutex> guard(g->lock);
         s.c = std::make_unique<Composer>(*g->res.table, *g->res.lexicon, g->res.english, *g->user,
-                                         g->res.bigram.get(), *g->config);
+                                         g->res.bigram.get(), *g->config, g->res.lm.get());
         s.config_gen = g->config_gen;
     }
     std::string msg;
