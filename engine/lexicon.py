@@ -50,16 +50,28 @@ class Lexicon:
         (載 is a ㄗㄞˋ too). Words of 2+ syllables only."""
         if len(readings) < 2 or len(phrase) != len(readings):
             return False
+        if not any(p == phrase for r in self._other_tones(readings) for p, _ in self.entries[r]):
+            return False
+        return all(self.has([syl], ch) for ch, syl in zip(phrase, readings))
+
+    def has_other_tones_word(self, readings, at):
+        """Some word reads with other tones as these syllables (reads_with_other_tones), its
+        syllable `at` as here (the tones differ elsewhere): 匹配 for ㄆㄧ ㄆㄟˋ at 1 (ㄆㄧˇ ㄆㄟˋ in the
+        dictionary). 注音自動校正 leaves syllable `at` alone then."""
+        return len(readings) >= 2 and any(
+            self.reads_with_other_tones(readings, p)
+            for r in self._other_tones(readings) if r.split("-")[at] == readings[at]
+            for p, _ in self.entries[r] if len(p) == len(readings))
+
+    def _other_tones(self, readings):
+        """The reading keys of the dictionary that differ from these only in tones."""
         if self._by_toneless is None:  # built on first use
             self._by_toneless = {}
             for reading in self.entries:
                 if "-" in reading:
                     self._by_toneless.setdefault(_toneless(reading), []).append(reading)
         key = "-".join(readings)
-        if not any(r != key and any(p == phrase for p, _ in self.entries[r])
-                   for r in self._by_toneless.get(_toneless(key), ())):
-            return False
-        return all(self.has([syl], ch) for ch, syl in zip(phrase, readings))
+        return [r for r in self._by_toneless.get(_toneless(key), ()) if r != key]
 
     def completions(self, readings, min_score=-6.5):
         """Longer phrases whose readings start with `readings`:

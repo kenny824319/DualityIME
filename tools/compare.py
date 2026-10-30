@@ -36,6 +36,8 @@ CASES = [
     "no.2 ch.2 ji3.24{ENTER}v3.2 su3.2 {ENTER}you are 3.2 {ENTER}su5k1u0 ji35k1u0 {ENTER}5km3{ENTER}",
     ("su3;e {HOME}{RIGHT}" + "{DOWN}" * 35 + "{ENTER}{ENTER}") * 2 + "su3;e {ENTER}",
     ("e;e; {HOME}" + "{DOWN}" * 36 + "{ENTER}{ENTER}") * 2 + "e;e; {ENTER}",  # (e; back as typed, last of 36, twice)
+    # 匹配 typed ㄆㄧ ㄆㄟˋ (ㄆㄧˇ in the dictionary): 注音自動校正 leaves ㄆㄟˋ (not 批判); 匹 picked: 匹配 learned
+    "qu qo4{ENTER}qu qo4{HOME}{DOWN}2{ENTER}qu qo4{ENTER}",
     # a pick beside a character on its own, no word (重 + 繪): half a pick of the pair, a word the second time
     "cjo4{DOWN}1{ENTER}cjo4{DOWN}1{ENTER}y42u/4tj/6cjo4{DOWN}5{ENTER}y42u/4tj/6cjo4{DOWN}5{ENTER}"
     "y42u/4tj/6cjo4{ENTER}tj/6cjo4{HOME}{DOWN}2{ENTER}",

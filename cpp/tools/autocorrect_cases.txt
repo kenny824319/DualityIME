@@ -30,3 +30,8 @@ w961o3g4vu04u4fm {ENTER} => 台北市信義區
 su3xl3a87{ENTER} => 你好嗎
 xl3g {ENTER} => 老師
 ok {ENTER} => ok 
+# 匹配 typed ㄆㄧ ㄆㄟˋ (教育部; ㄆㄧˇ in the dictionary): a reading of a word, no slip - not 批判 (o is next
+# to 0); 匹 picked once, 匹配 is learned
+qu qo4{ENTER} => 批配
+qu qo4{HOME}{DOWN}2{ENTER} => 匹配
+qu qo4{ENTER} => 匹配
