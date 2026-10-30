@@ -395,9 +395,12 @@ void LmScorer::prepare(const std::vector<ustr>& texts) const {
     auto by_len = missing();
     size_t count = 0;
     for (auto& level : by_len) count += level.size();
-    if (count == 0) return;
-    if (states_.size() + count >= LM_STATES_KEPT || score_cache_.size() >= LM_STATES_KEPT) {
-        clear();  // (as room() would part way: the states are the same either way)
+    size_t scored = 0;  // (the scores text_score keeps next, at most one per character)
+    for (const ustr& t : texts) scored += t.size();
+    if (states_.size() + count >= LM_STATES_KEPT || score_cache_.size() + scored >= LM_STATES_KEPT) {
+        // (now, not part way through text_score: room() would drop the states kept or just
+        // stepped, and each would be stepped again alone; the states and scores are the same either way)
+        clear();
         by_len = missing();
     }
     for (auto& level : by_len) {
