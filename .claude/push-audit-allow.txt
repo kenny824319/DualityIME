@@ -11,3 +11,4 @@
 ^cpp/tip/text_service\.cpp$	^// debugging: lines go to %TEMP%\\dualityime_debug\.log, only if that file exists\. Never what is typed:$  # the debug log's comment after the rename
 ^cpp/tip/text_service\.cpp$	^    std::wstring path = std::wstring\(tmp\) \+ L"dualityime_debug\.log";$  # the debug log's switch after the rename (sz_debug.log to dualityime_debug.log), still written only while the file exists
 ^installer/src/Setup\.cs$	\b(un)?install\.log\b  # the install / uninstall log, now written and read in the administrators-only step-2 folder (Program Files\DualityIME.setup-* / .uninstall-*)
+^(engine/lm\.py|cpp/engine/composer\.cpp)$	\blm\.bin\b  # the model of 長句選字加強, made by tools/lm/export.py, read only
