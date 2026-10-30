@@ -45,6 +45,7 @@ public:
     // ㄒㄧㄚˋ ㄗㄞˇ there; 教育部 reads ㄒㄧㄚˋ ㄗㄞˋ), and each character of it has its syllable here
     // (載 is a ㄗㄞˋ too). Words of 2+ syllables only.
     bool reads_with_other_tones(const std::vector<ustr>& readings, const ustr& phrase) const;
+    bool has_other_tones_word(const std::vector<ustr>& readings, size_t at) const;  // 匹配 for ㄆㄧ ㄆㄟˋ at 1
 
 private:
     bool ok_ = false;
@@ -53,6 +54,7 @@ private:
     std::unordered_map<ustr, double> reading_mass_;
     mutable bool by_start_built_ = false;
     mutable std::unordered_map<ustr, std::vector<Completion>> by_start_;
+    std::vector<const ustr*> other_tones(const std::vector<ustr>& readings) const;
     mutable bool by_toneless_built_ = false;
     mutable std::unordered_map<ustr, std::vector<ustr>> by_toneless_;  // readings without tones -> reading keys
 };

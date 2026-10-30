@@ -603,6 +603,12 @@ def _check_corrections(tokens, table, lexicon, user=None, exact=(), bigram=None)
             if _makes_user_word(readings, k, user):
                 swapped = False
                 continue
+            # ...or a word the dictionary reads with other tones (匹配 for ㄆㄧ ㄆㄟˋ: ㄆㄧˇ there; 教育部
+            # reads ㄆㄧ): no slip, but a reading of the word - not 批判 (o is next to 0); a pick makes
+            # it the word (_learn_tone_variant_words)
+            if _makes_other_tones_word(readings, k, lexicon):
+                swapped = False
+                continue
             if _apart_score(readings, k, lexicon) is None:
                 continue  # (a syllable on its own: nothing to make a word with)
             # of the syllables keys next to the ones typed make, those that make a word around it
@@ -626,6 +632,17 @@ def _check_corrections(tokens, table, lexicon, user=None, exact=(), bigram=None)
             else:
                 swapped = False
     return tokens
+
+
+def _makes_other_tones_word(readings, k, lexicon):
+    """Syllable k makes, with the ones around it, a word the dictionary reads with other tones -
+    in some other syllable (匹配: ㄆㄧ for ㄆㄧˇ, ㄆㄟˋ as there). Not where k itself differs: a slip
+    there that happens to spell another tone of a word (部分 typed 必份: 比分) is still a slip."""
+    for l in range(2, MAX_PHRASE_LEN + 1):
+        for a in range(max(0, k - l + 1), min(k, len(readings) - l) + 1):
+            if lexicon.has_other_tones_word(readings[a:a + l], k - a):
+                return True
+    return False
 
 
 def _makes_user_word(readings, k, user):
@@ -1528,12 +1545,13 @@ class Composer:
         tok = [x for x in self.tokens if x.kind == "zh"][t]
         if tok.corrected == "valid":
             # 注音自動校正 swapped the syllable (xl3 read as 好 in 你好): what the keys typed spell
-            # (老); picked, they are read as typed from then on
-            for p, _ in phrase_candidates([tok.orig], self.lexicon, self.user):
-                if p not in seen:
-                    seen.add(p)
-                    labels.append(p)
-                    actions.append(("exact", tok.start, t, p))
+            # (老), right after the first (幹 second in 看到 for e04 2l4, not after every ㄎㄢˋ);
+            # picked, they are read as typed from then on
+            mine = [p for p, _ in phrase_candidates([tok.orig], self.lexicon, self.user) if p not in seen]
+            seen.update(mine)
+            at = min(1, len(labels))
+            labels[at:at] = mine
+            actions[at:at] = [("exact", tok.start, t, p) for p in mine]
         if tok.corrected:
             # and last, the keys as typed (si3): picked, they stay so
             keys = tok.raw.rstrip(" ")

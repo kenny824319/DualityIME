@@ -656,6 +656,20 @@ std::vector<std::vector<size_t>> zh_runs(const std::vector<Token>& tokens) {
     return out;
 }
 
+bool makes_other_tones_word(const std::vector<ustr>& readings, size_t k, const Lexicon& lexicon) {
+    // syllable k makes, with the ones around it, a word the dictionary reads with other tones - in
+    // some other syllable (匹配: ㄆㄧ for ㄆㄧˇ, ㄆㄟˋ as there). Not where k itself differs: a slip
+    // there that happens to spell another tone of a word (部分 typed 必份: 比分) is still a slip.
+    for (size_t l = 2; l <= static_cast<size_t>(MAX_PHRASE_LEN); ++l) {
+        if (readings.size() < l) continue;
+        size_t a0 = k + 1 >= l ? k + 1 - l : 0, a1 = std::min(k, readings.size() - l);
+        for (size_t a = a0; a <= a1; ++a)
+            if (lexicon.has_other_tones_word(std::vector<ustr>(readings.begin() + a, readings.begin() + a + l), k - a))
+                return true;
+    }
+    return false;
+}
+
 bool makes_user_word(const std::vector<ustr>& readings, size_t k, const UserModel* user) {
     // syllable k makes, with the ones around it, a word of the personal dictionary or one the
     // user picked (learned), of any length (市現役區 too)
@@ -823,6 +837,13 @@ std::vector<Token> check_corrections(std::vector<Token> tokens, const SyllableTa
             // the keys typed make a word the user taught (a name in the personal dictionary, a
             // learned word): left alone, whatever else is likelier
             if (makes_user_word(rds, k, user)) {
+                swapped = false;
+                continue;
+            }
+            // ...or a word the dictionary reads with other tones (匹配 for ㄆㄧ ㄆㄟˋ: ㄆㄧˇ there;
+            // 教育部 reads ㄆㄧ): no slip, but a reading of the word - not 批判 (o is next to 0); a
+            // pick makes it the word (learn_tone_variant_words)
+            if (makes_other_tones_word(rds, k, *lexicon)) {
                 swapped = false;
                 continue;
             }
@@ -2076,17 +2097,23 @@ bool Composer::open_candidates() {
                 break;
             }
         if (tok && tok->corrected == "valid") {
+            // (right after the first: 幹 second in 看到 for e04 2l4, not after every ㄎㄢˋ)
+            std::vector<ustr> mine_labels;
+            std::vector<Action> mine;
             for (auto& [p, _] : phrase_candidates({tok->orig}, lexicon_, &user)) {
                 if (seen.insert(p).second) {
-                    labels.push_back(p);
+                    mine_labels.push_back(p);
                     Action act;
                     act.type = "exact";
                     act.start = tok->start;
                     act.s = t;
                     act.text = p;
-                    actions.push_back(act);
+                    mine.push_back(act);
                 }
             }
+            size_t at = std::min<size_t>(1, labels.size());
+            labels.insert(labels.begin() + at, mine_labels.begin(), mine_labels.end());
+            actions.insert(actions.begin() + at, mine.begin(), mine.end());
         }
         if (tok && !tok->corrected.empty()) {
             // and last, the keys as typed (si3): picked, they stay so

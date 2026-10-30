@@ -62,24 +62,43 @@ static ustr toneless(const ustr& reading_key) {
 
 bool Lexicon::reads_with_other_tones(const std::vector<ustr>& readings, const ustr& phrase) const {
     if (readings.size() < 2 || phrase.size() != readings.size()) return false;
+    bool listed = false;
+    for (auto* r : other_tones(readings))
+        for (auto& [p, _] : entries_.at(*r))
+            if (p == phrase) listed = true;
+    if (!listed) return false;
+    for (size_t k = 0; k < readings.size(); ++k)
+        if (!has({readings[k]}, ustr(1, phrase[k]))) return false;
+    return true;
+}
+
+bool Lexicon::has_other_tones_word(const std::vector<ustr>& readings, size_t at) const {
+    // some word reads with other tones as these syllables (reads_with_other_tones), its syllable
+    // `at` as here (the tones differ elsewhere): 匹配 for ㄆㄧ ㄆㄟˋ at 1 (ㄆㄧˇ ㄆㄟˋ in the
+    // dictionary); 注音自動校正 leaves syllable `at` alone then
+    if (readings.size() < 2) return false;
+    for (auto* r : other_tones(readings)) {
+        if (split(*r, U'-')[at] != readings[at]) continue;
+        for (auto& [p, _] : entries_.at(*r))
+            if (p.size() == readings.size() && reads_with_other_tones(readings, p)) return true;
+    }
+    return false;
+}
+
+std::vector<const ustr*> Lexicon::other_tones(const std::vector<ustr>& readings) const {
+    // the reading keys of the dictionary that differ from these only in tones
     if (!by_toneless_built_) {  // built on first use
         by_toneless_built_ = true;
         for (const auto& reading : order_)
             if (reading.find(U'-') != ustr::npos) by_toneless_[toneless(reading)].push_back(reading);
     }
+    std::vector<const ustr*> out;
     ustr key = join(readings, U'-');
     auto it = by_toneless_.find(toneless(key));
-    if (it == by_toneless_.end()) return false;
-    bool listed = false;
-    for (auto& r : it->second) {
-        if (r == key) continue;
-        for (auto& [p, _] : entries_.at(r))
-            if (p == phrase) listed = true;
-    }
-    if (!listed) return false;
-    for (size_t k = 0; k < readings.size(); ++k)
-        if (!has({readings[k]}, ustr(1, phrase[k]))) return false;
-    return true;
+    if (it == by_toneless_.end()) return out;
+    for (auto& r : it->second)
+        if (r != key) out.push_back(&r);
+    return out;
 }
 
 bool Lexicon::has(const std::vector<ustr>& readings, const ustr& phrase) const {

@@ -2066,6 +2066,18 @@ class AutocorrectTest(Base):
     def test_valid_neighbour_in_a_word(self):
         self.assertEqual(self.type("rup qu0 "), "今天")  # w -> q: 篇 (今篇 is no word)
 
+    def test_a_word_read_with_other_tones_is_not_swapped(self):
+        # 匹配 is ㄆㄧˇ ㄆㄟˋ in the dictionary; typed ㄆㄧ ㄆㄟˋ (教育部) it is no slip: ㄆㄟˋ stays,
+        # not ㄆㄢˋ for 批判 (o is next to 0); 匹 picked once, 匹配 is learned (as 下載)
+        self.assertEqual(self.type("qu qo4"), "批配")
+        self.assertEqual(LearnedSinglesTest.pick_at(self, "ㄆㄧ ㄆㄟˋ", 0, "匹"), "匹配")
+        self.assertEqual(self.type("qu qo4"), "匹配")
+
+    def test_a_slip_spelling_another_tone_of_a_word_is_still_put_right(self):
+        # 部分 with z for x (ㄅㄧˋ for ㄅㄨˋ): 比分 reads ㄅㄧˇ ㄈㄣ, but the tones differ where the slip
+        # is, not elsewhere - a slip, put right
+        self.assertEqual(self.type("1u4zp4"), "部分")
+
     def test_valid_neighbour_kept_when_a_word(self):
         self.assertEqual(self.type("xl3"), "老")        # on its own
         self.assertEqual(self.type("xl3g "), "老師")    # a word as typed
@@ -2076,6 +2088,19 @@ class AutocorrectTest(Base):
     def test_a_neighbour_that_reads_far_better_in_the_sentence_is_taken(self):
         # 現役 is a word, but 台北市信義區 reads far better than 台北市現役區
         self.assertEqual(self.type(self.XIANYI), "台北市信義區")
+
+    def test_what_the_keys_typed_spell_comes_second(self):
+        # 信 swapped in for the ㄒㄧㄢˋ typed: ↓ there lists 現 (the reading typed) right after the
+        # first, not after every ㄒㄧㄣˋ (it was the 31st)
+        c = self.c
+        for ch in self.XIANYI:
+            c.key(ch)
+        self.assertEqual(c.composition, "台北市信義區")
+        c.key(special="HOME")
+        for _ in range(3):
+            c.key(special="RIGHT")
+        c.key(special="DOWN")
+        self.assertEqual(c.candidates[1], "現")
 
     def test_a_word_typed_is_swapped_too_when_the_sentence_reads_better(self):
         # 你老 is a word, but 你好嘛 reads better than 你老嗎 by more than SWAP_GAIN_WORD (x is next to c)
