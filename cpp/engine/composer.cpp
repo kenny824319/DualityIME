@@ -51,6 +51,7 @@ constexpr double COST_NO_TONE = 1.0;  // a syllable typed without its tone key, 
 constexpr double SWAP_GAIN_NO_WORD = 3.5;  // log10: how much better the sentence must read to swap a syllable that
                                            // spells something, but makes no word, for its neighbour's (老嗎 -> 好嗎)
 constexpr double SWAP_GAIN_WORD = 3.0;     // ...and one that makes a word of the dictionary (你老嗎 -> 你好嗎)
+constexpr size_t ORIG_FIRST = 3;  // 注音自動校正 swapped a syllable: this many of what the keys typed spell come second in ↓
 constexpr int SWAP_WINDOW = 3;             // syllables on each side of it that count (run_score)
 constexpr size_t RUN_SCORES_KEPT = 50000;  // run_score results kept across keys (then all dropped and started again)
 constexpr double ORDER_DIGITS_GAIN = 1.0;    // ...and for digits out of order to stay zhuyin (好吧, not 有813個 -> 有把個)
@@ -656,6 +657,25 @@ std::vector<std::vector<size_t>> zh_runs(const std::vector<Token>& tokens) {
     return out;
 }
 
+std::optional<std::vector<ustr>> other_tones_reading(const std::vector<ustr>& readings, size_t k,
+                                                     const Lexicon& lexicon) {
+    // the syllables with the first word around k that the dictionary reads with other tones
+    // written its way (ㄕㄠˋ ㄕㄨˋ: ㄕㄠˇ ㄕㄨˋ for 少數), shortest and leftmost first
+    for (size_t l = 2; l <= static_cast<size_t>(MAX_PHRASE_LEN); ++l) {
+        if (readings.size() < l) continue;
+        size_t a0 = k + 1 >= l ? k + 1 - l : 0, a1 = std::min(k, readings.size() - l);
+        for (size_t a = a0; a <= a1; ++a) {
+            auto found = lexicon.other_tones_words(std::vector<ustr>(readings.begin() + a, readings.begin() + a + l));
+            if (found.empty()) continue;
+            std::vector<ustr> out(readings.begin(), readings.begin() + a);
+            for (auto& s : split(*found[0].first, U'-')) out.push_back(s);
+            out.insert(out.end(), readings.begin() + a + l, readings.end());
+            return out;
+        }
+    }
+    return std::nullopt;
+}
+
 bool makes_other_tones_word(const std::vector<ustr>& readings, size_t k, const Lexicon& lexicon) {
     // syllable k makes, with the ones around it, a word the dictionary reads with other tones - in
     // some other syllable (匹配: ㄆㄧ for ㄆㄧˇ, ㄆㄟˋ as there). Not where k itself differs: a slip
@@ -840,13 +860,6 @@ std::vector<Token> check_corrections(std::vector<Token> tokens, const SyllableTa
                 swapped = false;
                 continue;
             }
-            // ...or a word the dictionary reads with other tones (匹配 for ㄆㄧ ㄆㄟˋ: ㄆㄧˇ there;
-            // 教育部 reads ㄆㄧ): no slip, but a reading of the word - not 批判 (o is next to 0); a
-            // pick makes it the word (learn_tone_variant_words)
-            if (makes_other_tones_word(rds, k, *lexicon)) {
-                swapped = false;
-                continue;
-            }
             if (!apart_score(rds, k, *lexicon)) continue;  // (a syllable on its own: nothing to make a word with)
             // of the syllables keys next to the ones typed make, those that make a word around it
             // (most syllables have none: no sentence to score), the one the sentence reads best with
@@ -867,8 +880,15 @@ std::vector<Token> check_corrections(std::vector<Token> tokens, const SyllableTa
                 continue;
             }
             double typed = in_sentence(rds, k, t.value);
+            // the keys typed may spell a word with other tones (少數 typed ㄕㄠˋ ㄕㄨˋ, 教育部; ㄕㄠˇ in
+            // the dictionary): they read as well as that word does, else 上述 (a for l) always wins
+            if (auto variant = other_tones_reading(rds, k, *lexicon))
+                typed = std::max(typed, in_sentence(*variant, k, (*variant)[k]));
             double gain = word_score(rds, k, *lexicon, nullptr) ? SWAP_GAIN_WORD : SWAP_GAIN_NO_WORD;
-            if (best - typed > gain) {
+            // ...and where the tones differ in another syllable (匹配 for ㄆㄧ ㄆㄟˋ: ㄆㄟˋ as there),
+            // this one is no slip at all: left alone (not 批判, o next to 0); a pick makes it the
+            // word (learn_tone_variant_words)
+            if (best - typed > gain && !makes_other_tones_word(rds, k, *lexicon)) {
                 t.orig = t.value;
                 t.value = *best_alt;
                 t.corrected = "valid";
@@ -2097,7 +2117,8 @@ bool Composer::open_candidates() {
                 break;
             }
         if (tok && tok->corrected == "valid") {
-            // (right after the first: 幹 second in 看到 for e04 2l4, not after every ㄎㄢˋ)
+            // (the first ORIG_FIRST right after the first candidate: 現 second at 信 in 台北市信義區,
+            // not after every ㄒㄧㄣˋ; the rest after the others)
             std::vector<ustr> mine_labels;
             std::vector<Action> mine;
             for (auto& [p, _] : phrase_candidates({tok->orig}, lexicon_, &user)) {
@@ -2111,9 +2132,12 @@ bool Composer::open_candidates() {
                     mine.push_back(act);
                 }
             }
-            size_t at = std::min<size_t>(1, labels.size());
-            labels.insert(labels.begin() + at, mine_labels.begin(), mine_labels.end());
-            actions.insert(actions.begin() + at, mine.begin(), mine.end());
+            size_t pos = std::min<size_t>(1, labels.size());
+            size_t first = std::min(ORIG_FIRST, mine.size());
+            labels.insert(labels.begin() + pos, mine_labels.begin(), mine_labels.begin() + first);
+            actions.insert(actions.begin() + pos, mine.begin(), mine.begin() + first);
+            labels.insert(labels.end(), mine_labels.begin() + first, mine_labels.end());
+            actions.insert(actions.end(), mine.begin() + first, mine.end());
         }
         if (tok && !tok->corrected.empty()) {
             // and last, the keys as typed (si3): picked, they stay so

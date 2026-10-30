@@ -2073,6 +2073,12 @@ class AutocorrectTest(Base):
         self.assertEqual(LearnedSinglesTest.pick_at(self, "ㄆㄧ ㄆㄟˋ", 0, "匹"), "匹配")
         self.assertEqual(self.type("qu qo4"), "匹配")
 
+    def test_a_tone_of_the_ministry_is_scored_as_the_word(self):
+        # 少數 typed ㄕㄠˋ ㄕㄨˋ (教育部; ㄕㄠˇ in the dictionary) reads as well as 少數: not swapped
+        # for 上述 (a is next to l); 看起 typed ㄎㄢ ㄑㄧˇ: not 開啟
+        self.assertEqual(self.type("gl4gj4"), "紹述")  # (as typed; a pick of 少 learns 少數)
+        self.assertEqual(self.type("d0 fu3"), "刊起")
+
     def test_a_slip_spelling_another_tone_of_a_word_is_still_put_right(self):
         # 部分 with z for x (ㄅㄧˋ for ㄅㄨˋ): 比分 reads ㄅㄧˇ ㄈㄣ, but the tones differ where the slip
         # is, not elsewhere - a slip, put right
@@ -2101,6 +2107,14 @@ class AutocorrectTest(Base):
             c.key(special="RIGHT")
         c.key(special="DOWN")
         self.assertEqual(c.candidates[1], "現")
+        # three of them, then the rest of what 信 is (信義 is not pushed past every ㄒㄧㄢˋ), and the
+        # other ㄒㄧㄢˋ after those (the last one the keys as typed)
+        exact = [i for i, a in enumerate(c._cand_actions) if a[0] == "exact"]
+        self.assertEqual(exact[:3], [1, 2, 3])
+        self.assertIn("信義", c.candidates[4:8])
+        self.assertGreater(len(exact), 3)
+        self.assertEqual(exact[3:], list(range(exact[3], exact[3] + len(exact) - 3)))
+        self.assertEqual(c._cand_actions[-1][0], "raw")
 
     def test_a_word_typed_is_swapped_too_when_the_sentence_reads_better(self):
         # 你老 is a word, but 你好嘛 reads better than 你老嗎 by more than SWAP_GAIN_WORD (x is next to c)
