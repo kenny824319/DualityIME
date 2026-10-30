@@ -2901,5 +2901,113 @@ class FadingTest(unittest.TestCase):
         self.assertEqual(self.model().phrase_count("a", "甲"), 1.5)
 
 
+class LanguageModelFileTest(unittest.TestCase):
+    """data/lm.bin: written by tools/lm/export.py, read by engine.lm.CharLM like tools/lm/intlm.IntLM."""
+
+    V, E, H, LAYERS = 20, 4, 8, 2
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "lm"))
+        import numpy
+        if "intlm" not in sys.modules:
+            import intlm  # noqa: F401
+        cls.np = numpy
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = self.tmp.name
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def rows(self, w):
+        """tools/lm/quantize.py's rows()."""
+        np = self.np
+        s = np.abs(w).max(axis=1) / 127.0
+        q = np.clip(np.round(w / s[:, None]), -127, 127).astype(np.int8)
+        return q, np.round(s * (1 << 24)).astype(np.int32)
+
+    def make_npz(self, emb_scale=1.0):
+        from intlm import ACT_RANGE, EXP_RANGE, LOG_SIZE, ONE
+        np = self.np
+        rng = np.random.default_rng(7)
+        V, E, H = self.V, self.E, self.H
+
+        def q10(v):
+            return np.round(v * ONE).astype(np.int32)
+        x = np.arange(-ACT_RANGE, ACT_RANGE + 1) / ONE
+        t = {"sigmoid": np.round(1 / (1 + np.exp(-x)) * ONE).astype(np.int32),
+             "tanh": np.round(np.tanh(x) * ONE).astype(np.int32),
+             "exp": np.round(np.exp(-np.arange(EXP_RANGE + 1) / ONE) * 65536).astype(np.int32),
+             "log": np.round(np.log1p(np.arange(LOG_SIZE) / LOG_SIZE) * ONE).astype(np.int32),
+             "q": np.int32(10), "layers": np.int32(self.LAYERS), "hidden": np.int32(H)}
+        t["emb_q"], t["emb_m"] = self.rows(rng.normal(size=(V, E)))
+        t["emb_m"] = (t["emb_m"] * emb_scale).astype(np.int32)
+        for l in range(self.LAYERS):
+            t[f"w_ih_q{l}"], t[f"w_ih_m{l}"] = self.rows(rng.normal(size=(3 * H, E if l == 0 else H)) * 0.5)
+            t[f"w_hh_q{l}"], t[f"w_hh_m{l}"] = self.rows(rng.normal(size=(3 * H, H)) * 0.5)
+            t[f"b_ih{l}"] = q10(rng.normal(size=3 * H) * 0.3)
+            t[f"b_hh{l}"] = q10(rng.normal(size=3 * H) * 0.3)
+        t["proj_q"], t["proj_m"] = self.rows(rng.normal(size=(E, H)))
+        t["proj_b"] = q10(rng.normal(size=E) * 0.3)
+        t["bias"] = q10(rng.normal(size=V))
+        path = os.path.join(self.dir, "m.npz")
+        np.savez(path, **t)
+        return path
+
+    def test_round_trip(self):
+        import export
+        from engine.lm import CharLM
+        from intlm import IntLM
+        np = self.np
+        vocab = ["<unk>", "<s>"] + [chr(0x4e00 + i) for i in range(self.V - 2)]
+        npz = self.make_npz()
+        out = os.path.join(self.dir, "lm.bin")
+        export.export(npz, vocab, out)
+        a, b = IntLM(npz), CharLM(out)
+        self.assertEqual(b.vocab, vocab)
+        self.assertEqual(b.ids["<s>"], 1)
+        rng = np.random.default_rng(3)
+        cands = np.array([2, 5, 9, 14, 19])
+        for _ in range(50):
+            sa, sb = a.start(), b.start()
+            for c in rng.integers(2, self.V, 12):
+                sa, sb = a.step(sa, int(c)), b.step(sb, int(c))
+                self.assertTrue(np.array_equal(sa, sb))
+                self.assertTrue(np.array_equal(a.scores(sa, cands), b.scores(sb, cands)))
+
+    def test_export_bounds(self):
+        import export
+        npz = self.make_npz(emb_scale=2000.0)  # an embedded character far over 4096
+        with self.assertRaises(ValueError) as e:
+            export.export(npz, ["x"] * self.V, os.path.join(self.dir, "lm.bin"))
+        self.assertIn("bound", str(e.exception))
+
+    def test_missing_file(self):
+        from engine import lm
+        self.assertIsNone(lm.load(os.path.join(self.dir, "nowhere")))
+
+    def test_bad_file(self):
+        from engine import lm
+        for data in (b"", b"DLM1", b"XXXX" + bytes(100)):
+            with open(os.path.join(self.dir, "lm.bin"), "wb") as f:
+                f.write(data)
+            self.assertIsNone(lm.load(self.dir))
+
+    def test_truncated_file(self):
+        import export
+        from engine import lm
+        vocab = ["<unk>", "<s>"] + [chr(0x4e00 + i) for i in range(self.V - 2)]
+        out = os.path.join(self.dir, "lm.bin")
+        export.export(self.make_npz(), vocab, out)
+        self.assertIsNotNone(lm.load(self.dir))
+        with open(out, "rb") as f:
+            data = f.read()
+        with open(out, "wb") as f:
+            f.write(data[:-5])
+        self.assertIsNone(lm.load(self.dir))
+
+
 if __name__ == "__main__":
     unittest.main()
