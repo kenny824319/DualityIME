@@ -146,6 +146,7 @@ CONFIGS = [
     {"full_width": True, "completion": False, "remember_words": False, "cand_per_row": 9},
     {"import_memory": 1},  # a backup restored (備份與還原): IMPORTED is merged before typing
     {"autocorrect": True},  # 注音自動校正
+    {"long_sentence": False},  # 長句選字加強 off ({} above: on, the default)
 ]
 DICTIONARY = {
     "words": [["華碩", "ㄏㄨㄚˊ ㄕㄨㄛˋ"], ["史芸", "ㄕˇㄩㄣˊ"], ["好", "ㄏㄠˇ"], ["ㄎㄎ", ""], ["Kazuma", ""],

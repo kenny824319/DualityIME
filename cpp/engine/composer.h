@@ -12,6 +12,7 @@
 #include "bigram.h"
 #include "config.h"
 #include "lexicon.h"
+#include "lm.h"
 #include "util.h"
 #include "zhuyin.h"
 
@@ -38,7 +39,8 @@ std::vector<Token> tokenize(const std::string& raw, const SyllableTable& table, 
                             const Fixed* fixed = nullptr, const Lexicon* lexicon = nullptr,
                             const std::set<int>* breaks = nullptr, const std::set<int>* exact = nullptr,
                             const Fixed* taken = nullptr,  // taken: start -> (end, reading) picked (注音自動校正)
-                            const BigramModel* bigram = nullptr);
+                            const BigramModel* bigram = nullptr,
+                            const LmScorer* lm = nullptr);  // lm: 長句選字加強 on (注音自動校正's sentence score)
 
 struct Segment {
     int start, length;
@@ -57,12 +59,13 @@ using Overrides = std::map<std::pair<int, int>, Pin>;  // span -> pin
 std::vector<Scored> phrase_candidates(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user);
 std::vector<Segment> convert(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user,
                              const std::map<std::pair<int, int>, ustr>& overrides, const BigramModel* bigram,
-                             const std::optional<ustr>& prev_word, std::optional<double>* score_only = nullptr);
+                             const std::optional<ustr>& prev_word, const LmScorer* lm = nullptr);  // lm: 長句選字加強
 // log10 score of the best way to write these syllables (convert's search, no picks, nothing
 // before): how well a reading of a syllable reads with the ones around it, for 注音自動校正
-// (老 or 好 in 你老嗎). Empty if some syllable has no character.
+// (老 or 好 in 你老嗎). Empty if some syllable has no character. lm: with the language model
+// (長句選字加強), the best of the n-best by the score with the model's.
 std::optional<double> run_score(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user,
-                                const BigramModel* bigram);
+                                const BigramModel* bigram, const LmScorer* lm = nullptr);
 double log10_add(double x, double y);
 ustr to_full_width(const ustr& text);
 // English words worth remembering in text sent (UTF-8): 4 letters or more, each once
@@ -74,6 +77,8 @@ struct Resources {
     std::unique_ptr<SyllableTable> table;
     English english;
     std::unique_ptr<BigramModel> bigram;
+    std::unique_ptr<CharLM> lm_model;  // 長句選字加強 (data/lm.bin), none without the file
+    std::unique_ptr<LmScorer> lm;      // ...its scorer (after lm_model and lexicon: it uses them)
     static Resources load(const std::wstring& data_dir);
 };
 
@@ -84,7 +89,7 @@ public:
     static constexpr size_t BAR_ZHUYIN_KEYS = 4;  // ↑ offers the 注音文 of a word that spells no syllable up to this long
 
     Composer(SyllableTable& table, const Lexicon& lexicon, const English& english, UserModel& user,
-             const BigramModel* bigram, Config& config);
+             const BigramModel* bigram, Config& config, const LmScorer* lm = nullptr);
 
     // ch: printable character typed (already shifted), or special: one of
     // BACK DEL ENTER ESC LEFT RIGHT UP DOWN HOME END PGUP PGDN TAB STAB.
@@ -167,6 +172,7 @@ private:
     void clear_input();
     void refresh();
     std::vector<Segment> convert_all(const Overrides* instead = nullptr);
+    const LmScorer* lm() const;  // the language model's scorer while 長句選字加強 is on, else nullptr
     void render();
     ustr as_typed(int start, const std::string& keys) const;
     ustr lit_text(const ustr& value, const std::string& key) const;
@@ -245,6 +251,8 @@ private:
     const Lexicon& lexicon_;
     const English& english_;
     const BigramModel* bigram_;
+    const LmScorer* lm_;
+    mutable bool lm_on_ = false;  // long_sentence when lm() was last asked (settings_changed)
 
     std::optional<ustr> context_word_;
     bool after_english_ = false;

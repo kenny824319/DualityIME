@@ -1,6 +1,7 @@
 // Feeds key scripts to the engine and prints its state after every key, in the
 // same format as tools/trace.py, so tools/compare.py can diff the two engines.
 //   sz_trace <data dir> <user.json> <script file> [config.json]
+//   sz_trace --lm-check <ids file> <data dir>: the language model's scores (tools/lm/check_cpp.py)
 // Script lines: characters as typed, {DOWN} {ENTER} ... special keys,
 // {#5} a numpad key, {CAPS} Caps Lock on/off, {UNDO} take back the last commit,
 // {FW} 全形 on/off, {RESET} focus change, {LB} a literal "{".
@@ -12,6 +13,7 @@
 #include <string>
 
 #include "../engine/composer.h"
+#include "../engine/lm.h"
 
 using namespace sz;
 
@@ -51,12 +53,64 @@ static std::string state(const Composer& c, const std::string& extra) {
     return out;
 }
 
+// Each line of the file: character ids, "|", candidate ids. Prints for each line the scores of the
+// candidates after <s> and after each character, one line each, the scores separated by spaces.
+static int lm_check(const char* ids_path, const char* data_dir) {
+    auto lm = CharLM::load(widen(data_dir) + L"\\lm.bin");
+    if (!lm) {
+        std::fprintf(stderr, "no language model in %s\n", data_dir);
+        return 1;
+    }
+    std::fprintf(stderr, "path: %s\n", lm->avx2() ? "avx2" : "scalar");
+    std::string text;
+    if (!read_file(widen(ids_path), text)) return 1;
+    auto numbers = [](const std::string& s) {
+        std::vector<int> out;
+        size_t i = 0;
+        while (i < s.size()) {
+            while (i < s.size() && s[i] == ' ') ++i;
+            size_t j = i;
+            while (j < s.size() && s[j] != ' ') ++j;
+            if (j > i) out.push_back(std::stoi(s.substr(i, j - i)));
+            i = j;
+        }
+        return out;
+    };
+    std::string out;
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t nl = text.find('\n', pos);
+        if (nl == std::string::npos) nl = text.size();
+        std::string line = text.substr(pos, nl - pos);
+        pos = nl + 1;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        size_t bar = line.find('|');
+        if (bar == std::string::npos) continue;
+        std::vector<int> ids = numbers(line.substr(0, bar)), cands = numbers(line.substr(bar + 1));
+        for (int c : ids)
+            if (c < 0 || c >= lm->vocab()) return 3;
+        for (int c : cands)
+            if (c < 0 || c >= lm->vocab()) return 3;
+        CharLM::State st = lm->start();
+        for (size_t k = 0; k <= ids.size(); ++k) {
+            auto sc = lm->scores(st, cands);
+            for (size_t i = 0; i < sc.size(); ++i) out += (i ? " " : "") + std::to_string(sc[i]);
+            out += "\n";
+            if (k < ids.size()) st = lm->step(st, ids[k]);
+        }
+    }
+    _setmode(_fileno(stdout), _O_BINARY);
+    std::fwrite(out.data(), 1, out.size(), stdout);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     // (debug builds: a failed check is printed instead of opening a window)
     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+    if (argc == 4 && std::string(argv[1]) == "--lm-check") return lm_check(argv[2], argv[3]);
     if (argc < 4) {
         std::fprintf(stderr, "usage: sz_trace <data dir> <user.json> <script>\n");
         return 2;
@@ -64,7 +118,7 @@ int main(int argc, char** argv) {
     Resources res = Resources::load(widen(argv[1]));
     UserModel user(widen(argv[2]), [] { return 20000; });
     Config config(argc > 4 ? widen(argv[4]) : L"");
-    Composer c(*res.table, *res.lexicon, res.english, user, res.bigram.get(), config);
+    Composer c(*res.table, *res.lexicon, res.english, user, res.bigram.get(), config, res.lm.get());
     std::string script;
     if (!read_file(widen(argv[3]), script)) return 1;
     std::string out;
