@@ -996,7 +996,7 @@ std::vector<Scored> phrase_candidates(const std::vector<ustr>& readings, const L
 }
 
 constexpr double SINGLE_EDGE = 2.0;  // a learned single character's bonus, less this, halved: its edge over its homophones
-constexpr double STRONG_PICKS = 3;   // picked this often (or in the personal dictionary), a homophone goes into words too
+constexpr double STRONG_PICKS = 5;   // picked this often (or in the personal dictionary), a homophone goes into words too (3: 記 into 國際)
 
 // (char, unigram) for one syllable, with what the user taught counted only against its homophones.
 // The order among them stays (線 picked for ㄒㄧㄢˋ still comes first), but the place as a whole
@@ -1017,7 +1017,12 @@ static void single_scores(const ustr& reading, std::vector<std::pair<ustr, doubl
     size_t top = 0;
     for (size_t k = 1; k < scored.size(); ++k)
         if (scored[k].second > scored[top].second) top = k;
-    double edge = scored[top].first == usual_char(reading, lexicon)
+    // (only for the personal dictionary: a pick counts picked_weight in the scores already, and the
+    // whole learned bonus here let 話 + 出 outvote 畫出 again)
+    auto mine = user.custom.find(reading);
+    bool custom = mine != user.custom.end() &&
+                  std::find(mine->second.begin(), mine->second.end(), scored[top].first) != mine->second.end();
+    double edge = scored[top].first == usual_char(reading, lexicon) || !custom
                       ? 0.0
                       : std::max(0.0, user.bonus(reading, scored[top].first) - SINGLE_EDGE) / 2;
     double shift = std::max(0.0, scored[top].second - (best + edge));
@@ -1042,10 +1047,25 @@ static ustr usual_char(const ustr& reading, const Lexicon& lexicon) {
 // How much more the user picks ch than the syllable's usual character: what of a learned character
 // goes into words. 妳 picked, 你 not: all of it (謝謝妳); the usual character itself, or one picked
 // no more than it (舊 and 就 once each): none (全部 stays, not 全不; 就是, not 舊式).
+// log10(1 + times picked): a character picked counts this, more the more often
+static double picked_weight(const ustr& reading, const ustr& ch, const UserModel& user) {
+    double n = user.phrase_count(reading, ch);
+    return n >= 1 ? std::log10(1 + n) : 0.0;  // (one faded below a whole pick: nothing, as in bonus)
+}
+
+// What the user taught of a character for a syllable, as it counts in a sentence: in full if the
+// user writes it for good (strongly_picked: the personal dictionary, STRONG_PICKS picks - 妳 for
+// someone who always writes it), else picked_weight - not the whole learned bonus, which made a
+// character picked once or twice take its syllable in every word around (國際 written 國記, 旗艦
+// 歧見; a user's picks: 76% of sentences right without them, 50% with).
+static double single_weight(const ustr& reading, const ustr& ch, const UserModel& user) {
+    return strongly_picked(reading, ch, user) ? user.bonus(reading, ch) : picked_weight(reading, ch, user);
+}
+
 static double preference(const ustr& reading, const ustr& ch, const Lexicon& lexicon, const UserModel& user) {
     ustr usual = usual_char(reading, lexicon);
     if (ch == usual) return 0.0;
-    return std::max(0.0, user.bonus(reading, ch) - (usual.empty() ? 0.0 : user.bonus(reading, usual)));
+    return std::max(0.0, single_weight(reading, ch, user) - (usual.empty() ? 0.0 : single_weight(reading, usual, user)));
 }
 
 // The character the user writes for this syllable for good: first among its homophones, and in
@@ -1063,7 +1083,8 @@ static std::optional<char32_t> strong_homophone(const ustr& reading, const Lexic
 // writes the same syllables, the one with the homophones the user picked and the words on either
 // side: 妳 for someone who writes 妳, alone or inside 謝謝妳 (the dictionary has both 謝謝你 and
 // 謝謝妳). Only written forms the dictionary or the user has: 線在 is never made. A place left to
-// one character takes its homophone with the whole learned bonus; inside a word, a homophone the
+// one character takes its homophone with what the user taught of it (in a sentence a pick counts
+// little: picked_weight; on its own the whole learned bonus); inside a word, a homophone the
 // user prefers for good (strong_homophone) takes the place of the dictionary's (她說 for someone
 // with 她 in the personal dictionary, though it has only 他說), unless the user picks the
 // dictionary's one for good too (始 in 開始, with 使 picked as often). A word the user picked from
@@ -1095,7 +1116,8 @@ static void repick(std::vector<Segment>& path, const std::vector<ustr>& readings
             if (u == m.usual.end()) u = m.usual.emplace(reading, usual_char(reading, lexicon)).first;
             ustr ch(1, p[j]);
             if (ch != u->second)
-                b += std::max(0.0, user.bonus(reading, ch) - (u->second.empty() ? 0.0 : user.bonus(reading, u->second)));
+                b += std::max(0.0, single_weight(reading, ch, user) -
+                                       (u->second.empty() ? 0.0 : single_weight(reading, u->second, user)));
         }
         return b;
     };
@@ -1264,6 +1286,16 @@ static Search search(const std::vector<ustr>& readings, const Lexicon& lexicon, 
                 for (size_t k = 0; k < cands.size() && k < PER_SPAN; ++k)
                     opt.emplace_back(cands[k].first, corpus_unigram(bigram, lexicon, cands[k].first, cands[k].second));
                 if (l == 1 && user && ov == overrides.end()) {
+                    // in a sentence a pick counts picked_weight there, not the whole learned bonus,
+                    // however often (輸 picked once would take every ㄕㄨ on its own, 書 whatever the
+                    // words around; 重繪 is learned as a pair instead); the personal dictionary in
+                    // full, a syllable typed on its own too
+                    if (n > 1) {
+                        auto it = user->custom.find(readings[i]);
+                        for (auto& [p, u] : opt)
+                            if (it == user->custom.end() || std::find(it->second.begin(), it->second.end(), p) == it->second.end())
+                                u = u - user->bonus(readings[i], p) + picked_weight(readings[i], p, *user);
+                    }
                     full[span] = opt;
                     single_scores(readings[i], opt, lexicon, *user, bigram);
                 }
@@ -3037,8 +3069,8 @@ void Composer::learn_broken_words(const std::vector<Segment>& before) {
     // followed the pick by itself (隊 became 對: 不對). Not 你郝 for 郝 picked in 你好 (a name,
     // once), nor anything for a pick reaching out of the word (天天 in 今天天氣). If the user had
     // picked the old word before (部隊), that no longer counts: the latest correction wins; a word
-    // only the user taught (巴西 for ㄅㄚ ㄒㄧ˙) is forgotten even if what it now reads is learned
-    // nothing of (八西). before: what it would be without the picks.
+    // only the user taught (巴西 for ㄅㄚ ㄒㄧ˙) is forgotten, and what it now reads (八西) is half
+    // learned: a word the second time. before: what it would be without the picks.
     auto now = chars_of(segments_);
     for (auto& seg : before) {
         int s = seg.start, l = seg.length;
@@ -3070,7 +3102,12 @@ void Composer::learn_broken_words(const std::vector<Segment>& before) {
         for (int k = s; k < s + l; ++k)
             if (!picked.count(k) && text[k - s] != seg.phrase[k - s]) followed = true;
         if (!followed && !lexicon_.has(rd, text) && !lexicon_.reads_with_other_tones(rd, text)) {
-            if (!lexicon_.has(rd, seg.phrase)) user.forget_phrase(key, seg.phrase);
+            if (!lexicon_.has(rd, seg.phrase)) {
+                // (a word only the user taught, corrected: what it now reads is half learned, a
+                // word the second time - as a pair, learn_pairs)
+                user.forget_phrase(key, seg.phrase);
+                if (user.phrase_count(key, text) < 1) user.learn_half(key, text);
+            }
             continue;
         }
         user.learn_phrase(key, text);

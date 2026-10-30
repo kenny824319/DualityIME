@@ -1216,6 +1216,16 @@ class LearnedSinglesTest(Base):
         self.assertEqual(self.type(keys("ㄋㄧˇ ㄏㄠˇ")), "妳好")
         self.assertEqual(self.type(keys("ㄋㄧˇ ㄕㄨㄛ")), "妳說")  # (the dictionary has only 你說)
 
+    def test_a_character_picked_once_or_twice_does_not_take_its_syllable_everywhere(self):
+        # 輸 picked once for ㄕㄨ, 話 twice for ㄏㄨㄚˋ: the words around still decide (這本書, 畫出;
+        # a user's 216 such picks had turned 76% of sentences right into 50%)
+        self.learn("ㄕㄨ", "輸")
+        self.learn("ㄏㄨㄚˋ", "話", 2)
+        self.learn("ㄏㄨㄚˋ", "畫", 3)
+        self.assertEqual(self.type(keys("ㄓㄜˋ ㄅㄣˇ ㄕㄨ ㄏㄣˇ ㄏㄠˇ ㄎㄢˋ")), "這本書很好看")
+        self.assertEqual(self.type(keys("ㄋㄧˇ ㄧˋ ㄓˊ ㄏㄨㄚˋ ㄔㄨ ㄧˋ ㄓㄨㄥˇ ㄕㄡˇ ㄊㄠˋ ㄍㄢˇ")), "你一直畫出一種手套感")
+        self.assertEqual(self.type(keys("ㄕㄨ")), "輸")  # (on its own it is as picked)
+
     def test_a_homophone_picked_once_does_not_go_into_words(self):
         self.learn("ㄒㄧㄢˋ", "線")
         self.assertEqual(self.type(keys("ㄒㄧㄢˋ ㄗㄞˋ")), "現在")
@@ -1433,6 +1443,9 @@ class LearnedSinglesTest(Base):
         self.assertEqual(self.c.user.phrase_count("ㄅㄚ-ㄒㄧ˙", "巴西"), 1)
         self.assertEqual(self.pick_at("ㄅㄚ ㄒㄧ˙", 0, "八"), "八西")
         self.assertEqual(self.c.user.phrase_count("ㄅㄚ-ㄒㄧ˙", "巴西"), 0)
+        # (八 picked once is no word yet - a pick counts little in a sentence; twice, 八西 is one:
+        # _learn_pairs)
+        self.assertEqual(self.pick_at("ㄅㄚ ㄒㄧ˙", 0, "八"), "八西")
         self.assertEqual(self.type(keys("ㄅㄚ ㄒㄧ˙")), "八西")
 
     def test_a_pick_making_a_word_as_typed_learns_no_tone_variant_beside_it(self):
@@ -1581,11 +1594,13 @@ class PairPickTest(Base):
             c.settings_changed()
 
     def test_one_pair_a_pick_the_one_on_the_left(self):
-        # 我要重繪了: 重繪, never 繪了 too (了 is on its own almost always: 我會了 would turn 我繪了)
+        # 我要重繪了 (繪 picked 36 times), 會 picked: half of 重會, never of 會了 too (了 is on its own
+        # almost always: a word of 會了 or 繪了 would take every ㄏㄨㄟˋ ㄌㄜ˙)
         typed = "ㄨㄛˇ ㄧㄠˋ ㄔㄨㄥˊ ㄏㄨㄟˋ ㄌㄜ˙"
-        self.assertTrue(self.pick_at(typed, 3, "繪").endswith("重繪了"))
-        self.assertEqual(self.c.user.phrase_count("ㄔㄨㄥˊ-ㄏㄨㄟˋ", "重繪"), 0.5)
-        self.assertEqual(self.c.user.phrase_count("ㄏㄨㄟˋ-ㄌㄜ˙", "繪了"), 0)
+        self.assertEqual(self.type(keys(typed)), "我要重繪了")
+        self.assertTrue(self.pick_at(typed, 3, "會").endswith("重會了"))
+        self.assertEqual(self.c.user.phrase_count("ㄔㄨㄥˊ-ㄏㄨㄟˋ", "重會"), 0.5)
+        self.assertEqual(self.c.user.phrase_count("ㄏㄨㄟˋ-ㄌㄜ˙", "會了"), 0)
 
     def test_a_pick_taken_back_before_sending_teaches_no_pair(self):
         # 繪 picked, then 會 picked back before Enter: 會 is what it was without picks - no 重會
@@ -3348,10 +3363,10 @@ class LongSentenceTest(unittest.TestCase):
         self.check_word_kept(user)
 
     def test_single_pick_can_lose(self):
-        # 閒 picked once for ㄒㄧㄢˊ: it shows up with the setting off (左閒), the model outvotes it
-        # (a single character picked only adds to the score, it is not kept like a taught word)
+        # 閒 in the personal dictionary for ㄒㄧㄢˊ: it shows up with the setting off (左閒), the model
+        # outvotes it (a single character only adds to the score, it is not kept like a taught word)
         user = self.user()
-        user.learn_phrase("ㄒㄧㄢˊ", "閒")
+        user.custom = {"ㄒㄧㄢˊ": ["閒"]}
         sentence = "雖然輪船的左舷已經被拆毀"
         rd = self.readings(sentence)
         self.assertEqual(rd[6], "ㄒㄧㄢˊ")

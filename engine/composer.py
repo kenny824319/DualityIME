@@ -785,9 +785,26 @@ def log10_add(x, y):
 
 
 SINGLE_EDGE = 2.0  # a learned single character's bonus, less this, halved: its edge over its homophones
-STRONG_PICKS = 3   # picked this often (or in the personal dictionary), a homophone goes into words too
+STRONG_PICKS = 5   # picked this often (or in the personal dictionary), a homophone goes into words too (3: 記 into 國際)
 ORIG_FIRST = 3     # 注音自動校正 swapped a syllable: this many of what the keys typed spell come second in ↓
 KEPT = "kept"      # marks an override that keeps a character as it was around a pick, not picked itself
+
+
+def _in_a_sentence(reading, scored, user):
+    """[(char, unigram)] of a place left to one character in a sentence: a pick counts
+    _picked_weight there, not the whole learned bonus, however often - 輸 picked once for ㄕㄨ would
+    take every ㄕㄨ on its own from then on whatever the words around (書; 繪 picked 36 times, 重會
+    for 重 + ㄏㄨㄟˋ: the pair is learned instead, _learn_pairs). The personal dictionary counts
+    in full; a syllable typed on its own keeps the whole bonus (convert: n == 1)."""
+    return [(p, u if p in user.custom.get(reading, ()) else u - user.bonus(reading, p) + _picked_weight(reading, p, user))
+            for p, u in scored]
+
+
+def _picked_weight(reading, ch, user):
+    """log10(1 + times picked): a character picked counts this, more the more often (one faded
+    below a whole pick: nothing, as in bonus)."""
+    n = user.phrase_count(reading, ch)
+    return math.log10(1 + n) if n >= 1 else 0.0
 
 
 def single_scores(reading, scored, lexicon, user, bigram):
@@ -802,7 +819,10 @@ def single_scores(reading, scored, lexicon, user, bigram):
     plain = [corpus_unigram(bigram, lexicon, p, s) for p, s in phrase_candidates([reading], lexicon)[:PER_SPAN]]
     best = max(plain) if plain else USER_PHRASE_SCORE
     top, u_top = max(scored, key=lambda x: x[1])
-    edge = 0.0 if top == usual_char(reading, lexicon) else max(0.0, user.bonus(reading, top) - SINGLE_EDGE) / 2
+    # (only for the personal dictionary: a pick counts _picked_weight in the scores already, and the
+    # whole learned bonus here let 話 + 出 outvote 畫出 again)
+    edge = 0.0 if top == usual_char(reading, lexicon) or top not in user.custom.get(reading, ()) \
+        else max(0.0, user.bonus(reading, top) - SINGLE_EDGE) / 2
     shift = max(0.0, u_top - (best + edge))
     return [(p, u - shift) for p, u in scored]
 
@@ -941,6 +961,8 @@ def _search(readings, lexicon, user, overrides, bigram, prev_word):
             if cands:
                 options[span] = [(p, corpus_unigram(bigram, lexicon, p, s)) for p, s in cands[:PER_SPAN]]
                 if l == 1 and user and span not in overrides:
+                    if n > 1:
+                        options[span] = _in_a_sentence(readings[i], options[span], user)
                     full[span] = options[span]
                     options[span] = single_scores(readings[i], options[span], lexicon, user, bigram)
 
@@ -966,8 +988,9 @@ def _search(readings, lexicon, user, overrides, bigram, prev_word):
 
 def strong_homophone(reading, lexicon, user):
     """The character the user writes for this syllable for good: first among its homophones,
-    and in the personal dictionary or picked STRONG_PICKS times (one pick of 線 is not), and
-    preferred to the syllable's usual character (not 不 for ㄅㄨˋ: picking it says nothing about 部)."""
+    and in the personal dictionary or picked STRONG_PICKS times (3 were not enough: 記 picked so
+    wrote 國記 for 國際), and preferred to the syllable's usual character (not 不 for ㄅㄨˋ: picking it says nothing
+    about 部)."""
     cands = phrase_candidates([reading], lexicon, user)
     if not cands or len(cands[0][0]) != 1:
         return None
@@ -988,7 +1011,16 @@ def preference(reading, ch, lexicon, user):
     usual = usual_char(reading, lexicon)
     if ch == usual:
         return 0.0
-    return max(0.0, user.bonus(reading, ch) - (user.bonus(reading, usual) if usual else 0.0))
+    return max(0.0, single_weight(reading, ch, user) - (single_weight(reading, usual, user) if usual else 0.0))
+
+
+def single_weight(reading, ch, user):
+    """What the user taught of a character for a syllable, as it counts in a sentence: in full if
+    the user writes it for good (strongly_picked: the personal dictionary, STRONG_PICKS picks - 妳
+    for someone who always writes it), else log10(1 + times picked) - not the whole learned bonus,
+    which made a character picked once or twice take its syllable in every word around (國際
+    written 國記, 旗艦 歧見; a user's picks: 76% of sentences right without them, 50% with)."""
+    return user.bonus(reading, ch) if strongly_picked(reading, ch, user) else _picked_weight(reading, ch, user)
 
 
 def _chars(segments):
@@ -1006,7 +1038,8 @@ def repick(path, readings, lexicon, options, full, user, bigram, prev_word, over
     dictionary writes the same syllables, the one with the homophones the user picked and the
     words on either side: 妳 for someone who writes 妳, alone or inside 謝謝妳 (the dictionary has
     both 謝謝你 and 謝謝妳). Only written forms the dictionary or the user has: 線在 is never made.
-    A place left to one character takes its homophone with the whole learned bonus; inside a
+    A place left to one character takes its homophone with what the user taught of it (in a
+    sentence a pick counts little: _in_a_sentence; on its own the whole learned bonus); inside a
     word, a homophone the user prefers for good (strong_homophone) takes the place of the
     dictionary's (她說 for someone with 她 in the personal dictionary, though it has only 他說),
     unless the user picks the dictionary's one for good too (始 in 開始, with 使 picked as often).
@@ -2189,8 +2222,8 @@ class Composer:
         rest of it followed the pick by itself (隊 became 對: 不對). Not 你郝 for 郝 picked in 你好
         (a name, once), nor anything for a pick reaching out of the word (天天 in 今天天氣). If the
         user had picked the old word before (部隊), that no longer counts: the latest correction
-        wins; a word only the user taught (巴西 for ㄅㄚ ㄒㄧ˙) is forgotten even if what it now
-        reads is learned nothing of (八西). before: what it would be without the picks."""
+        wins; a word only the user taught (巴西 for ㄅㄚ ㄒㄧ˙) is forgotten, and what it now reads
+        (八西) is half learned: a word the second time. before: what it would be without the picks."""
         now = _chars(self.segments)
         for s, l, p in before:
             if l < 2 or len(p) != l:
@@ -2213,7 +2246,11 @@ class Composer:
             followed = any(k not in picked and text[k - s] != p[k - s] for k in range(s, s + l))
             if not followed and not self.lexicon.has(rd, text) and not self.lexicon.reads_with_other_tones(rd, text):
                 if not self.lexicon.has(rd, p):
+                    # (a word only the user taught, corrected: what it now reads is half learned,
+                    # a word the second time - as a pair, _learn_pairs)
                     self.user.forget_phrase(key, p)
+                    if self.user.phrase_count(key, text) < 1:
+                        self.user.learn_half(key, text)
                 continue
             self.user.learn_phrase(key, text)
             self.user.forget_phrase(key, p)
