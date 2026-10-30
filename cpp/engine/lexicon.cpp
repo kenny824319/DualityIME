@@ -72,16 +72,34 @@ bool Lexicon::reads_with_other_tones(const std::vector<ustr>& readings, const us
     return true;
 }
 
-bool Lexicon::has_other_tones_word(const std::vector<ustr>& readings, size_t at) const {
-    // some word reads with other tones as these syllables (reads_with_other_tones), its syllable
-    // `at` as here (the tones differ elsewhere): 匹配 for ㄆㄧ ㄆㄟˋ at 1 (ㄆㄧˇ ㄆㄟˋ in the
-    // dictionary); 注音自動校正 leaves syllable `at` alone then
-    if (readings.size() < 2) return false;
+std::vector<std::pair<const ustr*, ustr>> Lexicon::other_tones_words(const std::vector<ustr>& readings) const {
+    // the words the dictionary reads as these syllables with the tone of one of them other (教育部
+    // against the dictionary: ㄆㄧˇ-ㄆㄟˋ 匹配 for ㄆㄧ ㄆㄟˋ; not 比分 ㄅㄧˇ ㄈㄣ for ㄅㄧˋ ㄈㄣˋ, a slip of
+    // 部分), each character with its syllable here (reads_with_other_tones); with their reading keys
+    std::vector<std::pair<const ustr*, ustr>> out;
+    if (readings.size() < 2) return out;
     for (auto* r : other_tones(readings)) {
-        if (split(*r, U'-')[at] != readings[at]) continue;
-        for (auto& [p, _] : entries_.at(*r))
-            if (p.size() == readings.size() && reads_with_other_tones(readings, p)) return true;
+        auto syls = split(*r, U'-');
+        size_t differ = 0;
+        for (size_t k = 0; k < syls.size() && k < readings.size(); ++k)
+            if (syls[k] != readings[k]) ++differ;
+        if (differ != 1) continue;
+        for (auto& [p, _] : entries_.at(*r)) {
+            if (p.size() != readings.size()) continue;
+            bool all = true;
+            for (size_t k = 0; k < readings.size() && all; ++k)
+                if (!has({readings[k]}, ustr(1, p[k]))) all = false;
+            if (all) out.emplace_back(r, p);
+        }
     }
+    return out;
+}
+
+bool Lexicon::has_other_tones_word(const std::vector<ustr>& readings, size_t at) const {
+    // some word reads as these syllables with the tone of another one than `at` other (匹配 for
+    // ㄆㄧ ㄆㄟˋ at 1); 注音自動校正 leaves syllable `at` alone then
+    for (auto& [r, _] : other_tones_words(readings))
+        if (split(*r, U'-')[at] == readings[at]) return true;
     return false;
 }
 

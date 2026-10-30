@@ -45,6 +45,8 @@ public:
     // ㄒㄧㄚˋ ㄗㄞˇ there; 教育部 reads ㄒㄧㄚˋ ㄗㄞˋ), and each character of it has its syllable here
     // (載 is a ㄗㄞˋ too). Words of 2+ syllables only.
     bool reads_with_other_tones(const std::vector<ustr>& readings, const ustr& phrase) const;
+    // (reading key, word) read as these syllables with one tone other (ㄆㄧˇ-ㄆㄟˋ 匹配 for ㄆㄧ ㄆㄟˋ)
+    std::vector<std::pair<const ustr*, ustr>> other_tones_words(const std::vector<ustr>& readings) const;
     bool has_other_tones_word(const std::vector<ustr>& readings, size_t at) const;  // 匹配 for ㄆㄧ ㄆㄟˋ at 1
 
 private:

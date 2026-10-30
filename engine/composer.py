@@ -603,12 +603,6 @@ def _check_corrections(tokens, table, lexicon, user=None, exact=(), bigram=None)
             if _makes_user_word(readings, k, user):
                 swapped = False
                 continue
-            # ...or a word the dictionary reads with other tones (匹配 for ㄆㄧ ㄆㄟˋ: ㄆㄧˇ there; 教育部
-            # reads ㄆㄧ): no slip, but a reading of the word - not 批判 (o is next to 0); a pick makes
-            # it the word (_learn_tone_variant_words)
-            if _makes_other_tones_word(readings, k, lexicon):
-                swapped = False
-                continue
             if _apart_score(readings, k, lexicon) is None:
                 continue  # (a syllable on its own: nothing to make a word with)
             # of the syllables keys next to the ones typed make, those that make a word around it
@@ -624,14 +618,33 @@ def _check_corrections(tokens, table, lexicon, user=None, exact=(), bigram=None)
                 swapped = False
                 continue
             typed = in_sentence(readings, k, t.value)
+            # the keys typed may spell a word with other tones (少數 typed ㄕㄠˋ ㄕㄨˋ, 教育部; ㄕㄠˇ in the
+            # dictionary): they read as well as that word does, else 上述 (a for l) always wins
+            variant = _other_tones_reading(readings, k, lexicon)
+            if variant is not None:
+                typed = max(typed, in_sentence(variant, k, variant[k]))
             gain = SWAP_GAIN_WORD if _word_score(readings, k, lexicon, None) is not None else SWAP_GAIN_NO_WORD
-            if best - typed > gain:
+            # ...and where the tones differ in another syllable (匹配 for ㄆㄧ ㄆㄟˋ: ㄆㄟˋ as there),
+            # this one is no slip at all: left alone (not 批判, o next to 0); a pick makes it the
+            # word (_learn_tone_variant_words)
+            if best - typed > gain and not _makes_other_tones_word(readings, k, lexicon):
                 t.orig, t.value, t.corrected = t.value, best_alt, "valid"
                 readings[k] = best_alt
                 swapped = True
             else:
                 swapped = False
     return tokens
+
+
+def _other_tones_reading(readings, k, lexicon):
+    """The syllables with the first word around k that the dictionary reads with other tones
+    written its way (ㄕㄠˋ ㄕㄨˋ: ㄕㄠˇ ㄕㄨˋ for 少數), shortest and leftmost first; None if none."""
+    for l in range(2, MAX_PHRASE_LEN + 1):
+        for a in range(max(0, k - l + 1), min(k, len(readings) - l) + 1):
+            found = lexicon.other_tones_words(readings[a:a + l])
+            if found:
+                return readings[:a] + found[0][0].split("-") + readings[a + l:]
+    return None
 
 
 def _makes_other_tones_word(readings, k, lexicon):
@@ -773,6 +786,7 @@ def log10_add(x, y):
 
 SINGLE_EDGE = 2.0  # a learned single character's bonus, less this, halved: its edge over its homophones
 STRONG_PICKS = 3   # picked this often (or in the personal dictionary), a homophone goes into words too
+ORIG_FIRST = 3     # 注音自動校正 swapped a syllable: this many of what the keys typed spell come second in ↓
 KEPT = "kept"      # marks an override that keeps a character as it was around a pick, not picked itself
 
 
@@ -1545,13 +1559,16 @@ class Composer:
         tok = [x for x in self.tokens if x.kind == "zh"][t]
         if tok.corrected == "valid":
             # 注音自動校正 swapped the syllable (xl3 read as 好 in 你好): what the keys typed spell
-            # (老), right after the first (幹 second in 看到 for e04 2l4, not after every ㄎㄢˋ);
-            # picked, they are read as typed from then on
+            # (老) - the first ORIG_FIRST right after the first candidate (現 second at 信 in
+            # 台北市信義區, not after every ㄒㄧㄣˋ), the rest after the others; picked, they are read
+            # as typed from then on
             mine = [p for p, _ in phrase_candidates([tok.orig], self.lexicon, self.user) if p not in seen]
             seen.update(mine)
-            at = min(1, len(labels))
-            labels[at:at] = mine
-            actions[at:at] = [("exact", tok.start, t, p) for p in mine]
+            pos = min(1, len(labels))
+            labels[pos:pos] = mine[:ORIG_FIRST]
+            actions[pos:pos] = [("exact", tok.start, t, p) for p in mine[:ORIG_FIRST]]
+            labels += mine[ORIG_FIRST:]
+            actions += [("exact", tok.start, t, p) for p in mine[ORIG_FIRST:]]
         if tok.corrected:
             # and last, the keys as typed (si3): picked, they stay so
             keys = tok.raw.rstrip(" ")

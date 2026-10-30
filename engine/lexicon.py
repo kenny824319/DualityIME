@@ -54,14 +54,24 @@ class Lexicon:
             return False
         return all(self.has([syl], ch) for ch, syl in zip(phrase, readings))
 
+    def other_tones_words(self, readings):
+        """[(reading key, word)] the dictionary reads as these syllables with the tone of one of them
+        other (教育部 against the dictionary: (ㄆㄧˇ-ㄆㄟˋ, 匹配) for ㄆㄧ ㄆㄟˋ; not 比分 ㄅㄧˇ ㄈㄣ for
+        ㄅㄧˋ ㄈㄣˋ, a slip of 部分), each character with its syllable here (reads_with_other_tones)."""
+        if len(readings) < 2:
+            return []
+        out = []
+        for r in self._other_tones(readings):
+            if sum(a != b for a, b in zip(r.split("-"), readings)) != 1:
+                continue
+            out += [(r, p) for p, _ in self.entries[r]
+                    if len(p) == len(readings) and all(self.has([syl], ch) for ch, syl in zip(p, readings))]
+        return out
+
     def has_other_tones_word(self, readings, at):
-        """Some word reads with other tones as these syllables (reads_with_other_tones), its
-        syllable `at` as here (the tones differ elsewhere): 匹配 for ㄆㄧ ㄆㄟˋ at 1 (ㄆㄧˇ ㄆㄟˋ in the
-        dictionary). 注音自動校正 leaves syllable `at` alone then."""
-        return len(readings) >= 2 and any(
-            self.reads_with_other_tones(readings, p)
-            for r in self._other_tones(readings) if r.split("-")[at] == readings[at]
-            for p, _ in self.entries[r] if len(p) == len(readings))
+        """Some word reads as these syllables with the tone of another one than `at` other (匹配 for
+        ㄆㄧ ㄆㄟˋ at 1). 注音自動校正 leaves syllable `at` alone then."""
+        return any(r.split("-")[at] == readings[at] for r, _ in self.other_tones_words(readings))
 
     def _other_tones(self, readings):
         """The reading keys of the dictionary that differ from these only in tones."""
