@@ -1,13 +1,15 @@
 """Measure conversion accuracy on held-out text.
 
     python tools/evaluate.py <corpus.parquet> [sentences] [--no-bigram | --bigram FILE] [--typed]
+        [--min-len N] [--max-len N]
 
 --typed types the keystrokes through the full composer (tokenizer included)
 instead of handing the readings straight to the converter.
 
 Takes Chinese runs from the *end* of the file (not used for training),
 types each with its most common reading, and counts characters that come
-out right.
+out right. Runs of 6-20 characters, or --min-len to --max-len; those of 15 or
+more are also counted apart (long sentences).
 """
 import os
 import re
@@ -44,7 +46,6 @@ def type_through(composer, raw):
     composer.key(special="ENTER")
     return out + composer.commit
 
-HAN_RUN = re.compile(r"[一-鿿]{6,20}")
 
 
 def reading_of(text, best_reading):
@@ -76,12 +77,15 @@ def main(path, count=500, *flags):
                 best_reading[p] = (reading, s)
     best_reading = {p: r for p, (r, _) in best_reading.items()}
 
+    lo = int(flags[flags.index("--min-len") + 1]) if "--min-len" in flags else 6
+    hi = int(flags[flags.index("--max-len") + 1]) if "--max-len" in flags else 20
+    han_run = re.compile(f"[一-鿿]{{{lo},{hi}}}")
     pf = pq.ParquetFile(path)
     column = "text" if "text" in pf.schema_arrow.names else pf.schema_arrow.names[0]
     texts = pf.read_row_group(pf.num_row_groups - 1, columns=[column]).column(0).to_pylist()
     samples = []
     for text in reversed(texts):
-        for run in HAN_RUN.findall(text):
+        for run in han_run.findall(text):
             rd = reading_of(run, best_reading)
             if rd:
                 samples.append((run, rd))
@@ -90,6 +94,7 @@ def main(path, count=500, *flags):
     samples = samples[:int(count)]
     composer = Composer(table, lexicon, english, user, bigram, config) if "--typed" in flags else None
     right = total = exact = 0
+    long_n = long_exact = 0
     for text, rd in samples:
         if composer:
             out = type_through(composer, keys_of(rd))
@@ -99,9 +104,14 @@ def main(path, count=500, *flags):
         right += hits
         total += len(text)
         exact += out == text
+        if len(text) >= 15:
+            long_n += 1
+            long_exact += out == text
     print(f"{len(samples)} sentences: {right / total:.1%} characters right, "
           f"{exact / len(samples):.1%} sentences fully right (bigram={'on' if bigram else 'off'}"
           f"{', typed' if composer else ''})")
+    print(f"  average {total / len(samples):.1f} characters; {long_n} of 15 or more: "
+          f"{long_exact / long_n if long_n else 0:.1%} fully right")
 
 
 if __name__ == "__main__":
