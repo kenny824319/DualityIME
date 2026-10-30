@@ -336,6 +336,8 @@ function pageTyping() {
         h("span", {}, "按到旁邊的鍵、注音順序打錯、同一個鍵按兩次或漏打聲調時，看整句自動改成最可能的字。可透過 ↓ 選回原本打的。",
           h("span", { class: "row-warn" }, "注意：偶爾會把打對的字或數字也改掉。")),
         cfgToggle("autocorrect", "注音自動校正")),
+      row("長句選字加強", "看整句的意思選字，長句更準確。電腦較舊、打字覺得變慢時可以關閉。",
+        cfgToggle("long_sentence", "長句選字加強")),
       previewChoice())
   ];
 }

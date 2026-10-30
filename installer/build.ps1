@@ -68,7 +68,7 @@ $files = [ordered]@{
 }
 foreach ($dll in $webview) { $files[$dll] = "third_party\webview2\$dll" }
 # the engine's data: only what it reads (not the corpus the bigram is built from)
-foreach ($f in @("lexicon.txt", "bigram.bin", "english.txt", "english_tech.txt", "LICENSE-McBopomofo.txt")) { $files["data\$f"] = "data\$f" }
+foreach ($f in @("lexicon.txt", "bigram.bin", "lm.bin", "english.txt", "english_tech.txt", "LICENSE-McBopomofo.txt")) { $files["data\$f"] = "data\$f" }
 foreach ($f in Get-ChildItem (Join-Path $root "settings\ui") -File) { $files["ui\$($f.Name)"] = "settings\ui\$($f.Name)" }
 
 foreach ($k in $files.Keys) {
