@@ -668,7 +668,7 @@ bool makes_user_word(const std::vector<ustr>& readings, size_t k, const UserMode
             if (auto it = user->custom.find(key); it != user->custom.end() && !it->second.empty()) return true;
             if (auto* ps = user->phrases.find(key))
                 for (auto& [p, _] : *ps)
-                    if (user->phrase_count(key, p) > 0) return true;
+                    if (user->learned(key, p)) return true;
         }
     }
     return false;
@@ -1320,7 +1320,7 @@ static bool taught(const ustr& key, const ustr& phrase, const UserModel* user) {
     if (auto it = user->custom.find(key);
         it != user->custom.end() && std::find(it->second.begin(), it->second.end(), phrase) != it->second.end())
         return true;
-    return user->phrase_count(key, phrase) > 0;
+    return user->learned(key, phrase);
 }
 
 // 長句選字加強: the best of the n-best by score + LM_WEIGHT * the model's log10 probability. Each
@@ -3089,6 +3089,45 @@ void Composer::learn_tone_variant_words(const std::vector<Segment>& before) {
     }
 }
 
+void Composer::learn_pairs(const std::vector<Segment>& before) {
+    // a character picked beside a character on its own, the two no word of the dictionary (繪 after
+    // 重, 重會 written: 重繪): half a pick of the pair, so the second time it is a word - a pick
+    // alone never beats a common homophone picked a few times too (會), and nothing knows what it
+    // was picked beside. Once a sentence; not a name picked once (你郝), nor a pick inside a word or
+    // next to a character of one (自訂 + 蟲: no 訂蟲); not where both are picked (learn_group). The
+    // pair is learned for good as any word (corrected back, it is forgotten: learn_broken_words).
+    // before: what it would be without the picks.
+    std::set<int> alone, now, picked;
+    for (auto& seg : before)
+        if (seg.length == 1 && seg.phrase.size() == 1) alone.insert(seg.start);
+    for (auto& seg : segments_)
+        if (seg.length == 1 && seg.phrase.size() == 1) now.insert(seg.start);
+    for (auto& [span, v] : overrides_)
+        if (!v.kept)
+            for (int k = span.first; k < span.first + span.second; ++k) picked.insert(k);
+    auto chars = chars_of(segments_);
+    std::set<std::pair<ustr, ustr>> done;
+    for (auto& [span, v] : overrides_) {
+        int s = span.first;
+        if (v.kept || span.second != 1 || !alone.count(s) || !now.count(s)) continue;
+        for (auto [a, b] : {std::pair<int, int>{s - 1, s}, std::pair<int, int>{s, s + 1}}) {
+            int other = b == s ? a : b;
+            bool in_run = false;
+            for (auto& [x, y] : runs_)
+                if (x <= a && b < y) in_run = true;
+            if (picked.count(other) || !alone.count(other) || !now.count(other) || !in_run) continue;
+            std::vector<ustr> rd(readings.begin() + a, readings.begin() + b + 1);
+            ustr text{chars.at(a), chars.at(b)};
+            ustr key = join(rd, U'-');
+            if (done.count({key, text}) || lexicon_.has(rd, text) || lexicon_.reads_with_other_tones(rd, text) ||
+                user.phrase_count(key, text) >= 1)
+                continue;
+            done.insert({key, text});
+            user.learn_half(key, text);
+        }
+    }
+}
+
 void Composer::learn_group(const std::vector<std::tuple<int, std::vector<ustr>, ustr>>& group) {
     if (group.size() < 2) return;
     std::vector<ustr> rds;
@@ -3114,6 +3153,7 @@ void Composer::do_commit() {
         learn_broken_words(before);
         learn_tone_variant_words(before);
         learn_overrides();
+        learn_pairs(before);
         undo.learned = user.phrases_changed(old_phrases, old_used);
         user.save();
     }

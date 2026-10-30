@@ -454,6 +454,17 @@ class UserModel:
         self.phrases.setdefault(reading_key, {})[phrase] = count + 1
         self.phrase_used.setdefault(reading_key, {})[phrase] = self.today()
 
+    def learned(self, reading_key, phrase):
+        """Picked (a whole pick at least, faded or not): a word the user taught. Not a half (learn_half)."""
+        return self.phrases.get(reading_key, {}).get(phrase, 0) >= 1
+
+    def learn_half(self, reading_key, phrase):
+        """Half a pick (a pair of characters, Composer._learn_pairs): a word once picked twice;
+        under 1 it counts for nothing (bonus, phrase_candidates), so older versions ignore it too."""
+        count = self.phrase_count(reading_key, phrase)
+        self.phrases.setdefault(reading_key, {})[phrase] = count + 0.5
+        self.phrase_used.setdefault(reading_key, {})[phrase] = self.today()
+
     def forget_phrase(self, reading_key, phrase):
         """The user corrected this phrase away (部隊 made 不對): their earlier picks of it no longer count."""
         if self.phrases.get(reading_key, {}).pop(phrase, None) is not None:
@@ -575,12 +586,13 @@ class UserModel:
             self.english.discard(raw)
 
     def _prune(self):
-        """Drop picks that faded below one use, then keep only the most used.
-        Counts are stored as they were on the day last used, so they are kept
-        as is; only the choice of what to keep looks at today's faded count."""
+        """Drop picks that faded below one use (a half pick, learn_half: below a half, so it lasts
+        FORGET_DAYS), then keep only the most used. Counts are stored as they were on the day last
+        used, so they are kept as is; only the choice of what to keep looks at today's faded count."""
         today = self.today()
         entries = [(self.phrase_count(r, p), r, p) for r, bucket in self.phrases.items() for p in bucket]
-        entries = sorted((e for e in entries if e[0] >= 1), reverse=True)[:KEEP_PHRASES]
+        entries = sorted((e for e in entries if e[0] >= (1 if self.phrases[e[1]][e[2]] >= 1 else 0.5)),
+                         reverse=True)[:KEEP_PHRASES]
         phrases, used = {}, {}
         for _, r, p in entries:
             phrases.setdefault(r, {})[p] = self.phrases[r][p]

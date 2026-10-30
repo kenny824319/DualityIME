@@ -1497,6 +1497,95 @@ class LearnedSinglesTest(Base):
         self.assertEqual(self.type(keys("ㄒㄧㄢˋ")), "線")
 
 
+class PairPickTest(Base):
+    """A character picked beside a character on its own, the two no word of the dictionary (繪
+    after 重: 重繪): half a pick of the pair each time it is sent, so the second time it is a word
+    (a name typed once, 你郝, is not). 會 picked twice before: 繪 alone never beats it again."""
+
+    TYPED = "ㄗˋ ㄉㄧㄥˋ ㄔㄨㄥˊ ㄏㄨㄟˋ"
+    learn = LearnedSinglesTest.learn
+    pick_at = LearnedSinglesTest.pick_at
+
+    def setUp(self):
+        super().setUp()
+        self.c.user.phrases.clear()
+        self.c.user.phrase_used.clear()
+        self.learn("ㄏㄨㄟˋ", "繪", 36)
+        self.learn("ㄏㄨㄟˋ", "會", 2)
+
+    def test_the_pair_is_a_word_after_the_second_pick(self):
+        self.assertEqual(self.type(keys(self.TYPED)), "自訂重會")
+        self.assertEqual(self.pick_at(self.TYPED, 3, "繪"), "自訂重繪")
+        self.assertEqual(self.c.user.phrase_count("ㄔㄨㄥˊ-ㄏㄨㄟˋ", "重繪"), 0.5)
+        self.assertEqual(self.type(keys(self.TYPED)), "自訂重會")  # (once is not enough)
+        self.assertEqual(self.pick_at(self.TYPED, 3, "繪"), "自訂重繪")
+        self.assertEqual(self.c.user.phrase_count("ㄔㄨㄥˊ-ㄏㄨㄟˋ", "重繪"), 1)
+        self.assertEqual(self.type(keys(self.TYPED)), "自訂重繪")
+        self.assertEqual(self.type(keys("ㄔㄨㄥˊ ㄏㄨㄟˋ")), "重繪")
+        self.assertEqual(self.type(keys("ㄏㄨㄟˋ")), "會")  # (on its own as before)
+
+    def test_the_picked_character_before_its_neighbour_counts_too(self):
+        # 蟲 picked before 會: 蟲會 (the pick on the left of the pair)
+        self.assertEqual(self.pick_at("ㄔㄨㄥˊ ㄏㄨㄟˋ", 0, "蟲"), "蟲會")
+        self.assertEqual(self.c.user.phrase_count("ㄔㄨㄥˊ-ㄏㄨㄟˋ", "蟲會"), 0.5)
+
+    def test_not_with_a_character_of_a_word(self):
+        # 蟲 picked after 自訂: 訂 is in a word, so no 訂蟲; 會 beside it is on its own: 蟲會
+        self.assertEqual(self.pick_at(self.TYPED, 2, "蟲"), "自訂蟲會")
+        self.assertEqual(self.c.user.phrase_count("ㄉㄧㄥˋ-ㄔㄨㄥˊ", "訂蟲"), 0)
+        self.assertEqual(self.c.user.phrase_count("ㄔㄨㄥˊ-ㄏㄨㄟˋ", "蟲會"), 0.5)
+
+    def test_once_a_sentence(self):
+        # the same pair picked twice in one sentence is still one time
+        both = self.TYPED + " " + self.TYPED
+        c = self.c
+        for ch in keys(both):
+            c.key(ch)
+        for at in (3, 7):
+            c.key(special="HOME")
+            for _ in range(at):
+                c.key(special="RIGHT")
+            c.key(special="DOWN")
+            for _ in range(c.candidates.index("繪")):
+                c.key(special="DOWN")
+            c.key(special="ENTER")
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "自訂重繪自訂重繪")
+        self.assertEqual(c.user.phrase_count("ㄔㄨㄥˊ-ㄏㄨㄟˋ", "重繪"), 0.5)
+
+    def test_a_pick_inside_a_word_makes_no_pair(self):
+        # 郝 picked in 你好 (a name): no 你郝 at all, as before
+        self.assertEqual(self.pick_at("ㄋㄧˇ ㄏㄠˇ", 1, "郝"), "你郝")
+        self.assertEqual(self.c.user.phrase_count("ㄋㄧˇ-ㄏㄠˇ", "你郝"), 0)
+
+    def test_a_pair_corrected_back_is_forgotten(self):
+        self.pick_at(self.TYPED, 3, "繪")
+        self.pick_at(self.TYPED, 3, "繪")
+        self.assertEqual(self.type(keys(self.TYPED)), "自訂重繪")
+        self.assertEqual(self.pick_at(self.TYPED, 3, "會"), "自訂重會")
+        self.assertEqual(self.c.user.phrase_count("ㄔㄨㄥˊ-ㄏㄨㄟˋ", "重繪"), 0)
+
+    def test_a_half_is_no_word_of_the_user_yet(self):
+        # 注音自動校正 never swaps what makes a word the user taught (_makes_user_word): a half is
+        # not one yet - 篇 picked back once in 今篇, 今天 still comes (校正記憶 wants two too)
+        c = self.c
+        c.config.set(autocorrect=True)
+        c.settings_changed()
+        try:
+            c.user.corrections.forget()
+            self.assertEqual(self.type("rup qu0 "), "今天")
+            c.user.learn_half("ㄐㄧㄣ-ㄆㄧㄢ", "今篇")
+            self.assertEqual(self.type("rup qu0 "), "今天")
+        finally:
+            c.config.set(autocorrect=False)
+            c.settings_changed()
+
+    def test_undo_puts_the_half_back(self):
+        self.pick_at(self.TYPED, 3, "繪")
+        self.c.undo_commit()
+        self.assertEqual(self.c.user.phrase_count("ㄔㄨㄥˊ-ㄏㄨㄟˋ", "重繪"), 0)
+
+
 class CtrlPunctuationTest(Base):
     """Ctrl + a punctuation key types its full-width mark (a setting, off by default)."""
 
@@ -1768,7 +1857,9 @@ class AutocorrectTest(Base):
 
     def setUp(self):
         super().setUp()
-        self.c.user.corrections.forget()  # (each test from no 校正記憶)
+        self.c.user.corrections.forget()  # (each test from no 校正記憶, and no picks: 篇 picked
+        self.c.user.phrases.clear()       # after 今 twice makes 今篇 a word, _learn_pairs)
+        self.c.user.phrase_used.clear()
         self.c.config.set(autocorrect=True)
         self.c.settings_changed()
 
@@ -2120,6 +2211,7 @@ class AutocorrectMemoryTest(unittest.TestCase):
     def test_kept_by_the_original_character(self):
         for _ in range(2):
             self.assertTrue(self.pick("rup qu0 ", "篇", rights=1).endswith("篇"))
+        self.c.user.forget_phrase("ㄐㄧㄣ-ㄆㄧㄢ", "今篇")  # (not by the pair learned from the two picks)
         self.assertTrue(self.type("rup qu0 ").endswith("篇"))
 
     def test_kept_from_the_bar(self):
@@ -2828,6 +2920,24 @@ class FadingTest(unittest.TestCase):
         self.assertNotIn("乙", u.phrases["a"])
         self.day += FORGET_DAYS - 1  # saving did not fade 甲 a second time
         self.assertEqual(self.model().phrase_count("a", "甲"), 2)
+
+    def test_a_half_pick_is_kept_until_it_fades(self):
+        # (a pair picked once, Composer._learn_pairs: kept, worth nothing yet, gone after FORGET_DAYS)
+        u = self.model()
+        u.learn_half("a-b", "甲乙")
+        u.save()
+        u = self.model()
+        self.assertEqual(u.phrase_count("a-b", "甲乙"), 0.5)
+        self.assertEqual(u.bonus("a-b", "甲乙"), 0.0)
+        u.learn_half("a-b", "甲乙")
+        self.assertEqual(u.bonus("a-b", "甲乙"), 3.0)
+        u.learn_half("c-d", "丙丁")
+        u.save()
+        self.day += FORGET_DAYS
+        u = self.model()
+        u.save()
+        self.assertNotIn("c-d", u.phrases)
+        self.assertNotIn("a-b", u.phrases)  # (a whole pick faded to a half: gone, as any)
 
     def test_using_again_restarts_the_clock(self):
         u = self.model()

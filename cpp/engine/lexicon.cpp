@@ -568,6 +568,21 @@ void UserModel::learn_phrase(const ustr& key, const ustr& phrase) {
     phrase_used[key].set(phrase, today_());
 }
 
+bool UserModel::learned(const ustr& key, const ustr& phrase) const {
+    // picked (a whole pick at least, faded or not): a word the user taught; not a half (learn_half)
+    auto* bucket = phrases.find(key);
+    const double* c = bucket ? bucket->find(phrase) : nullptr;
+    return c && *c >= 1;
+}
+
+void UserModel::learn_half(const ustr& key, const ustr& phrase) {
+    // half a pick (a pair of characters, Composer::learn_pairs): a word once picked twice; under 1
+    // it counts for nothing (bonus, phrase_candidates), so older versions ignore it too
+    double count = phrase_count(key, phrase);
+    phrases[key].set(phrase, count + 0.5);
+    phrase_used[key].set(phrase, today_());
+}
+
 void UserModel::forget_phrase(const ustr& key, const ustr& phrase) {
     // the user corrected this phrase away: their earlier picks of it no longer count
     auto* bucket = phrases.find(key);
@@ -761,16 +776,16 @@ void UserModel::learn_english(const std::string& raw, bool wanted) {
 }
 
 void UserModel::prune() {
-    // Drop picks that faded below one use, then keep only the most used. Counts
-    // are stored as they were on the day last used; only the choice of what to
-    // keep looks at today's faded count.
+    // Drop picks that faded below one use (a half pick, learn_half: below a half, so it lasts
+    // FORGET_DAYS), then keep only the most used. Counts are stored as they were on the day last
+    // used; only the choice of what to keep looks at today's faded count.
     int today = today_();
     struct E { double count; ustr r, p; };
     std::vector<E> entries;
     for (auto& [r, bucket] : phrases)
         for (auto& [p, _] : bucket) {
             double c = phrase_count(r, p);
-            if (c >= 1) entries.push_back(E{c, r, p});
+            if (c >= (*bucket.find(p) >= 1 ? 1.0 : 0.5)) entries.push_back(E{c, r, p});
         }
     std::sort(entries.begin(), entries.end(), [](const E& a, const E& b) {  // reverse=True on (count, r, p)
         if (a.count != b.count) return a.count > b.count;

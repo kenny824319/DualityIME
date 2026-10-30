@@ -142,6 +142,8 @@ public:
     bool reload_custom();
     double bonus(const ustr& reading_key, const ustr& phrase) const;
     void learn_phrase(const ustr& reading_key, const ustr& phrase);
+    bool learned(const ustr& reading_key, const ustr& phrase) const;  // a whole pick at least (faded or not), not a half
+    void learn_half(const ustr& reading_key, const ustr& phrase);     // half a pick (a pair: Composer::learn_pairs)
     void forget_phrase(const ustr& reading_key, const ustr& phrase);  // corrected away (部隊 made 不對)
     // (reading key, phrase, count, day used) as it was, for what differs from a copy of phrases and
     // phrase_used taken before: to put back with restore_phrases, and nothing else
