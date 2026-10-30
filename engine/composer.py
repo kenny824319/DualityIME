@@ -2243,31 +2243,36 @@ class Composer:
         """A character picked beside a character on its own, the two no word of the dictionary (繪
         after 重, 重會 written: 重繪): half a pick of the pair, so the second time it is a word -
         a pick alone never beats a common homophone picked a few times too (會), and nothing knows
-        what it was picked beside. Once a sentence; not a name picked once (你郝), nor a pick inside
-        a word or next to a character of one (自訂 + 蟲: no 訂蟲); not where both are picked
-        (_learn_group). The pair is learned for good as any word (corrected back, it is forgotten:
-        _learn_broken_words). before: what it would be without the picks."""
+        what it was picked beside. One pair a pick, with the character on the left if it is on its
+        own, else the one on the right (重繪了: 重繪, never 繪了 too - 了 is on its own almost always,
+        我會了 would turn 我繪了). Once a sentence; only a pick that changed the character (not one
+        just looked at); not a name picked once (你郝), nor a pick inside a word or next to a
+        character of one (自訂 + 蟲: no 訂蟲); not where both are picked (_learn_group). The pair is
+        learned for good as any word (corrected back, it is forgotten: _learn_broken_words).
+        before: what it would be without the picks."""
         alone = {s for s, l, p in before if l == 1 and len(p) == 1}
         now = {s for s, l, p in self.segments if l == 1 and len(p) == 1}
-        chars = _chars(self.segments)
+        chars, was = _chars(self.segments), _chars(before)
         picked = {s for (s, l), v in self.overrides.items() if len(v) == 2 for s in range(s, s + l)}
         done = set()
         for (s, l), v in sorted(self.overrides.items()):
-            if len(v) != 2 or l != 1 or s not in alone or s not in now:
+            if len(v) != 2 or l != 1 or s not in alone or s not in now or was.get(s) == chars.get(s):
                 continue
             for a, b in ((s - 1, s), (s, s + 1)):
                 other = a if b == s else b
-                if other in picked or other not in alone or other not in now or \
-                        not any(x <= a and b < y for x, y in self.runs):
-                    continue
-                rd = self.readings[a:b + 1]
-                text = chars[a] + chars[b]
-                key = "-".join(rd)
-                if (key, text) in done or self.lexicon.has(rd, text) or \
-                        self.lexicon.reads_with_other_tones(rd, text) or self.user.phrase_count(key, text) >= 1:
-                    continue
-                done.add((key, text))
-                self.user.learn_half(key, text)
+                if other not in picked and other in alone and other in now and \
+                        any(x <= a and b < y for x, y in self.runs):
+                    break
+            else:
+                continue
+            rd = self.readings[a:b + 1]
+            text = chars[a] + chars[b]
+            key = "-".join(rd)
+            if (key, text) in done or self.lexicon.has(rd, text) or \
+                    self.lexicon.reads_with_other_tones(rd, text) or self.user.phrase_count(key, text) >= 1:
+                continue
+            done.add((key, text))
+            self.user.learn_half(key, text)
 
     def _learn_group(self, group):
         if len(group) < 2:

@@ -1530,7 +1530,7 @@ class PairPickTest(Base):
         self.assertEqual(self.c.user.phrase_count("ㄔㄨㄥˊ-ㄏㄨㄟˋ", "蟲會"), 0.5)
 
     def test_not_with_a_character_of_a_word(self):
-        # 蟲 picked after 自訂: 訂 is in a word, so no 訂蟲; 會 beside it is on its own: 蟲會
+        # 蟲 picked after 自訂: 訂 is in a word, so no 訂蟲; then the one on the right: 蟲會
         self.assertEqual(self.pick_at(self.TYPED, 2, "蟲"), "自訂蟲會")
         self.assertEqual(self.c.user.phrase_count("ㄉㄧㄥˋ-ㄔㄨㄥˊ", "訂蟲"), 0)
         self.assertEqual(self.c.user.phrase_count("ㄔㄨㄥˊ-ㄏㄨㄟˋ", "蟲會"), 0.5)
@@ -1579,6 +1579,31 @@ class PairPickTest(Base):
         finally:
             c.config.set(autocorrect=False)
             c.settings_changed()
+
+    def test_one_pair_a_pick_the_one_on_the_left(self):
+        # 我要重繪了: 重繪, never 繪了 too (了 is on its own almost always: 我會了 would turn 我繪了)
+        typed = "ㄨㄛˇ ㄧㄠˋ ㄔㄨㄥˊ ㄏㄨㄟˋ ㄌㄜ˙"
+        self.assertTrue(self.pick_at(typed, 3, "繪").endswith("重繪了"))
+        self.assertEqual(self.c.user.phrase_count("ㄔㄨㄥˊ-ㄏㄨㄟˋ", "重繪"), 0.5)
+        self.assertEqual(self.c.user.phrase_count("ㄏㄨㄟˋ-ㄌㄜ˙", "繪了"), 0)
+
+    def test_a_pick_taken_back_before_sending_teaches_no_pair(self):
+        # 繪 picked, then 會 picked back before Enter: 會 is what it was without picks - no 重會
+        c = self.c
+        for ch in keys(self.TYPED):
+            c.key(ch)
+        for cand in ("繪", "會"):
+            c.key(special="HOME")
+            for _ in range(3):
+                c.key(special="RIGHT")
+            c.key(special="DOWN")
+            for _ in range(c.candidates.index(cand)):
+                c.key(special="DOWN")
+            c.key(special="ENTER")
+        self.assertEqual(c.overrides.get((3, 1), (None, None))[1], "會")  # (a pick, as it was)
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "自訂重會")
+        self.assertEqual(c.user.phrase_count("ㄔㄨㄥˊ-ㄏㄨㄟˋ", "重會"), 0)
 
     def test_undo_puts_the_half_back(self):
         self.pick_at(self.TYPED, 3, "繪")

@@ -1,0 +1,12 @@
+# End-to-end checks of 字典裡沒有的兩字詞 (one engine for all lines, so what is picked carries over):
+#   powershell -ExecutionPolicy Bypass -File cpp\tools\e2e.ps1 cpp\tools\pair_cases.txt
+# 繪 picked after 重 (重繪 is no word): half of 重繪
+y42u/4tj/6cjo4{DOWN}5{ENTER} => 自訂重繪
+# 會 picked on its own: 繪 and 會 picked once each, so 會 (the usual one) comes back
+cjo4{DOWN}2{ENTER} => 會
+y42u/4tj/6cjo4{ENTER} => 自訂重會
+# 繪 picked after 重 a second time: 重繪 is a word now (without it 繪 twice, 會 once still reads 重會)
+y42u/4tj/6cjo4{DOWN}2{ENTER} => 自訂重繪
+y42u/4tj/6cjo4{ENTER} => 自訂重繪
+# on its own 會 stays
+cjo4{ENTER} => 會
