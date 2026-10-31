@@ -108,12 +108,12 @@
 英文字、記住的英文字和 e-mail 會顯示還沒打的部分：打過兩次的 `claude`，打 `cla` 就顯示 `ude`\
 在 cmd、Windows Terminal 等終端機裡也能用
 
-### 記住英文代碼
+### mp3、x86 這類代碼
 
-`mp3`、`ps4`、`x86` 這類字母加數字的代碼，剛好拼得出注音時會被讀成中文（`mp3` 是「允」）\
-游標移過去按 ↑，從替換列選回原本的按鍵，同一串按鍵選 2 次之後就一直是英文\
-記錯了：游標移到它上面按 ↓，第一個是記住之前的讀法，選 2 次就改回來\
-這個功能不用設定，一直都開著
+`mp3`、`ps4`、`x86` 這種字母加數字的代碼，按鍵剛好也拼得出注音，所以會打成中文（`mp3` 會變成「允」）\
+要它是英文：游標移到那個字上按 ↑，在替換列選原本打的 `mp3`；同一個代碼這樣選過 2 次，以後打出來就直接是英文\
+想改回中文：游標移到它上面按 ↓，第一個就是原本的中文，一樣選 2 次就改回來\
+不用設定，一直都開著
 
 ## 其他功能
 
@@ -221,6 +221,3 @@
 - 前後文統計：[wikipedia-zhtw](https://huggingface.co/datasets/erhwenkuo/wikipedia-zhtw)（CC BY-SA 3.0）與 [CC-100 zh-Hant](https://huggingface.co/datasets/zetavg/CC-100-zh-Hant)
 - 長句選字加強的語言模型（`data/lm.bin`）：本專案自己用上面兩份語料訓練
 - 英文字表：[google-10000-english](https://github.com/first20hours/google-10000-english)（僅供個人、教育用途），另外補上一般字表沒有的電腦用語（cmd、git、json…）
-- 2.0 以前的版本建立在 [PIME](https://github.com/EasyIME/PIME)（LGPL）上；現在不需要它（移除時可以一起移除）
-
-開發者請看 [`docs/development.md`](docs/development.md)
