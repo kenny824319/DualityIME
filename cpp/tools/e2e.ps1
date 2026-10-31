@@ -7,7 +7,8 @@
 # the input method would start the everyday engine instead, with your learned words.
 # -SaveTo results.txt: also save the results there (UTF-8, as sz_tsftest wrote them)
 # -Config autocorrect_config.json: the test engine's config.json (else every setting as it comes)
-param($Script = "$PSScriptRoot\tsf_test.txt", $Mode = "", $SaveTo = "", $Config = "")
+# -User learned_singles_user.json: the test engine's user.json to start from (else nothing learned)
+param($Script = "$PSScriptRoot\tsf_test.txt", $Mode = "", $SaveTo = "", $Config = "", $User = "")
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $build = Join-Path $PSScriptRoot "..\build"
 $installed = Join-Path $env:ProgramFiles "DualityIME\DualityIMEEngine.exe"
@@ -19,6 +20,7 @@ $dir = Join-Path $env:TEMP "sz-e2e"
 Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory $dir | Out-Null
 if ($Config) { Copy-Item $Config (Join-Path $dir "config.json") }
+if ($User) { Copy-Item $User (Join-Path $dir "user.json") }
 $code = 1
 # the cases are typed with Caps Lock off: turn it off for the test, back on afterwards
 Add-Type -Namespace SzE2e -Name Keys -MemberDefinition '[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, IntPtr extra);'

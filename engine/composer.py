@@ -1050,6 +1050,24 @@ def strongly_picked(reading, ch, user, lexicon):
     return ch == usual or n >= 2 * user.phrase_count(reading, usual)
 
 
+def variant_is_written(rds, phrase, variant, user, bigram):
+    """Whether repick may offer variant, the word with the user's strong homophones put in: it
+    takes the word's own score and the homophones' bonus on top, so whatever it is it wins (字己
+    for 自己 with 字 picked 6 times). Only one the user picked (repick then keeps the one picked
+    more), or, the word not picked either, one whose characters put in are each next to a
+    neighbour in the corpus (她 before 說: 她說; never 字 before 己, 方 before 像)."""
+    key = "-".join(rds)
+    if user.bonus(key, variant):
+        return True
+    if user.bonus(key, phrase) or bigram is None:
+        return False
+    for j, ch in enumerate(variant):
+        if ch != phrase[j] and not (j > 0 and bigram.logp(variant[j - 1], ch) is not None or
+                                    j + 1 < len(variant) and bigram.logp(ch, variant[j + 1]) is not None):
+            return False
+    return True
+
+
 def repick(path, readings, lexicon, options, full, user, bigram, prev_word, overrides=(), keep=False):
     """The words are where single_scores let them be; now each takes, among the ways the
     dictionary writes the same syllables, the one with the homophones the user picked and the
@@ -1093,9 +1111,17 @@ def repick(path, readings, lexicon, options, full, user, bigram, prev_word, over
                         strong[readings[i + j]] = strong_homophone(readings[i + j], lexicon, user)
                 variant = "".join(ch if strongly_picked(readings[i + j], ch, user, lexicon) else strong[readings[i + j]] or ch
                                   for j, ch in enumerate(phrase))
-                if variant != phrase and all(p != variant for p, _ in cands):
+                if variant != phrase and all(p != variant for p, _ in cands) and \
+                        variant_is_written(readings[i:i + l], phrase, variant, user, bigram):
                     u = next(u for p, u in options[(i, l)] if p == phrase)
                     cands.append((variant, u + char_bonus(i, l, variant)))
+            # (of two words the user picked, the one picked more, not the homophones' bonus:
+            # 他說 and 她說 picked as often stay 他說; a word not picked competes as before, 我再
+            # for a 我在 picked once in 我再來; one in the personal dictionary always)
+            key = "-".join(readings[i:i + l])
+            own = user.bonus(key, phrase)
+            mine = user.custom.get(key, ())
+            cands = [(p, u) for p, u in cands if p == phrase or p in mine or not 0 < user.bonus(key, p) <= own]
         else:
             continue
         if keep:

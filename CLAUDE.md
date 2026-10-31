@@ -48,7 +48,8 @@ WebView2. `README.md` is the user manual. Users install from GitHub Releases
   types with and types keys into a window — say before starting so the user keeps off the keyboard):
   `powershell -ExecutionPolicy Bypass -File cpp\tools\e2e.ps1 [cases.txt] [-Config file.json]`;
   `cpp\tools\tsf_test.txt` (defaults), `cpp\tools\autocorrect_cases.txt` with
-  `-Config cpp\tools\autocorrect_config.json`.
+  `-Config cpp\tools\autocorrect_config.json`, `cpp\tools\learned_singles_cases.txt` with
+  `-User cpp\tools\learned_singles_user.json` (a user.json to start from: picks without "used" never fade).
 
 ## Workflow
 1. For multi-file changes, show a plan before editing.
