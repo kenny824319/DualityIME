@@ -35,3 +35,7 @@ ok {ENTER} => ok
 qu qo4{ENTER} => 批配
 qu qo4{HOME}{DOWN}2{ENTER} => 匹配
 qu qo4{ENTER} => 匹配
+# a tone put back, another tone picked in ↓ (者 著 哲 second to fourth); the rest goes with the new
+# tone (有 at 遊行: 有形, not 有行)
+5k1u0 {HOME}{DOWN}4{ENTER} => 哲邊
+u.vu/6{HOME}{DOWN}2{ENTER} => 有形
