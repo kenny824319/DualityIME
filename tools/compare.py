@@ -31,6 +31,9 @@ CASES = [
     "5k1u0 {ENTER}e;e; {ENTER}e; ;e {ENTER},u3{ENTER}su3xl3a87{ENTER}w961o3g4vu04u4fm {ENTER}",
     ("w961o3g4vu04u4fm {HOME}{RIGHT}{RIGHT}{RIGHT}" + "{DOWN}" * 31 + "{ENTER}{ENTER}") * 2 + "w961o3g4vu04u4fm {ENTER}",
     "ok hi go su ios 5k ", "5ke; {HOME}{DOWN}3{END}e; 1u0 {ENTER}",  # (浙 picked for 5k: kept as more comes)
+    # (another tone of a tone put back: 哲 third in ↓ at 這邊, then 遮 further down; kept, then learned)
+    "5k1u0 {HOME}{DOWN}3{ENTER}{ENTER}5k1u0 {ENTER}vu8y94{HOME}" + "{DOWN}" * 23 + "{ENTER}{ENTER}vu8y94{ENTER}",
+    "u.vu/6{HOME}{DOWN}2{ENTER}u.vu/6{ENTER}",  # (有 picked at 遊行: 有形, the rest with the new tone)
     # (no punctuation key reordered before digits after English, but after Chinese; no tone put back right after English; a tone that
     # makes a word of the personal dictionary: 哲宇; ;e back as typed from the end of the list, twice)
     "no.2 ch.2 ji3.24{ENTER}v3.2 su3.2 {ENTER}you are 3.2 {ENTER}su5k1u0 ji35k1u0 {ENTER}5km3{ENTER}",

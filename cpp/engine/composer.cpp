@@ -2197,6 +2197,38 @@ bool Composer::open_candidates() {
             actions.insert(actions.begin() + pos, mine.begin(), mine.begin() + first);
             labels.insert(labels.end(), mine_labels.begin() + first, mine_labels.end());
             actions.insert(actions.end(), mine.begin() + first, mine.end());
+        } else if (tok && tok->corrected == "tone") {
+            // 注音自動校正 put a tone in (5k1u0: 這邊): the other tones of the keys typed (哲, 遮),
+            // the most common placed as above; picked, the syllable keeps that tone (refresh)
+            struct Other {
+                double score;
+                ustr p, r;
+            };
+            std::vector<Other> others;
+            for (auto& r : table_.toned_forms(tok->raw))
+                if (r != tok->value)
+                    for (auto& [p, score] : phrase_candidates({r}, lexicon_, &user)) others.push_back({score, p, r});
+            // (stable: a reading's own order stays)
+            std::stable_sort(others.begin(), others.end(), [](const Other& x, const Other& y) { return x.score > y.score; });
+            std::vector<ustr> mine_labels;
+            std::vector<Action> mine;
+            for (auto& o : others) {
+                if (seen.insert(o.p).second) {
+                    mine_labels.push_back(o.p);
+                    Action act;
+                    act.type = "tone";
+                    act.s = t;
+                    act.reading = o.r;
+                    act.text = o.p;
+                    mine.push_back(act);
+                }
+            }
+            size_t pos = std::min<size_t>(1, labels.size());
+            size_t first = std::min(ORIG_FIRST, mine.size());
+            labels.insert(labels.begin() + pos, mine_labels.begin(), mine_labels.begin() + first);
+            actions.insert(actions.begin() + pos, mine.begin(), mine.begin() + first);
+            labels.insert(labels.end(), mine_labels.begin() + first, mine_labels.end());
+            actions.insert(actions.end(), mine.begin() + first, mine.end());
         }
         if (tok && !tok->corrected.empty()) {
             // and last, the keys as typed (si3): picked, they stay so
@@ -2930,6 +2962,20 @@ void Composer::pick(int i, bool from_bar) {
         refresh();
         overrides_[{action.first, static_cast<int>(action.readings.size())}] = {action.readings, action.text};
         picked = {action.first, static_cast<int>(action.readings.size())};
+    } else if (action.type == "tone") {
+        // another tone of a syllable 注音自動校正 put a tone in: the pick, on that reading
+        int s = action.s;
+        Overrides kept;
+        for (auto& [sp, v] : overrides_)
+            if ((sp.first + sp.second <= s || sp.first >= s + 1) &&
+                (!v.kept || v.by.first + v.by.second <= s || v.by.first >= s + 1))
+                kept[sp] = v;
+        kept[{s, 1}] = {std::vector<ustr>{action.reading}, action.text};
+        overrides_ = std::move(kept);
+        readings[s] = action.reading;  // (what the rest makes a word with: 有形, not 有行; refresh keeps it)
+        drop_orphans();
+        keep_rest(s, 1);
+        picked = {s, 1};
     } else if (action.type == "exact") {
         note_as_typed(action.start);
         taken_.erase(action.start);
