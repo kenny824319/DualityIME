@@ -19,3 +19,8 @@
 - 2026-10-30 長句選字加強：開啟時 `search` 和 `nbest` 各搜一次整個格子；`text_score` 每個字都重新組字串、複製狀態（只是效能，速度已達標）
 - 2026-10-30 `tools/autocorrect_eval.py` 的說明還寫「模型會影響注音自動校正的整句分數」，現在只影響寫出的字
 - 2026-10-30 長句選字加強：一次算好幾個狀態的路徑（`CharLM::steps` B>1）只有 `tools/compare.py` 測得到，`tools/lm/check_cpp.py` 只測單步；C++ 執行中切換設定沒有 C++ 的測試
+- 2026-10-31 引擎啟動時先建好管道再讀詞庫與模型（約 0.6 秒，i9），這段時間連進來的第一個鍵要等；較慢的電腦可能超過輸入法的 0.8 秒逾時，那個鍵就掉了（推論，沒量過慢的電腦）（`cpp/server/engine_main.cpp` `wWinMain`）
+- 2026-10-31 長句選字加強：執行中在設定頁關掉，模型與暫存（約 12 MB）要到引擎重啟才釋放（`cpp/engine/composer.cpp` `lm()`）
+- 2026-10-31 長句選字加強：`strongly_picked` 自己又查一次 `usual_char`，`RepickMemo` 的暫存只用到一半（只是效能）
+- 2026-10-31 發版說明：`develop` 合併 `main` 時產生的合併提交，會以「Merge branch ...」出現在下一次的發版說明（`tools/release.ps1` `Get-ReleaseNotes`）
+- 2026-10-31 注音自動校正：`run_scores()`／`_RUN_SCORES` 的暫存只以音節為 key，同一個程式裡換了詞庫或前後文統計會沿用舊分數（目前沒有工具這樣做）

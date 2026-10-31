@@ -1622,6 +1622,20 @@ class Composer:
             actions[pos:pos] = [("exact", tok.start, t, p) for p in mine[:ORIG_FIRST]]
             labels += mine[ORIG_FIRST:]
             actions += [("exact", tok.start, t, p) for p in mine[ORIG_FIRST:]]
+        elif tok.corrected == "tone":
+            # 注音自動校正 put a tone in (5k1u0: 這邊): the other tones of the keys typed (哲, 遮),
+            # the most common placed as above; picked, the syllable keeps that tone (_refresh)
+            mine = []
+            for r in self.table.toned_forms(tok.raw):
+                if r != tok.value:
+                    mine += [(score, p, r) for p, score in phrase_candidates([r], self.lexicon, self.user)]
+            mine.sort(key=lambda x: -x[0])  # (stable: a reading's own order stays)
+            mine = [(p, r) for _, p, r in mine if p not in seen and not seen.add(p)]
+            pos = min(1, len(labels))
+            labels[pos:pos] = [p for p, _ in mine[:ORIG_FIRST]]
+            actions[pos:pos] = [("tone", t, r, p) for p, r in mine[:ORIG_FIRST]]
+            labels += [p for p, _ in mine[ORIG_FIRST:]]
+            actions += [("tone", t, r, p) for p, r in mine[ORIG_FIRST:]]
         if tok.corrected:
             # and last, the keys as typed (si3): picked, they stay so
             keys = tok.raw.rstrip(" ")
@@ -2142,6 +2156,17 @@ class Composer:
             self._refresh()
             self.overrides[(first, len(readings))] = (readings, p)
             picked = (first, len(readings))
+        elif action[0] == "tone":
+            # another tone of a syllable 注音自動校正 put a tone in: the pick, on that reading
+            _, s, r, p = action
+            self.overrides = {sp: v for sp, v in self.overrides.items()
+                              if (sp[0] + sp[1] <= s or sp[0] >= s + 1)
+                              and (len(v) == 2 or v[3][0] + v[3][1] <= s or v[3][0] >= s + 1)}
+            self.overrides[(s, 1)] = ((r,), p)
+            self.readings[s] = r  # (what the rest makes a word with: 有形, not 有行; _refresh keeps it)
+            self._drop_orphans()
+            self._keep_rest(s, 1)
+            picked = (s, 1)
         elif action[0] == "exact":
             _, start, s, p = action
             self._note_as_typed(start)

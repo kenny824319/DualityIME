@@ -139,7 +139,7 @@ public:
 
 private:
     struct Action {
-        std::string type;  // phrase chinese keep bare shortcut raw | word next
+        std::string type;  // phrase chinese keep bare shortcut raw exact tone taken plain | word next
         int s = 0, l = 0, start = 0, first = 0, end = 0;
         ustr text;         // phrase / label / symbols
         std::vector<ustr> readings;

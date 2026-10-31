@@ -2014,6 +2014,36 @@ class AutocorrectTest(Base):
         self.assertEqual(c.user.corrections.choice("e;"), "")
         self.assertNotEqual(self.type("e;e; "), "剛剛")
 
+    def test_a_tone_left_out_lists_the_other_tones(self):
+        # 這 (ㄓㄜˋ) put in for the 5k typed: ↓ there lists the other tones of what was typed too,
+        # the most common three right after the first (者, 著, 哲), then the rest (遮...), the keys last
+        c = self.c
+        cands = self.candidates_at("5k1u0 ", 0)
+        tones = [i for i, a in enumerate(c._cand_actions) if a[0] == "tone"]
+        self.assertEqual(tones[:3], [1, 2, 3])
+        self.assertGreater(len(tones), 3)
+        self.assertEqual(tones[3:], list(range(tones[3], tones[3] + len(tones) - 3)))
+        self.assertEqual({c._cand_actions[i][2] for i in tones} & {"ㄓㄜˋ"}, set())
+        self.assertIn("遮", cands)
+        self.assertIn("哲", cands)
+        self.assertEqual(cands[-1], "5k")
+
+    def test_a_tone_left_out_picked_as_another_tone_stays(self):
+        c = self.c
+        cands = self.candidates_at("5k1u0 ", 0)
+        c._pick(cands.index("哲"))
+        self.assertEqual(c.composition, "哲邊")
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "哲邊")
+
+    def test_another_tone_picked_makes_a_word_with_the_rest(self):
+        # 遊行 (u. read as ㄧㄡˊ), 有 (ㄧㄡˇ) picked: the rest goes with the new tone, 有形, not 有行
+        c = self.c
+        cands = self.candidates_at("u.vu/6", 0)
+        self.assertEqual(c.composition, "遊行")
+        c._pick(cands.index("有"))
+        self.assertEqual(c.composition, "有形")
+
     def test_a_tone_left_out_takes_a_personal_word(self):
         saved = self.c.user.custom
         self.c.user.custom = {"ㄓㄜˊ-ㄩˇ": ["哲宇"]}  # (5k6m3 typed right)
