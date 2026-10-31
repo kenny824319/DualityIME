@@ -1,0 +1,9 @@
+# End-to-end checks with characters picked one at a time (learned_singles_user.json: 字 6 times,
+# 自 once, 像 5 times, 妳 5 times); a homophone picked for good goes into a word only where the
+# corpus has it next to its neighbour (妳說), never into a non-word (字己, 方像)
+#   powershell -ExecutionPolicy Bypass -File cpp\tools\e2e.ps1 cpp\tools\learned_singles_cases.txt -User cpp\tools\learned_singles_user.json
+y4ru3{ENTER} => 自己
+su3y4ru3{ENTER} => 妳自己
+z; vu;4{ENTER} => 方向
+su3gji {ENTER} => 妳說
+y4{ENTER} => 字

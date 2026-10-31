@@ -1099,6 +1099,25 @@ static std::optional<char32_t> strong_homophone(const ustr& reading, const Lexic
     return std::nullopt;
 }
 
+// Whether repick may offer variant, the word with the user's strong homophones put in: it takes
+// the word's own score and the homophones' bonus on top, so whatever it is it wins (字己 for 自己
+// with 字 picked 6 times). Only one the user picked (repick then keeps the one picked more), or,
+// the word not picked either, one whose characters put in are each next to a neighbour in the
+// corpus (她 before 說: 她說; never 字 before 己, 方 before 像).
+static bool variant_is_written(const ustr& key, const ustr& phrase, const ustr& variant, const UserModel& user,
+                               const BigramModel* bigram) {
+    if (user.bonus(key, variant)) return true;
+    if (user.bonus(key, phrase) || !bigram) return false;
+    for (size_t j = 0; j < variant.size(); ++j) {
+        if (variant[j] == phrase[j]) continue;
+        ustr ch(1, variant[j]);
+        bool left = j > 0 && bigram->logp(ustr(1, variant[j - 1]), ch).has_value();
+        bool right = j + 1 < variant.size() && bigram->logp(ch, ustr(1, variant[j + 1])).has_value();
+        if (!left && !right) return false;
+    }
+    return true;
+}
+
 // The words are where single_scores let them be; now each takes, among the ways the dictionary
 // writes the same syllables, the one with the homophones the user picked and the words on either
 // side: 妳 for someone who writes 妳, alone or inside 謝謝妳 (the dictionary has both 謝謝你 and
@@ -1152,6 +1171,7 @@ static void repick(std::vector<Segment>& path, const std::vector<ustr>& readings
         if (auto f = full.find({i, l}); f != full.end()) {
             cands = f->second;
         } else if (auto o = options.find({i, l}); l > 1 && o != options.end()) {
+            ustr key = join(std::vector<ustr>(readings.begin() + i, readings.begin() + i + l), U'-');
             for (auto& [p, u] : o->second)
                 cands.emplace_back(p, static_cast<int>(p.size()) == l ? u + char_bonus(i, p) : u);
             if (static_cast<int>(phrase.size()) == l) {
@@ -1165,7 +1185,7 @@ static void repick(std::vector<Segment>& path, const std::vector<ustr>& readings
                 bool known = false;
                 for (auto& [p, _] : cands)
                     if (p == variant) known = true;
-                if (variant != phrase && !known) {
+                if (variant != phrase && !known && variant_is_written(key, phrase, variant, user, bigram)) {
                     double u = 0;
                     for (auto& [p, pu] : o->second)
                         if (p == phrase) {
@@ -1175,6 +1195,16 @@ static void repick(std::vector<Segment>& path, const std::vector<ustr>& readings
                     cands.emplace_back(variant, u + char_bonus(i, variant));
                 }
             }
+            // of two words the user picked, the one picked more, not the homophones' bonus: 他說 and
+            // 她說 picked as often stay 他說; a word not picked competes as before (我再 for a 我在
+            // picked once in 我再來; one in the personal dictionary always)
+            double own = user.bonus(key, phrase);
+            std::vector<std::pair<ustr, double>> kept;
+            for (auto& c : cands) {
+                double b = c.first == phrase || in_custom(key, c.first, user) ? 0 : user.bonus(key, c.first);
+                if (!(b > 0 && b <= own)) kept.push_back(c);
+            }
+            cands = std::move(kept);
         } else {
             continue;
         }

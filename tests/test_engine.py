@@ -1233,6 +1233,36 @@ class LearnedSinglesTest(Base):
         self.assertEqual(self.type(keys("ㄋㄧˇ ㄇㄣ˙")), "你們")
         self.assertEqual(self.type(keys("ㄒㄧㄝˋ ㄒㄧㄝ˙ ㄋㄧˇ")), "謝謝你")
 
+    def test_a_homophone_picked_for_good_does_not_make_non_words(self):
+        # 字 picked 6 times, 像 5: 字己 and 方像 are no words (the corpus never has 字 before 己),
+        # while 妳說 is (妳 before 說 is in the corpus)
+        self.learn("ㄗˋ", "字", 6)
+        self.learn("ㄗˋ", "自")
+        self.learn("ㄒㄧㄤˋ", "像", 5)
+        self.learn("ㄋㄧˇ", "妳", 5)
+        self.assertEqual(self.type(keys("ㄗˋ ㄐㄧˇ")), "自己")
+        self.assertEqual(self.type(keys("ㄋㄧˇ ㄗˋ ㄐㄧˇ")), "妳自己")
+        self.assertEqual(self.type(keys("ㄈㄤ ㄒㄧㄤˋ")), "方向")
+        self.assertEqual(self.type(keys("ㄋㄧˇ ㄕㄨㄛ")), "妳說")
+        self.assertEqual(self.type(keys("ㄗˋ")), "字")  # (on its own it is as picked)
+
+    def test_a_word_picked_stays_against_a_homophone_picked_for_good(self):
+        # 他說 picked, 她 picked 5 times: 他說 stays until 她說 is picked more often (a tie: 他說)
+        self.learn("ㄊㄚ", "她", 5)
+        self.learn("ㄊㄚ-ㄕㄨㄛ", "他說", 2)
+        self.assertEqual(self.type(keys("ㄊㄚ ㄕㄨㄛ")), "他說")
+        self.learn("ㄊㄚ-ㄕㄨㄛ", "她說", 2)
+        self.assertEqual(self.type(keys("ㄊㄚ ㄕㄨㄛ")), "他說")
+        self.learn("ㄊㄚ-ㄕㄨㄛ", "她說")
+        self.assertEqual(self.type(keys("ㄊㄚ ㄕㄨㄛ")), "她說")
+
+    def test_a_word_picked_many_times_is_not_rewritten_with_a_homophone(self):
+        # the user's case: 自己 picked 6 times, 字 6 times alone - 字己 came back every time
+        self.learn("ㄗˋ", "字", 6)
+        self.learn("ㄗˋ", "自")
+        self.learn("ㄗˋ-ㄐㄧˇ", "自己", 6)
+        self.assertEqual(self.type(keys("ㄗˋ ㄐㄧˇ")), "自己")
+
     def test_a_syllable_with_english_around_is_in_a_sentence(self):
         # 輸 picked once: ㄕㄨ after 讀 and an English word is still in a sentence, not typed alone
         self.learn("ㄕㄨ", "輸")
