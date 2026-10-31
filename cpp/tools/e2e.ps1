@@ -26,7 +26,8 @@ function Press-CapsLock { [SzE2e.Keys]::keybd_event(0x14, 0x3A, 0, [IntPtr]::Zer
 $caps = [Console]::CapsLock
 if ($caps) { Press-CapsLock }
 try {
-    $ours = Start-Process $engine -ArgumentList "--user-dir", "`"$dir`"", "--data-dir", "`"$(Join-Path $root 'data')`"" -PassThru
+    # (--keep-elevated: it stays this elevated process's child, for the elevated test window and $ours)
+    $ours = Start-Process $engine -ArgumentList "--user-dir", "`"$dir`"", "--data-dir", "`"$(Join-Path $root 'data')`"", "--keep-elevated" -PassThru
     Start-Sleep -Milliseconds 1200
     if ($ours.HasExited) { "STOPPED: the test engine did not start"; exit 1 }
     $out = Join-Path $dir "out.txt"
