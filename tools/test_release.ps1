@@ -52,6 +52,12 @@ Check "develop: main ahead" ((Get-DevelopBehindMain -MainExists $true -MainIsAnc
 Check "sync develop fast-forward" ((Get-SyncDevelopCommands -DevelopIsAncestor $true) -join " | ") "git push origin main:develop"
 Check "sync develop merge" ((Get-SyncDevelopCommands -DevelopIsAncestor $false) -join " | ") "git checkout develop | git merge main | git push origin develop | git checkout main"
 
+# where the release notes start: main from the last stable release, not the nearest (pre-release) tag
+Check "notes base develop" (Get-NotesBase -Channel develop -Nearest "v3.0.6" -LatestStable "v3.0.0") "v3.0.6"
+Check "notes base main" (Get-NotesBase -Channel main -Nearest "v3.0.6" -LatestStable "v3.0.0") "v3.0.0"
+Check "notes base main, no stable" (Get-NotesBase -Channel main -Nearest "v3.0.6" -LatestStable "") "v3.0.6"
+Check "notes base none" (Get-NotesBase -Channel main -Nearest "" -LatestStable "") ""
+
 # release notes
 # (whole commit messages, newest first: one line per item, trailers and the version bump left out)
 Check "notes no tag" (Get-ReleaseNotes -Version "3.0.0" -Messages @()) "兩儀輸入法 3.0.0"
