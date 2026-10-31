@@ -64,7 +64,8 @@ New-Item -ItemType Directory $dir | Out-Null
 $out = Join-Path $dir "line.txt"
 $code = 1
 try {
-    $ours = Start-Process $engine -ArgumentList "--user-dir", "`"$dir`"", "--data-dir", "`"$(Join-Path $root 'data')`"" -PassThru
+    # (--keep-elevated: it stays this elevated process's child, for the elevated test window and $ours)
+    $ours = Start-Process $engine -ArgumentList "--user-dir", "`"$dir`"", "--data-dir", "`"$(Join-Path $root 'data')`"", "--keep-elevated" -PassThru
     Start-Sleep -Milliseconds 1200
     if ($ours.HasExited) { "STOPPED: the test engine did not start"; exit 1 }
     # the line read goes to a file (UTF-8), then the window closes
@@ -115,7 +116,8 @@ try {
     Get-Process DualityIMEEngine -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Milliseconds 300
     Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
-    if (Test-Path $installed) { Start-Process $installed }
+    # through explorer.exe like e2e.ps1: an engine before 3.0.6 started from here stays elevated
+    if (Test-Path $installed) { Start-Process "$env:SystemRoot\explorer.exe" "`"$installed`"" }
     if ($caps -and -not [Console]::CapsLock) { [SzWt.Native]::keybd_event(0x14, 0x3A, 0, [IntPtr]::Zero); [SzWt.Native]::keybd_event(0x14, 0x3A, 2, [IntPtr]::Zero) }
 }
 exit $code

@@ -4,11 +4,11 @@
 
 namespace sz {
 
-std::wstring engine_pipe_name() {
-    std::wstring sid = L"unknown";
+std::wstring user_sid(HANDLE process) {
+    std::wstring sid;
     HANDLE token = nullptr;
     // the process token, not a thread's impersonation token
-    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+    if (OpenProcessToken(process, TOKEN_QUERY, &token)) {
         DWORD size = 0;
         GetTokenInformation(token, TokenUser, nullptr, 0, &size);
         if (size) {
@@ -23,7 +23,12 @@ std::wstring engine_pipe_name() {
         }
         CloseHandle(token);
     }
-    return L"\\\\.\\pipe\\DualityIME." + sid;
+    return sid;
+}
+
+std::wstring engine_pipe_name() {
+    std::wstring sid = user_sid();
+    return L"\\\\.\\pipe\\DualityIME." + (sid.empty() ? std::wstring(L"unknown") : sid);
 }
 
 std::wstring module_dir(HMODULE module) {

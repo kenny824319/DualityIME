@@ -8,6 +8,8 @@
 
 namespace sz {
 
+// the SID of the user a process runs as ("S-1-5-21-..."; elevated or not), "" if unknown
+std::wstring user_sid(HANDLE process = GetCurrentProcess());
 // \\.\pipe\DualityIME.<user SID>: the same name in an elevated app of the same user
 std::wstring engine_pipe_name();
 // the folder holding this module (DLL or exe), with a trailing backslash

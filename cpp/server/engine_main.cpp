@@ -267,14 +267,17 @@ void serve(HANDLE pipe) {
     CloseHandle(pipe);
 }
 
-HANDLE make_pipe(const std::wstring& name, bool first) {
+HANDLE make_pipe(const std::wstring& name, bool first, const std::wstring& sid) {
     // The user, SYSTEM and administrators, plus sandboxed (Microsoft Store) apps
     // and low-integrity processes (browsers' sandboxes host no text fields, but
     // Store apps run at low integrity): all of them type through the IME.
+    // The user by SID, not only as the owner: an engine left elevated is owned by
+    // Administrators, which the user's ordinary apps are denied.
     SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, FALSE};
     PSECURITY_DESCRIPTOR sd = nullptr;
-    const wchar_t* sddl = L"D:(A;;GA;;;OW)(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AC)(A;;GRGW;;;S-1-15-2-2)S:(ML;;NW;;;LW)";
-    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &sd, nullptr))
+    std::wstring sddl = L"D:(A;;GA;;;OW)" + (sid.empty() ? L"" : L"(A;;GA;;;" + sid + L")") +
+                        L"(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AC)(A;;GRGW;;;S-1-15-2-2)S:(ML;;NW;;;LW)";
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &sd, nullptr))
         sa.lpSecurityDescriptor = sd;
     DWORD mode = PIPE_ACCESS_DUPLEX | (first ? FILE_FLAG_FIRST_PIPE_INSTANCE : 0);
     HANDLE pipe = CreateNamedPipeW(name.c_str(), mode, PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT |
@@ -283,18 +286,89 @@ HANDLE make_pipe(const std::wstring& name, bool first) {
     return pipe;
 }
 
+bool is_elevated(HANDLE process) {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(process, TOKEN_QUERY, &token)) return false;
+    TOKEN_ELEVATION e{};
+    DWORD n = 0;
+    bool yes = GetTokenInformation(token, TokenElevation, &e, sizeof e, &n) && e.TokenIsElevated;
+    CloseHandle(token);
+    return yes;
+}
+
+// Started elevated (the IME in an app run as administrator starts the engine when none is running;
+// or a script in an elevated shell): the user's ordinary apps would talk to an administrator's
+// process. Start the same command line again as a child of the desktop's explorer, which gives the
+// copy explorer's token, and let it serve. Nothing when explorer is elevated too (UAC off), not
+// found, or another account's (an app run as SYSTEM or as another administrator waits on its own
+// account's pipe): then this process serves (make_pipe lets the user in by SID). True when the
+// copy started.
+bool restart_unelevated() {
+    if (!is_elevated(GetCurrentProcess())) return false;
+    DWORD pid = 0;
+    HWND shell = GetShellWindow();
+    if (!shell || !GetWindowThreadProcessId(shell, &pid) || !pid) return false;
+    HANDLE parent = OpenProcess(PROCESS_CREATE_PROCESS | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!parent) return false;
+    bool started = false;
+    SIZE_T size = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
+    std::string buf(size, '\0');
+    auto* list = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(buf.data());
+    std::wstring me = user_sid();
+    if (!is_elevated(parent) && !me.empty() && user_sid(parent) == me && size &&
+        InitializeProcThreadAttributeList(list, 1, 0, &size)) {
+        if (UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_PARENT_PROCESS, &parent, sizeof parent,
+                                      nullptr, nullptr)) {
+            STARTUPINFOEXW si{};
+            si.StartupInfo.cb = sizeof si;
+            si.lpAttributeList = list;
+            PROCESS_INFORMATION pi{};
+            wchar_t exe[MAX_PATH * 2];
+            DWORD n = GetModuleFileNameW(nullptr, exe, static_cast<DWORD>(std::size(exe)));
+            std::wstring cmd = GetCommandLineW();
+            if (n && n < std::size(exe) &&
+                CreateProcessW(exe, cmd.data(), nullptr, nullptr, FALSE,
+                               EXTENDED_STARTUPINFO_PRESENT | DETACHED_PROCESS | CREATE_NO_WINDOW |
+                                   CREATE_SUSPENDED, nullptr, nullptr, &si.StartupInfo, &pi)) {
+                // (checked before it runs: it never restarts itself)
+                started = !is_elevated(pi.hProcess) && ResumeThread(pi.hThread) != static_cast<DWORD>(-1);
+                if (!started) TerminateProcess(pi.hProcess, 0);  // (not what was meant: serve from here)
+                CloseHandle(pi.hThread);
+                CloseHandle(pi.hProcess);
+            }
+        }
+        DeleteProcThreadAttributeList(list);
+    }
+    CloseHandle(parent);
+    return started;
+}
+
 }  // namespace
 
 // DualityIMEEngine.exe [--user-dir <folder>]  (another folder for user.json etc.: tests)
+//                      [--keep-elevated]      (stay elevated: the tests' elevated window, by PID)
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    bool keep_elevated = false;
+    for (int i = 1; argv && i < argc; ++i)
+        if (std::wstring(argv[i]) == L"--keep-elevated") keep_elevated = true;
+    if (!keep_elevated && restart_unelevated()) {
+        if (argv) LocalFree(argv);
+        return 0;
+    }
+
+    std::wstring sid = user_sid();
     std::wstring name = engine_pipe_name();
-    HANDLE pipe = make_pipe(name, true);
-    if (pipe == INVALID_HANDLE_VALUE) return 0;  // already running
+    HANDLE pipe = make_pipe(name, true, sid);
+    if (pipe == INVALID_HANDLE_VALUE) {  // already running
+        if (argv) LocalFree(argv);
+        return 0;
+    }
     SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);  // typing must never wait
 
     std::wstring data = module_dir(nullptr) + L"data";
-    int argc = 0;
-    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     bool own_dir = false;  // --user-dir (tests): no migration
     for (int i = 1; argv && i + 1 < argc; ++i)
         if (std::wstring(argv[i]) == L"--user-dir") own_dir = true;
@@ -322,10 +396,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
         } else {
             CloseHandle(pipe);
         }
-        pipe = make_pipe(name, false);
+        pipe = make_pipe(name, false, sid);
         if (pipe == INVALID_HANDLE_VALUE) {
             Sleep(100);
-            pipe = make_pipe(name, false);
+            pipe = make_pipe(name, false, sid);
             if (pipe == INVALID_HANDLE_VALUE) return 1;
         }
     }
