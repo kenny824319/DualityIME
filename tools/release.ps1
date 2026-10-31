@@ -81,6 +81,15 @@ function Get-ReleaseArguments {
     return $a
 }
 
+# The tag the release notes start from. develop: the nearest tag (the previous pre-release). main: the
+# latest stable release, because develop's pre-release tags are merged in too and the nearest one would
+# leave out everything since the last stable; the nearest tag when there is no stable release yet.
+function Get-NotesBase {
+    param([string]$Channel, [string]$Nearest, [string]$LatestStable)
+    if ($Channel -eq "main" -and $LatestStable) { return $LatestStable }
+    return $Nearest
+}
+
 # Messages: whole commit messages, newest first. Each item line ( * / + ) is a line of its own (git's
 # %s joins the lines of the first paragraph); trailers and the version bump are left out; a message
 # in another format gives its first line.
@@ -241,8 +250,16 @@ if (-not (Test-Path $installer)) {
     else { Stop-Release "$installer is missing; $hint" }
 }
 
-$prev = (& git describe --tags --abbrev=0 HEAD)
-if ($LASTEXITCODE -eq 0 -and $prev) {
+$nearest = (& git describe --tags --abbrev=0 HEAD)
+if ($LASTEXITCODE -ne 0) { $nearest = "" }
+$latestStable = ""
+if ($Channel -eq "main") {
+    # (gh release view without a tag: the latest non-prerelease Release; none yet: "")
+    $latestStable = (& $gh release view --repo $Repo --json tagName -q .tagName 2>$null)
+    if ($LASTEXITCODE -ne 0 -or -not (Test-TagExists "$latestStable")) { $latestStable = "" }
+}
+$prev = Get-NotesBase -Channel $Channel -Nearest $nearest -LatestStable $latestStable
+if ($prev) {
     # (%x1e ends each message: a message has several lines)
     $messages = @(((Invoke-Git log "$prev..HEAD" --format=%B%x1e) -join "`n") -split [char]0x1e)
 } else { $messages = @() }
