@@ -12,6 +12,9 @@ su3cl3{LEFT}{LEFT}{DOWN}2{ENTER} => 妳好
 # would give 妳好, a typed digit a 2); otherwise they are digits
 su3cl3{LEFT}{LEFT}{DOWN}{#2}{ENTER} => 你好
 ji3{#5}{ENTER} => 我5
+# with the caret moved back they go in at the caret, and the caret stays there
+ji3u.3ek7{LEFT}{#1}{#0}{ENTER} => 我有10個
+abcd{LEFT}{LEFT}{#5}x{ENTER} => ab5xcd
 # the replacement bar above the text: ↑ in, → to the next, Enter takes it
 su3cl3{LEFT}{UP}{RIGHT}{ENTER}{ENTER} => 你c襖
 up {LEFT}{UP}{RIGHT}{RIGHT}{ENTER}{ENTER} => up 

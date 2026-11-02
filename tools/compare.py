@@ -95,6 +95,10 @@ CASES = [
     # typing memory: an e-mail typed once is offered (a URL is not); one letter put back as typed is not learned
     "qwmail@example.com{ENTER}qwm{TAB}{ENTER}", "https://example.com/abc {ENTER}htt{TAB}",
     "ji3{ENTER}t {HOME}{UP}{RIGHT}{ENTER}{ENTER}ji3{ENTER}t ",
+    # numpad keys with the caret moved back: in at the caret
+    "ji3u.3ek7{LEFT}{#1}{#0}{ENTER}", "abcd{LEFT}{LEFT}{#5}{BACK}{#6}{RIGHT}{#7}{ENTER}",
+    "rup wu0 u,4au04{LEFT}{LEFT}{#3}{DOWN}", "ji3u.3ek7{HOME}{#9}{END}{#8}{LEFT}{LEFT}{BACK}{ENTER}",
+    "ji3187{UP}{#5}{ENTER}", "ji3187{LEFT}{UP}{#5}{ENTER}",
 ]
 
 PUNCT = list(",.;?!:\"'[]()<>-_=+/\\|@#$%^&*")

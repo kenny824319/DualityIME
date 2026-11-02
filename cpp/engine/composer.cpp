@@ -3816,9 +3816,24 @@ bool Composer::type_literal(char32_t ch) {
     last_commit_.reset();
     if (symbol_page) close_symbols();
     if (!candidates.empty()) close_candidates();
-    literal_.insert(static_cast<int>(raw.size()));
-    raw.push_back(static_cast<char>(ch));
-    caret_.reset();
+    if (repl_index >= 0) {  // it leaves the replacement bar (from the end: back there)
+        repl_index = -1;
+        leave_bar();
+    }
+    if (!caret_) {
+        literal_.insert(static_cast<int>(raw.size()));
+        raw.push_back(static_cast<char>(ch));
+    } else {  // typed in the middle: in at the caret, like any other key
+        int at = *caret_;
+        bool before_zh = false;
+        for (auto& t : tokens)
+            if (t.start == at && (t.kind == Kind::Zh || t.kind == Kind::Fix)) before_zh = true;
+        splice(at, at, std::string(1, static_cast<char>(ch)));
+        if (before_zh) chinese_.insert(at + 1);
+        literal_.insert(at);
+        if (at + 1 < static_cast<int>(raw.size())) caret_ = at + 1;
+        else caret_.reset();
+    }
     refresh();
     return true;
 }

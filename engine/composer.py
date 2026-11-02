@@ -2782,9 +2782,20 @@ class Composer:
             self.close_symbols()
         if self.candidates:
             self._close_candidates()
-        self.literal.add(len(self.raw))
-        self.raw += ch
-        self.caret = None
+        if self.repl_index >= 0:  # it leaves the replacement bar (from the end: back there)
+            self.repl_index = -1
+            self._leave_bar()
+        if self.caret is None:
+            self.literal.add(len(self.raw))
+            self.raw += ch
+        else:  # typed in the middle: in at the caret, like any other key
+            at = self.caret
+            before_zh = any(t.start == at and t.kind in ("zh", "fix") for t in self.tokens)
+            self._splice(at, at, ch)
+            if before_zh:
+                self.chinese.add(at + 1)
+            self.literal.add(at)
+            self.caret = at + 1 if at + 1 < len(self.raw) else None
         self._refresh()
         return True
 

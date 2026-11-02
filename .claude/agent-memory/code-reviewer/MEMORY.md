@@ -7,3 +7,4 @@
 - [alone boundary](project_alone_boundary.md) — "typed alone" by token kinds: punctuation/partial also break it; probe `gj ,` old vs new
 - [bonus includes custom](project_bonus_includes_custom.md) — user.bonus = faded picks + 4.0 for 個人詞庫 words; "picked more" rules on it inherit both
 - [Pick changes reading](project_pick_changes_reading.md) — tone-type pick: readings must be updated before _keep_rest, else 有行 not 有形
+- [Entry points bypass key()](project_entry_points_bypass_key.md) — type_literal etc. skip the bar dispatch; caret from ↑-at-end is fake (我5吧, bar stays)
