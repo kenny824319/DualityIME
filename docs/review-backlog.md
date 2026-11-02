@@ -24,3 +24,6 @@
 - 2026-10-31 長句選字加強：`strongly_picked` 自己又查一次 `usual_char`，`RepickMemo` 的暫存只用到一半（只是效能）
 - 2026-10-31 發版說明：`develop` 合併 `main` 時產生的合併提交，會以「Merge branch ...」出現在下一次的發版說明（`tools/release.ps1` `Get-ReleaseNotes`）
 - 2026-10-31 注音自動校正：`run_scores()`／`_RUN_SCORES` 的暫存只以音節為 key，同一個程式裡換了詞庫或前後文統計會沿用舊分數（目前沒有工具這樣做）
+- 2026-11-02 打過兩次的英文字算英文：Python 的 `sure_english()` 每次都重算（記住的字最多 2000 個），只影響參考引擎與工具的速度；C++ 有快取（`engine/lexicon.py`）
+- 2026-11-02 打過兩次的英文字算英文：C++ 的快取靠每個改動點手動加 `words_version_`，`words`、`word_used`、`custom_english` 還是公開的，以後有地方直接改卻沒加，兩個引擎會不一致（`cpp/engine/lexicon.h`）
+- 2026-11-02 打過兩次的英文字算英文：按 ↓ 把整段選回中文（`chinese`、`whole`）只取消 `user.english`，記住的字還在；追過碰不到：記住的字是 4 個以上字母，注音音節最多 3 個符號加聲調鍵，整段讀不成中文（實測 gjie、mochi、suji、wjie ↓ 都沒有選項）

@@ -21,6 +21,7 @@
 ### 選字與校正（`docs/superpowers/specs/2026-10-29-adjacent-valid-sentence-design.md`）
 
 1. 長句選字加強在文書筆電上實測速度（目前只在開發機量過；沒有 AVX2 的 CPU 最慢一鍵約 70 ms）
+2. 學過的兩段蓋過詞典裡更長的詞：單獨選過一次「獎」、選過一次「起來」，「講起來」就打成「獎起來」（2026-11-02 使用者回報；兩筆都在才會錯，與長句選字加強、注音自動校正無關；重現：`tests/test_engine.py` 的 `test_a_learned_single_and_a_learned_word_do_not_outvote_a_longer_word`，目前標為預期失敗；先定規則，再用 user.json 快照做大範圍比對）
 
 ## 仍有效的工作方式
 

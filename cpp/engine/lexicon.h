@@ -143,6 +143,10 @@ public:
 
     double phrase_count(const ustr& reading_key, const ustr& phrase) const;
     double word_count(const std::string& word) const;
+    // English words the tokenizer takes as English when the keys are all of one (lower case):
+    // 自訂詞彙's, and the ones sent WORD_MIN_USES times (faded), the words Tab offers (mochi + 5p is
+    // mochi真, not mochi5p). Cached: whatever changes words or custom_english bumps words_version_.
+    const std::unordered_set<std::string>& sure_english() const;
     bool reload_custom();
     double bonus(const ustr& reading_key, const ustr& phrase) const;
     void learn_phrase(const ustr& reading_key, const ustr& phrase);
@@ -173,7 +177,7 @@ public:
 
     OrderedMap<ustr, OrderedMap<ustr, double>> phrases;
     std::unordered_set<std::string> english;
-    OrderedMap<std::string, double> words;   // English words
+    OrderedMap<std::string, double> words;   // English words (changed only in lexicon.cpp: see sure_english)
     OrderedMap<std::string, double> emails;  // e-mail addresses (never faded)
     OrderedMap<ustr, OrderedMap<ustr, int>> phrase_used;
     OrderedMap<std::string, int> word_used;
@@ -198,6 +202,9 @@ private:
     bool custom_seen_ = false;
     long long custom_mtime_ = 0;
     bool custom_exists_ = false;
+    unsigned words_version_ = 0;  // bumped by every change of words or custom_english, for sure_english()
+    mutable std::pair<int, unsigned> sure_key_{-1, ~0u};
+    mutable std::unordered_set<std::string> sure_;
 };
 
 }  // namespace sz

@@ -173,7 +173,7 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
     best = [None] * (n + 1)
     best[0] = (0.0, [])
     learned = user.english if user else set()
-    mine = user.custom_english if user else set()  # 自訂詞彙's English words
+    mine = user.sure_english() if user else set()  # 自訂詞彙's English words, and the ones sent twice
     # 代碼記憶: codes the user put back as typed twice are English too (mp3, not 允), the setting on or off
     codes = user.corrections.codes() if user is not None else frozenset()
     zh_punct = zhuyin_punct(table)
@@ -2080,7 +2080,7 @@ class Composer:
         an English word learned or in 個人詞庫) nor typed in capitals (OK, USB): those are English.
         One key over and over is 注音文 even if it is a word too (cc: ㄏㄏ, dd: ㄎㄎ)."""
         low = keys.lower()
-        word = low in self.english or keys in self.user.english or low in self.user.custom_english
+        word = low in self.english or keys in self.user.english or low in self.user.sure_english()
         return (len(keys) <= self.BAR_ZHUYIN_KEYS and (not word or len(set(low)) == 1)
                 and not any(start <= i < start + len(keys) for i in self.caps))
 
@@ -2593,7 +2593,7 @@ class Composer:
         code = self._learned_code(tok)
         labels, actions = self._code_choices(tok) if code else ([], [])
         if self.table.autocorrect and (code or tok.start not in _protected_offsets(
-                self.raw, self.english, self.user.english, self.user.custom_english)):
+                self.raw, self.english, self.user.english, self.user.sure_english())):
             more_labels, more_actions = self._autocorrect_choices(tok, labels)
             labels, actions = labels + more_labels, actions + more_actions
         if labels:
@@ -2705,9 +2705,13 @@ class Composer:
         self.context_word = next(p for s, l, p in self.segments if s + l == b)
         self.after_english = False
         self.commit = self.composition[:self._syl_offset(b)]
+        # what is sent may teach an English word (mochi, sent the second time): the rest may read
+        # otherwise (mochi5p -> mochi真, a syllable more), so the picks follow their keys
+        before = ([t.start - tok.start for t in zh[b:]], dict(self.overrides))
         self._remember(self.commit)
         self.raw = self.raw[tok.start:]
         self._refresh()
+        self._picks_back(before)
 
     # ---- key entry point ---------------------------------------------------
     def key(self, ch=None, special=None, caps=False):
