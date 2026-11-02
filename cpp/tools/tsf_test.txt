@@ -115,3 +115,9 @@ vu84y94{ENTER} => 下載
 # 長句選字加強 (on by default): the whole sentence decides (off: 肌肉, 左賢; cpp\tools\long_sentence_off.txt)
 m06jo4584ru 2k7ru b.41j4zp4{ENTER} => 原味炸雞的雞肉部分
 njo b06xjp6tj062k7yji3vu06u3ru/ 1o4t9 cjo3{ENTER} => 雖然輪船的左舷已經被拆毀
+# an English word sent twice (Tab offers it then) is English before zhuyin too: mochi + 5p (ㄓㄣ) is mochi真
+rup wu0 2k7mochi5p 2k7a06cl3t {ENTER} => 今天的mochi5p 的蠻好吃
+mochi {ENTER} => mochi 
+rup wu0 2k7mochi5p 2k7a06cl3t {ENTER} => 今天的mochi5p 的蠻好吃
+mochi {ENTER} => mochi 
+rup wu0 2k7mochi5p 2k7a06cl3t {ENTER} => 今天的mochi真的蠻好吃

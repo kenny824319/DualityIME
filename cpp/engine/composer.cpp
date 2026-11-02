@@ -347,7 +347,7 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
     best[0].set = true;
     static const std::unordered_set<std::string> none;
     const auto& learned = user ? user->english : none;
-    const auto& mine = user ? user->custom_english : none;  // 自訂詞彙's English words
+    const auto& mine = user ? user->sure_english() : none;  // 自訂詞彙's English words, and the ones sent twice
     // 代碼記憶: codes the user put back as typed twice are English too (mp3, not 允), the setting on or off
     const auto& codes = user ? user->corrections.codes() : none;
     auto zh_punct = zhuyin_punct(table);
@@ -3521,7 +3521,7 @@ void Composer::correction_choices(const Token* tok, std::vector<ustr>& labels, s
     bool code = learned_code(tok);
     if (code) code_choices(tok, labels, actions);
     if (table_.autocorrect &&
-        (code || !contains(protected_offsets(raw, english_, user.english, user.custom_english, {}), tok->start)))
+        (code || !contains(protected_offsets(raw, english_, user.english, user.sure_english(), {}), tok->start)))
         autocorrect_choices(tok, labels, actions);
     if (!labels.empty()) {
         Action act;
@@ -3734,9 +3734,14 @@ void Composer::commit_head() {
         }
     after_english_ = false;
     commit = composition.substr(0, syl_offset(b));
+    // what is sent may teach an English word (mochi, sent the second time): the rest may read
+    // otherwise (mochi5p -> mochi真, a syllable more), so the picks follow their keys
+    std::pair<std::vector<int>, Overrides> before{{}, overrides_};
+    for (size_t k = b; k < zh.size(); ++k) before.first.push_back(zh[k]->start - tok_start);
     remember(commit);
     raw = raw.substr(tok_start);
     refresh();
+    picks_back(before);
 }
 
 // ---- key entry point -------------------------------------------------------------------
@@ -3954,7 +3959,7 @@ bool Composer::may_be_zhuyin_text(int start, std::string_view keys) const {
     // word too (cc: ㄏㄏ, dd: ㄎㄎ)
     if (keys.size() > BAR_ZHUYIN_KEYS) return false;
     std::string low = lower(std::string(keys));
-    bool word = english_.contains(low) || user.english.count(std::string(keys)) || user.custom_english.count(low);
+    bool word = english_.contains(low) || user.english.count(std::string(keys)) || user.sure_english().count(low);
     bool repeated = std::all_of(low.begin(), low.end(), [&](char c) { return c == low[0]; });
     if (word && !repeated) return false;
     for (size_t k = 0; k < keys.size(); ++k)

@@ -422,6 +422,13 @@ class UserModel:
         count = self.words.get(word, 0)
         return self._faded(count, self.word_used.get(word)) if count else 0
 
+    def sure_english(self):
+        """English words the tokenizer takes as English when the keys are all of one (lower case):
+        自訂詞彙's, and the ones sent WORD_MIN_USES times (faded), the words Tab offers (mochi + 5p
+        is mochi真, not mochi5p). Built each time: tests change words directly (the C++ caches it)."""
+        typed = {w.lower() for w in self.words if self.word_count(w) >= WORD_MIN_USES}
+        return self.custom_english | typed if typed else self.custom_english
+
     def reload_custom(self):
         """Re-read dictionary.json if it changed. Format:
         {"words": [["華碩", "ㄏㄨㄚˊ ㄕㄨㄛˋ"], ...], "shortcuts": [["addr", "台北市..."], ...]}"""

@@ -99,6 +99,13 @@ CASES = [
     "ji3u.3ek7{LEFT}{#1}{#0}{ENTER}", "abcd{LEFT}{LEFT}{#5}{BACK}{#6}{RIGHT}{#7}{ENTER}",
     "rup wu0 u,4au04{LEFT}{LEFT}{#3}{DOWN}", "ji3u.3ek7{HOME}{#9}{END}{#8}{LEFT}{LEFT}{BACK}{ENTER}",
     "ji3187{UP}{#5}{ENTER}", "ji3187{LEFT}{UP}{#5}{ENTER}",
+    # an English word sent twice is English when the keys are all of it (mochi + 5p: mochi真)
+    "mochi {ENTER}rup wu0 2k7mochi5p 2k7a06cl3t {ENTER}mochi {ENTER}rup wu0 2k7mochi5p 2k7a06cl3t {ENTER}",
+    "Mochi {ENTER}Mochi {ENTER}mochi1o4{ENTER}mochia1o4{ENTER}", "mochi {ENTER}mochi {ENTER}mochi5p {LEFT}{UP}{ESC}{DOWN}",
+    # ...and left alone by 注音自動校正 (↓: no 數 碩 蟀 for gjie), and no 注音文 on ↑
+    "gjie{DOWN}{ESC}{ESC}gjie {ENTER}gjie {ENTER}gjie{DOWN}{ESC}{UP}{ESC}{ESC}",
+    # ...sent the second time in the head of a long sentence: the picks after it stay on their keys
+    "mochi {ENTER}mochi rup wu0 ji3cl3 mochi5p 2k7a06cl3t {LEFT}{LEFT}{DOWN}2" + "ji3cl3 " * 16 + "{ENTER}",
 ]
 
 PUNCT = list(",.;?!:\"'[]()<>-_=+/\\|@#$%^&*")

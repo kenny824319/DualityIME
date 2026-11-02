@@ -513,6 +513,17 @@ double UserModel::word_count(const std::string& word) const {
     return faded(*count, word_used.find(word));
 }
 
+const std::unordered_set<std::string>& UserModel::sure_english() const {
+    auto key = std::make_pair(today_(), words_version_);
+    if (sure_key_ != key) {
+        sure_ = custom_english;
+        for (auto& [w, _] : words)
+            if (word_count(w) >= WORD_MIN_USES) sure_.insert(lower(w));
+        sure_key_ = key;
+    }
+    return sure_;
+}
+
 // Chinese characters only (肯德基): a side of 映射詞彙 found in the text shown
 static bool is_han_text(const ustr& s) {
     return !s.empty() && std::all_of(s.begin(), s.end(), [](char32_t c) {
@@ -585,6 +596,7 @@ bool UserModel::reload_custom() {
     custom = std::move(c);
     custom_words = std::move(cw);
     custom_english = std::move(ce);
+    ++words_version_;
     custom_zhuyin = std::move(cz);
     shortcuts = std::move(sc);
     chinese_shortcuts = std::move(chinese);
@@ -684,6 +696,7 @@ void UserModel::learn_word(const std::string& word) {
     double count = word_count(word);
     words.set(word, count + 1);
     word_used.set(word, today_());
+    ++words_version_;
 }
 
 void UserModel::forget_words(int counter) {
@@ -693,6 +706,7 @@ void UserModel::forget_words(int counter) {
         english.clear();
         words.clear();
         word_used.clear();
+        ++words_version_;
         forgot = counter;
         save();
         corrections.forget();  // (注音自動校正's habits and 代碼記憶, the setting on or off)
@@ -762,6 +776,7 @@ void UserModel::import_memory(int counter) {
                 k.days.set(w, std::max(had_day ? *had_day : 0, day));
             }
     }
+    ++words_version_;
     save();
     if (auto* ac = data.get("keys"); ac) corrections.merge(*ac);  // 校正記憶 / 代碼記憶: their own file, the setting on or off
 }
@@ -858,6 +873,7 @@ void UserModel::prune() {
     }
     words = std::move(keep);
     word_used = std::move(keep_used);
+    ++words_version_;
     // e-mails never fade: past KEEP_EMAILS, the longest unused go
     std::vector<std::tuple<int, double, std::string>> es;
     for (auto& [w, n] : emails) {

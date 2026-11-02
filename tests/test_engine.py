@@ -532,6 +532,86 @@ class EnglishWordMemoryTest(Base):
         self.assertEqual(f("寄到abcc12345678@example.com 和 https://claude.ai/new"), [])
         self.assertEqual(f("claude Claude claude"), ["claude", "Claude"])
 
+    def test_word_sent_twice_is_english_before_zhuyin(self):
+        # 今天的mochi真的蠻好吃: mochi + 5p (ㄓㄣ) was one English piece, mochi5p, until mochi
+        # went into 自訂詞彙; sent twice (Tab offers it then) it counts the same
+        raw = keys("ㄐㄧㄣ ㄊㄧㄢ ㄉㄜ˙") + "mochi" + keys("ㄓㄣ ㄉㄜ˙ ㄇㄢˊ ㄏㄠˇ ㄔ")
+        self.assertEqual(self.type(raw), "今天的mochi5p 的蠻好吃")
+        self.type("mochi ")
+        self.assertEqual(self.type(raw), "今天的mochi5p 的蠻好吃")  # once: not yet
+        self.type("mochi ")
+        self.assertEqual(self.type(raw), "今天的mochi真的蠻好吃")
+
+    def test_pick_stays_when_a_long_sentence_sends_a_word_the_second_time(self):
+        # the head of a long sentence goes out with mochi in it, mochi's second time: the rest
+        # reads mochi真 now (one syllable more), and the pick of 郝 after it stays on its keys
+        c = self.c
+        self.type("mochi ")
+        for ch in "mochi " + keys("ㄐㄧㄣ ㄊㄧㄢ ㄨㄛˇ ㄏㄠˇ") + " mochi" + keys("ㄓㄣ ㄉㄜ˙ ㄇㄢˊ ㄏㄠˇ ㄔ"):
+            c.key(ch)
+        self.assertIn("mochi5p ", c.composition)
+        zh = [t for t in c.tokens if t.kind == "zh"]
+        last_hao = [n for n, t in enumerate(zh) if t.value == "ㄏㄠˇ"][-1]
+        c.overrides[(last_hao, 1)] = (("ㄏㄠˇ",), "郝")
+        c._refresh()
+        self.assertIn("蠻郝吃", c.composition)
+        sent = ""
+        for ch in keys("ㄨㄛˇ ㄏㄠˇ") * 20:
+            c.key(ch)
+            sent += c.commit
+            if sent:
+                break
+        self.assertTrue(sent.startswith("mochi "))
+        self.assertIn("mochi", c.user.sure_english())
+        self.assertIn("mochi真的蠻郝吃", c.composition)
+
+    def test_word_sent_twice_counts_in_any_case_and_fades(self):
+        u = self.c.user
+        self.type("Mochi ")
+        self.type("Mochi ")
+        self.assertIn("mochi", u.sure_english())
+        self.assertEqual(self.type("mochi1o4"), "mochi被")
+        # unused for FORGET_DAYS it counts half: under WORD_MIN_USES, no more (as Tab)
+        u.word_used["Mochi"] -= FORGET_DAYS
+        self.assertNotIn("mochi", u.sure_english())
+
+    def test_only_the_whole_word_counts(self):
+        # mochi learned: a piece that is all of it is English for sure; mochi5p is not made cheaper
+        # (else 5p after it would stay English: mochi5p, not mochi真)
+        self.type("mochi ")
+        self.type("mochi ")
+        mine = self.c.user.sure_english()
+        self.assertEqual(composer.english_piece_cost("mochi", self.c.english, set(), False, mine),
+                         composer.EN["learned"])
+        self.assertAlmostEqual(composer.english_piece_cost("mochi5p", self.c.english, set(), False, mine), 7.4)
+
+    def test_word_sent_twice_is_left_alone_by_autocorrect(self):
+        # like an English word picked or in 自訂詞彙: ↓ offers no 注音自動校正 for its keys (gjie:
+        # 數 碩 蟀 before), and ↑ no 注音文 (a word of 4 keys or fewer)
+        c = self.c
+        c.config.set(autocorrect=True)
+        c.settings_changed()
+
+        def off():
+            c.config.set(autocorrect=False)
+            c.settings_changed()
+        self.addCleanup(off)
+
+        def down(keys_):
+            for ch in keys_:
+                c.key(ch)
+            c.key(special="DOWN")
+            cands = list(c.candidates)
+            c.key(special="ESC")
+            c.key(special="ESC")
+            return cands
+        self.assertIn("數", down("gjie"))
+        self.assertTrue(c._may_be_zhuyin_text(0, "gjie"))
+        self.type("gjie ")
+        self.type("gjie ")
+        self.assertEqual(down("gjie"), [])
+        self.assertFalse(c._may_be_zhuyin_text(0, "gjie"))
+
     def test_slash_commands_are_words(self):
         # /continue in Claude Code, Discord...: a slash command, not a path
         f = composer.english_words_in
@@ -1255,6 +1335,15 @@ class LearnedSinglesTest(Base):
         self.learn("ㄗㄞˋ", "在")
         self.learn("ㄒㄧㄢˋ-ㄗㄞˋ", "現在")
         self.assertEqual(self.type(keys("ㄒㄧㄢˋ ㄗㄞˋ")), "現在")
+
+    @unittest.expectedFailure
+    def test_a_learned_single_and_a_learned_word_do_not_outvote_a_longer_word(self):
+        # OPEN (docs/status.md, 選字與校正 2; reported 2026-11-02): 獎 picked once alone and 起來
+        # picked once as a word make 講起來 獎起來; either one alone does not
+        self.learn("ㄐㄧㄤˇ", "獎")
+        self.learn("ㄑㄧˇ-ㄌㄞˊ", "起來")
+        self.assertEqual(self.type(keys("ㄐㄧㄤˇ ㄑㄧˇ ㄌㄞˊ ㄨㄛˇ ㄧㄝˇ ㄐㄩㄝˊ ㄉㄜ˙ ㄎㄚˇ ㄎㄚˇ")),
+                         "講起來我也覺得卡卡")
 
     def test_learned_singles_do_not_split_a_dictionary_word(self):
         self.learn("ㄨˋ", "務")
@@ -2123,6 +2212,23 @@ class AutocorrectTest(Base):
         self.assertEqual(c.composition, "哲邊")
         c.key(special="ENTER")
         self.assertEqual(c.commit, "哲邊")
+
+    def test_another_tone_picked_stays_when_the_head_is_sent(self):
+        # a long sentence sends its head: 哲 picked after it for the 5k of 5k1u0 stays (it went
+        # back to 這: the picks were matched against the syllables numbered before the cut)
+        c = self.c
+        cands = self.candidates_at(keys("ㄐㄧㄣ ㄊㄧㄢ ㄨㄛˇ ㄏㄠˇ") + "5k1u0 ", 4)
+        c._pick(cands.index("哲"))
+        self.assertIn("哲邊", c.composition)
+        c.key(special="END")
+        sent = ""
+        for ch in keys("ㄋㄧˇ ㄏㄠˇ") * 20:
+            c.key(ch)
+            sent += c.commit
+            if sent:
+                break
+        self.assertTrue(sent)
+        self.assertIn("哲邊", c.composition)
 
     def test_another_tone_picked_makes_a_word_with_the_rest(self):
         # 遊行 (u. read as ㄧㄡˊ), 有 (ㄧㄡˇ) picked: the rest goes with the new tone, 有形, not 有行
