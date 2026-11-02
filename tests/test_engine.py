@@ -699,6 +699,64 @@ class NumberTest(Base):
         c.key(special="ENTER")
         self.assertEqual(c.commit, "你18 ")
 
+    def test_numpad_digits_in_the_middle_go_in_at_the_caret(self):
+        # caret moved back with ← and a numpad key typed: in at the caret, the
+        # caret stays after it (it used to go to the end, the caret with it)
+        c = self.c
+        for ch in keys("ㄨㄛˇ ㄧㄡˇ ㄍㄜ˙"):
+            c.key(ch)
+        c.key(special="LEFT")
+        c.type_literal("1")
+        c.type_literal("0")
+        self.assertEqual(c.composition, "我有10個")
+        self.assertEqual(c.cursor, 4)
+        c.key(special="ESC")
+        for ch in "abcd":
+            c.key(ch)
+        c.key(special="LEFT")
+        c.key(special="LEFT")
+        c.type_literal("5")
+        self.assertEqual(c.composition, "ab5cd")
+        self.assertEqual(c.cursor, 3)
+        self.assertEqual(c.literal, {2})
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "ab5cd")
+
+    def test_numpad_key_leaves_the_replacement_bar(self):
+        # ↑ at the end opens the bar for the last character: a numpad key leaves it
+        # and goes in where the caret was (the end), not before that character
+        c = self.c
+        for ch in "ji3187":
+            c.key(ch)
+        c.key(special="UP")
+        self.assertGreaterEqual(c.repl_index, 0)
+        c.type_literal("5")
+        self.assertEqual(c.composition, "我吧5")
+        self.assertEqual(c.repl_index, -1)
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "我吧5")
+        # from the middle (← then ↑): in at the caret, the bar closed too
+        for ch in "ji3187":
+            c.key(ch)
+        c.key(special="LEFT")
+        c.key(special="UP")
+        c.type_literal("5")
+        self.assertEqual(c.composition, "我5吧")
+        self.assertEqual(c.repl_index, -1)
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "我5吧")
+
+    def test_numpad_digit_before_a_character_keeps_it(self):
+        # like a top-row key typed before 頁 of 今天頁面: 頁 stays 頁
+        c = self.c
+        for ch in keys("ㄐㄧㄣ ㄊㄧㄢ ㄧㄝˋ ㄇㄧㄢˋ"):
+            c.key(ch)
+        c.key(special="LEFT")
+        c.key(special="LEFT")
+        c.type_literal("3")
+        self.assertEqual(c.composition, "今天3頁面")
+        self.assertEqual(c.cursor, 3)
+
     def test_numpad_after_english_and_backspace(self):
         c = self.c
         for ch in "abc":
