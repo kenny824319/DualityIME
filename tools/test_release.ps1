@@ -66,6 +66,18 @@ Check "notes crlf" (Get-ReleaseNotes -Version "3.0.1" -Messages @(" * a`r`n * b`
 Check "notes no bump" (Get-ReleaseNotes -Version "3.0.2" -Messages @(" * 版本 3.0.2`n`nCo-Authored-By: x <y>", " * a")) " * a"
 Check "notes only bump" (Get-ReleaseNotes -Version "3.0.2" -Messages @(" * 版本 3.0.2")) "兩儀輸入法 3.0.2"
 Check "notes other format" (Get-ReleaseNotes -Version "3.0.1" -Messages @("fix the thing`n`nsome body text", "")) "fix the thing"
+# the version commit: trailers as one "line|line" string (-File passes no arrays)
+Check "version msg no trailers" (Get-VersionMessage -Version "3.1.2" -Trailers "") " * 版本 3.1.2`n"
+Check "version msg trailers" (Get-VersionMessage -Version "3.1.2" -Trailers "Co-Authored-By: A <a@b> | Claude-Session: https://x/y") " * 版本 3.1.2`n`nCo-Authored-By: A <a@b>`nClaude-Session: https://x/y`n"
+
+# only what users notice: items starting with tests, tools, the manual, review notes, the to-do list,
+# handoffs, the push rules or the release notes are left out; 問題修正 and the rest stay
+$internal = @(" + 新增實機測試：a", " * 開發工具：b", " + 新增開發工具：c", " * 使用說明改寫", " * 審查備忘：d",
+    " * 待辦加上 e", " + 新增交接文件：f", " * 推送檢查：g", " * 更新README", " * 發正式版時，發版說明 h")
+Check "notes internal only" (Get-ReleaseNotes -Version "3.1.2" -Messages @($internal -join "`n")) "兩儀輸入法 3.1.2"
+$kept = @(" * 問題修正。使用說明寫錯了", " * 問題修正。實機測試才看得到的錯", " + 新增安裝檔帶入模型；使用說明與資料來源",
+    " * 選字學習：x", " + 新增設定：y")
+Check "notes user items" (Get-ReleaseNotes -Version "3.1.2" -Messages @((@($internal[0]) + $kept + @($internal[1])) -join "`n")) ($kept -join "`n")
 
 if ($fail -gt 0) { Write-Host "$fail FAILED"; exit 1 }
 Write-Host "ALL PASSED"
