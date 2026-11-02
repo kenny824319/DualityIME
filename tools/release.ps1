@@ -1,6 +1,6 @@
 ﻿# Release script for 兩儀輸入法 (DualityIME).
 #   powershell -ExecutionPolicy Bypass -File tools\release.ps1 -Channel develop|main -Phase prepare|publish
-#                [-Repo kenny824319/DualityIME] [-Version X.Y.Z] [-WhatIf]
+#                [-Repo kenny824319/DualityIME] [-Version X.Y.Z] [-WhatIf] [-Trailers "line|line"]
 # prepare: bump VERSION (develop X.Y.(Z+1), main X.(Y+1).0), commit, run the full check, build the
 #          release binaries (cpp\publish.cmd) and the installer, then print the commit to push. develop with no packaged change: nothing happens.
 #          develop stops first when origin/main has commits develop lacks (main's X.(Y+1).0 bump): merge main
@@ -17,9 +17,9 @@ param(
     [string]$Repo = "kenny824319/DualityIME",
     [string]$Version,
     [switch]$WhatIf,
-    [string[]]$Trailers = @(
-        "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>",
-        "Claude-Session: https://claude.ai/code/session_01NCF4Pg85NZUud1WuxKmjkq")
+    # lines at the end of the version commit, separated by | (Claude passes its session's attribution);
+    # none by default. One string: -File passes an array parameter as a single element.
+    [string]$Trailers = ""
 )
 
 function Get-NextVersion {
@@ -93,6 +93,19 @@ function Get-NotesBase {
 # Messages: whole commit messages, newest first. Each item line ( * / + ) is a line of its own (git's
 # %s joins the lines of the first paragraph); trailers and the version bump are left out; a message
 # in another format gives its first line.
+# The version commit's message: the bump, then the trailers given as "line|line" (none: no blank line).
+function Get-VersionMessage {
+    param([string]$Version, [string]$Trailers)
+    $lines = @(($Trailers -split '\|') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $msg = " * 版本 $Version`n"
+    if ($lines.Count) { $msg += "`n" + ($lines -join "`n") + "`n" }
+    return $msg
+}
+
+# Items users don't notice, by how they start: tests, tools, the manual, review notes, the to-do
+# list, handoffs, the push rules, the release notes themselves. ("問題修正。" items always stay.)
+$InternalItem = '^\s*[*+] (新增)?(實機測試|測試|開發工具|使用說明|審查備忘|待辦|交接文件|推送檢查|更新README|README|發正式版|發版)'
+
 function Get-ReleaseNotes {
     param([string]$Version, [string[]]$Messages)
     $lines = @()
@@ -101,7 +114,7 @@ function Get-ReleaseNotes {
         if ($all.Count -eq 0) { continue }
         $items = @($all | Where-Object { $_ -match '^\s*[*+] ' })
         if ($items.Count -eq 0) { $lines += $all[0]; continue }
-        $lines += @($items | Where-Object { $_ -notmatch '^\s*\* 版本 \d+\.\d+\.\d+\s*$' })
+        $lines += @($items | Where-Object { $_ -notmatch '^\s*\* 版本 \d+\.\d+\.\d+\s*$' -and $_ -notmatch $InternalItem })
     }
     if ($lines.Count -eq 0) { return "兩儀輸入法 $Version" }
     return ($lines -join "`n")
@@ -194,7 +207,7 @@ if ($Phase -eq "prepare") {
     $headSha = @(Invoke-Git rev-parse --short HEAD)[0]
     $failMsg = "VERSION $next 已提交（$headSha）；修好後重跑 -Phase prepare（不會再加版號），或自行決定是否還原這個提交"
     $msgFile = Join-Path $env:TEMP "dualityime-release-msg.txt"
-    $msg = " * 版本 $next`n`n" + ($Trailers -join "`n") + "`n"
+    $msg = Get-VersionMessage -Version $next -Trailers $Trailers
     if ($WhatIf) {
         if ($resume) { Write-Host "[WhatIf] HEAD is the unreleased version commit of ${next}: no second bump" }
         else {

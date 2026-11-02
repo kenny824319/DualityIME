@@ -102,7 +102,11 @@ WebView2. `README.md` is the user manual. Users install from GitHub Releases
    `cpp\publish.cmd` and `installer\build.ps1 -Release` (develop with nothing packaged changed — `cpp/`, `installer/`, `settings/`, `data/`,
    `VERSION` — does nothing); then Claude runs `git push` itself (so guard_bash and push_audit check it);
    then `-Phase publish` creates the Release `vX.Y.Z` with the installer (develop = Pre-release; the tag is
-   made by GitHub, never locally). Pushing `develop` and creating its Pre-release need no asking (the
+   made by GitHub, never locally). Claude passes this session's attribution lines as one string, `-Trailers "line|line"`
+   (the default is none). The release notes list only what users notice: commit items starting with
+   實機測試, 測試, 開發工具, 使用說明, 審查備忘, 待辦, 交接文件, 推送檢查, (更新)README or 發版／發正式版
+   (also after 新增) are left out
+   (`$InternalItem` in release.ps1), so write internal items that way; 問題修正 items always stay. Pushing `develop` and creating its Pre-release need no asking (the
    user's decision, 2026-10-27). `-Channel develop -Phase prepare` stops while `origin/main` has commits
    `develop` lacks (merge main back first); `-Channel main -Phase publish` prints the commands that bring
    `develop` up to `main` (it runs none of them). Releasing to `main` (merging `develop` into it, `-Channel main`) is the

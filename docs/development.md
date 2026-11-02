@@ -75,16 +75,16 @@
 發版用 `tools\release.ps1`
 
 ```
-powershell -ExecutionPolicy Bypass -File tools\release.ps1 -Channel develop|main -Phase prepare|publish [-Repo 擁有者/名稱] [-Version X.Y.Z] [-WhatIf]
+powershell -ExecutionPolicy Bypass -File tools\release.ps1 -Channel develop|main -Phase prepare|publish [-Repo 擁有者/名稱] [-Version X.Y.Z] [-WhatIf] [-Trailers "行|行"]
 ```
 
 1. `-Phase prepare`：決定版號（`develop` 第三碼加 1；`main` 第二碼加 1、第三碼歸 0）、寫進 `VERSION` 並提交、跑完整檢查、建置安裝檔\
    `develop` 這次沒有改到會打包進安裝檔的東西（`cpp/`、`installer/`、`settings/`、`data/`、`VERSION`）時腳本什麼都不做（照樣可以推送，不建立 Release）
 2. 自己 `git push` 那個分支
-3. `-Phase publish`：建立 GitHub Release `vX.Y.Z`（`develop` 是 Pre-release），附上 `DualityIME-X.Y.Z-setup.exe`，說明從這次的提交訊息整理\
+3. `-Phase publish`：建立 GitHub Release `vX.Y.Z`（`develop` 是 Pre-release），附上 `DualityIME-X.Y.Z-setup.exe`，說明從這次的提交訊息整理，只列使用者感受得到的改動（開頭是實機測試、測試、開發工具、使用說明、審查備忘、待辦、交接文件、推送檢查、README、發版的項目不列；「問題修正。」一律保留）\
    tag 由 GitHub 建立；腳本不推送、不建本機 tag、不刪任何 tag 或 Release\
    `main` 發完會印出讓 `develop` 跟上 `main` 的指令（`git push origin main:develop`，或 `develop` 有自己的提交時先合併）
 
 `develop` 的 `-Phase prepare` 在 `origin/main` 有 `develop` 沒有的提交時會停下來（「main 有 develop 沒有的提交：先把 main 合回 develop」）：正式版的版號只提交在 `main`，沒合回來的話測試版的版號會比正式版小
 
-`-Version`（只用於 publish）照目前的版號發布、不加版號；`-WhatIf` 只印出會執行的指令
+`-Version`（只用於 publish）照目前的版號發布、不加版號；`-WhatIf` 只印出會執行的指令；`-Trailers` 是加在版本提交結尾的署名，多行用 `|` 隔開（預設不加）
