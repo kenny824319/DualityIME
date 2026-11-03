@@ -368,6 +368,17 @@ int wmain(int argc, wchar_t** argv) {
                     ev.push_back({VK_LCONTROL, true});
                     send(ev);
                 }
+                else if (name == "HELD") {
+                    // (diagnosis) the keys this thread's keyboard state says are held right now
+                    pump(100);
+                    BYTE ks[256];
+                    GetKeyboardState(ks);
+                    std::printf("held:");
+                    for (int k = 0x07; k < 256; ++k)
+                        if (ks[k] & 0x80) std::printf(" %02X", k);
+                    std::printf("\n");
+                    std::fflush(stdout);
+                }
                 else if (name == "SBACK") tap(VK_BACK, true);
                 else if (name == "SSPACE") tap(VK_SPACE, true);
                 else if (name == "WAIT") pump(500);

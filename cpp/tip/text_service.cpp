@@ -677,17 +677,23 @@ bool TextService::ctrl_punct_key(ITfContext* ctx, WPARAM vk, LPARAM lp) {
     // ...but in a terminal Ctrl + [ ] \ ^ _ are control characters (Ctrl+[ is Esc, Ctrl+] telnet's escape)
     static const wchar_t CONTROL_KEYS[] = L"[]\\^_";
     if (!cfg_.ctrl_punct || !down(VK_CONTROL) || down(VK_MENU)) return false;
-    // only Ctrl (and Shift) with the one key: any other key held as well (Win, Alt, Caps Lock, a
-    // letter...) makes it some program's shortcut (Win+Ctrl+, , Ctrl+CapsLock+.); mouse buttons do not count
+    // only Ctrl (and Shift) with the one key: any other key of the keyboard held as well (Win, Caps
+    // Lock, a letter...) makes it some program's shortcut (Win+Ctrl+, , Ctrl+CapsLock+.). Only real keys
+    // count: the keyboard state can show a key code no key sends as held for good (0xF1, one of the
+    // Japanese IME's, on a machine with it installed), which turned the setting off everywhere
+    auto real_key = [](int k) {
+        return k == VK_BACK || k == VK_TAB || k == VK_RETURN || k == VK_CAPITAL || k == VK_ESCAPE ||
+               (k >= VK_SPACE && k <= VK_HELP) ||        // space, Page Up/Down, End, Home, arrows, Insert, Delete...
+               (k >= '0' && k <= '9') || (k >= 'A' && k <= 'Z') ||
+               (k >= VK_LWIN && k <= VK_APPS) ||         // Win, the menu key
+               (k >= VK_NUMPAD0 && k <= VK_F24) ||       // the number pad, F1-F24
+               (k >= VK_OEM_1 && k <= VK_OEM_3) ||       // ; = , - . / `
+               (k >= VK_OEM_4 && k <= VK_OEM_8) || k == VK_OEM_102;  // [ \ ] ' and the extra key of some keyboards
+    };
     BYTE ks[256];
     if (!GetKeyboardState(ks)) return false;
-    for (int k = 0x07; k < 256; ++k) {
-        if (!(ks[k] & 0x80) || k == static_cast<int>(vk)) continue;
-        if (k == VK_CONTROL || k == VK_LCONTROL || k == VK_RCONTROL || k == VK_SHIFT || k == VK_LSHIFT ||
-            k == VK_RSHIFT)
-            continue;
-        return false;
-    }
+    for (int k = 0; k < 256; ++k)
+        if ((ks[k] & 0x80) && k != static_cast<int>(vk) && real_key(k)) return false;
     wchar_t ch = char_of(vk, lp);
     if (!ch || !wcschr(KEYS, ch)) return false;
     return !(wcschr(CONTROL_KEYS, ch) && in_terminal(ctx));
