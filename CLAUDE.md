@@ -134,6 +134,11 @@ WebView2. `README.md` is the user manual. Users install from GitHub Releases
   (`e2e.ps1 -Config`).
 - On the company computer headless Edge prints nothing (company policy, even for a one-line page): the
   page check of `test_settings.ps1` can't run there.
+- Without numpy the Python engine runs without the language model and says nothing (`engine/lm.py`
+  `load()` gives None): 長句選字加強 "on" then types as "off", and Python results disagree with the
+  C++ engine and the real IME. `py -3 -c "import numpy"` first (2026-11-03 the company computer had none).
+- `tools/trace.py` and `sz_trace` fix today at day 20000: a real `user.json` (days 20753 and later) fades
+  differently there. To compare a Python run with them, set `user.today = lambda: 20000`.
 - The IME's debug log (`debug()` in `cpp/tip/text_service.cpp`) writes only while `%TEMP%\dualityime_debug.log`
   exists, and never what is typed (sizes, positions, kinds). Create the file to debug, delete it after.
 - claude-kit's `tests/test_guard_bash.py` fails 3 tests on this project's guard_bash by design (they

@@ -31,6 +31,11 @@ CASES = [
     "5k1u0 {ENTER}e;e; {ENTER}e; ;e {ENTER},u3{ENTER}su3xl3a87{ENTER}w961o3g4vu04u4fm {ENTER}",
     ("w961o3g4vu04u4fm {HOME}{RIGHT}{RIGHT}{RIGHT}" + "{DOWN}" * 31 + "{ENTER}{ENTER}") * 2 + "w961o3g4vu04u4fm {ENTER}",
     "ok hi go su ios 5k ", "5ke; {HOME}{DOWN}3{END}e; 1u0 {ENTER}",  # (浙 picked for 5k: kept as more comes)
+    "ji3y94u h4g4g4{ENTER}",  # 我再一次試試: 試試 only with 長句選字加強 (逝世 without)
+    # a 1-2 letter word after English that starts a common word is zhuyin (B 因為, 為 typed ㄨㄟˊ too,
+    # thank 一個); one that starts a less common one stays English (look up 此操作, look up 還是)
+    "cl3 B up jo6su3g4{ENTER}", "hello up jo4{ENTER}", "thank u ek4{ENTER}", "look up h3hl yji4{ENTER}",
+    "look up c96g4{ENTER}", "hello up jo6",
     # (another tone of a tone put back: 哲 third in ↓ at 這邊, then 遮 further down; kept, then learned)
     "5k1u0 {HOME}{DOWN}3{ENTER}{ENTER}5k1u0 {ENTER}vu8y94{HOME}" + "{DOWN}" * 23 + "{ENTER}{ENTER}vu8y94{ENTER}",
     "u.vu/6{HOME}{DOWN}2{ENTER}u.vu/6{ENTER}",  # (有 picked at 遊行: 有形, the rest with the new tone)
