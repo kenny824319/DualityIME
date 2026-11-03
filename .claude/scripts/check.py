@@ -53,9 +53,24 @@ STEPS: list[tuple[str, list[str], Path, str | None]] = [
 ]
 
 
+def changed_files(before: str, after: str) -> list[str]:
+    """The files that differ between two trees (push_audit.working_tree)."""
+    import push_audit
+
+    out = push_audit.git("diff", "--name-only", before, after)
+    return [line for line in out.splitlines() if line]
+
+
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # cp950 consoles.
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    # (project: what was checked, for push_audit.py: a push must be of exactly this. The tree is
+    # taken before the steps and again after: a file edited while they ran was never checked as it
+    # is now, so nothing is recorded then - 2026-11-03, edits made twice during one session's runs)
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import push_audit
+
+    tree_before = push_audit.working_tree()
     failed, ran, skipped = [], 0, 0
     for name, command, cwd, required in STEPS:
         if required and not (ROOT / required).exists():
@@ -84,7 +99,16 @@ def main() -> int:
         print(f"{status}  {name:<12} {seconds:5.1f}s  {summary[:100]}")
         if code:
             failed.append((name, lines[-40:]))
+    tree_after = push_audit.working_tree()
+    if tree_after != tree_before:
+        files = changed_files(tree_before, tree_after)
+        print(f"FAIL  files changed while the check ran: {', '.join(files)}")
+        print("      Finish every change first (code, tests, docs), then run the check again.")
+        print("      Nothing was recorded for push_audit.")
+        failed.append(("unchanged tree", []))
     for name, tail in failed:
+        if not tail:
+            continue
         print(f"\n--- {name} (last lines) ---")
         print("\n".join(tail))
     if failed:
@@ -94,10 +118,6 @@ def main() -> int:
         print("\nNOTHING RAN: no step is configured or applicable yet.")
         return 1
     print(f"\nALL PASSED{f' ({skipped} skipped)' if skipped else ''}")
-    # (project: what was checked, for push_audit.py: a push must be of exactly this)
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import push_audit
-
     push_audit.record_check()
     return 0
 
