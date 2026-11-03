@@ -13,3 +13,4 @@
 - [PS missing command exit code](project_ps_missing_command_exitcode.md) — `& $missing` keeps the previous $LASTEXITCODE; Get-Command first, keep recovery msg
 - [Test Base shares a composer](project_test_base_shared_composer.md) — one composer per test class; picks carry across methods, plain sends do not
 - [TIP setting places](project_tip_setting_places.md) — a TIP-read setting is in 7 places: 4 defaults + app.js, engine_main cfg_json, TIP read_reply/struct default
+- [Keyboard state phantom keys](project_keyboard_state_phantom_keys.md) — GetKeyboardState shows IME codes (0xF1) held for good; "other key held" scans must whitelist real keys
