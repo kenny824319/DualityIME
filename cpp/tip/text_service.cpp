@@ -677,6 +677,17 @@ bool TextService::ctrl_punct_key(ITfContext* ctx, WPARAM vk, LPARAM lp) {
     // ...but in a terminal Ctrl + [ ] \ ^ _ are control characters (Ctrl+[ is Esc, Ctrl+] telnet's escape)
     static const wchar_t CONTROL_KEYS[] = L"[]\\^_";
     if (!cfg_.ctrl_punct || !down(VK_CONTROL) || down(VK_MENU)) return false;
+    // only Ctrl (and Shift) with the one key: any other key held as well (Win, Alt, Caps Lock, a
+    // letter...) makes it some program's shortcut (Win+Ctrl+, , Ctrl+CapsLock+.); mouse buttons do not count
+    BYTE ks[256];
+    if (!GetKeyboardState(ks)) return false;
+    for (int k = 0x07; k < 256; ++k) {
+        if (!(ks[k] & 0x80) || k == static_cast<int>(vk)) continue;
+        if (k == VK_CONTROL || k == VK_LCONTROL || k == VK_RCONTROL || k == VK_SHIFT || k == VK_LSHIFT ||
+            k == VK_RSHIFT)
+            continue;
+        return false;
+    }
     wchar_t ch = char_of(vk, lp);
     if (!ch || !wcschr(KEYS, ch)) return false;
     return !(wcschr(CONTROL_KEYS, ch) && in_terminal(ctx));
@@ -829,7 +840,7 @@ void TextService::read_reply(const Json& r) {
         cfg_.lookup = flag("lookup", true);
         cfg_.space = text("space", "half");
         cfg_.full_width = flag("full_width", false);
-        cfg_.ctrl_punct = flag("ctrl_punct", false);
+        cfg_.ctrl_punct = flag("ctrl_full_punct", true);
         cfg_.cand_font = wide(text("cand_font", "Microsoft JhengHei UI"));
         cfg_.cand_font_size = number("cand_font_size", 18);
         cfg_.cand_per_row = number("cand_per_row", 1);

@@ -67,7 +67,9 @@ const double LOG_BIGRAM_WEIGHT = std::log10(BIGRAM_WEIGHT);
 constexpr size_t BEAM = 12;
 constexpr size_t PER_SPAN = 8;
 constexpr double DICT_FLOOR = 0.4;
-constexpr double LM_WEIGHT = 0.5;  // 長句選字加強: log10 of the model's probability counts this much against the engine's score
+constexpr double LM_WEIGHT = 0.5;   // 長句選字加強: log10 of the model's probability counts this much against the engine's score
+constexpr double WORD_BONUS = 0.4;  // ...and each character inside a cohesive word this much (engine/composer.py)
+constexpr double WORD_COHESION = 1.0;  // cohesive: log10 count(word) - the sum of its characters' (engine/composer.py)
 constexpr double LN10 = 2.302585092994046;  // (written out: engine/composer.py uses the same digits)
 constexpr size_t NBEST_K = 5;   // n-best: paths kept per (position, last phrase)
 constexpr size_t NBEST_N = 10;  // ...and distinct texts the model scores
@@ -596,6 +598,25 @@ double corpus_unigram(const BigramModel* bigram, const Lexicon& lexicon, const u
 double transition(const BigramModel* bigram, const std::optional<ustr>& prev, const ustr& phrase, double unigram) {
     if (!bigram || !prev || prev->empty()) return unigram;
     auto b = bigram->logp(*prev, phrase);
+    if (!b) return UNSEEN_PAIR + unigram;
+    return log10_add(LOG_BIGRAM_WEIGHT + *b, UNSEEN_PAIR + unigram);
+}
+
+// transition() from the phrase sent last (prev_word) to the first phrase of the run: a pair that
+// makes a word of the dictionary was never counted as a pair (the corpus was cut into words), so
+// it counts as count(怎麼辦) / count(怎麼) when that is more (see engine/composer.py)
+double context_transition(const BigramModel* bigram, const std::optional<ustr>& prev, const ustr& phrase,
+                          double unigram) {
+    if (!bigram || !prev || prev->empty()) return unigram;
+    auto b = bigram->logp(*prev, phrase);
+    if (static_cast<int>(prev->size() + phrase.size()) <= MAX_PHRASE_LEN) {
+        auto whole = bigram->unigram(*prev + phrase);
+        auto part = bigram->unigram(*prev);
+        if (whole && part) {
+            double share = std::min(0.0, *whole - *part);
+            if (!b || share > *b) b = share;
+        }
+    }
     if (!b) return UNSEEN_PAIR + unigram;
     return log10_add(LOG_BIGRAM_WEIGHT + *b, UNSEEN_PAIR + unigram);
 }
@@ -1254,7 +1275,7 @@ static void repick(std::vector<Segment>& path, const std::vector<ustr>& readings
         ustr best = phrase;
         std::optional<double> best_score;
         for (auto& [p, u] : cands) {
-            double score = transition(bigram, prev, p, u);
+            double score = k ? transition(bigram, prev, p, u) : context_transition(bigram, prev, p, u);
             if (after) score += transition(bigram, p, *after, after_u);
             if (!best_score || score > *best_score) {
                 best = p;
@@ -1303,6 +1324,29 @@ ustr text_of(const std::vector<Segment>& path) {
 // LM_WEIGHT * the model's log10 probability of the text
 double lm_term(const LmScorer& lm, const ustr& text, const std::vector<ustr>& readings) {
     return LM_WEIGHT * (static_cast<double>(lm.text_score(text, readings)) / (1024 * LN10));
+}
+
+// phrase occurs in the corpus far more often than its characters would meet by chance
+// (WORD_COHESION); a phrase or character the corpus never counted is not
+bool cohesive(const BigramModel& bigram, const ustr& phrase) {
+    auto whole = bigram.unigram(phrase);
+    if (!whole) return false;
+    double chars = 0.0;
+    for (char32_t ch : phrase) {
+        auto u = bigram.unigram(ustr(1, ch));
+        if (!u) return false;
+        chars += *u;
+    }
+    return *whole - chars >= WORD_COHESION;
+}
+
+// WORD_BONUS * the characters of the path inside cohesive phrases of 2+ syllables
+double word_term(const std::vector<Segment>& path, const BigramModel* bigram) {
+    if (!bigram) return 0.0;
+    int chars = 0;
+    for (auto& seg : path)
+        if (seg.length > 1 && cohesive(*bigram, seg.phrase)) chars += seg.length;
+    return WORD_BONUS * chars;
 }
 
 }  // namespace
@@ -1411,7 +1455,8 @@ static Search search(const std::vector<ustr>& readings, const Lexicon& lexicon, 
             auto& nxt = states[i + l];
             for (auto& [phrase, unigram] : it->second) {
                 for (auto& [prev, st] : beam) {
-                    double c = st.score + transition(bigram, prev, phrase, unigram);
+                    double c = st.score + (i ? transition(bigram, prev, phrase, unigram)
+                                             : context_transition(bigram, prev, phrase, unigram));
                     PathState* cur = nxt.find(Key(phrase));
                     if (!cur || c > cur->score)
                         nxt.set(Key(phrase), PathState{c, std::make_shared<Node>(Node{i, l, phrase, st.path})});
@@ -1450,7 +1495,8 @@ static std::vector<std::pair<double, std::vector<Segment>>> nbest(const std::vec
             for (auto& [phrase, unigram] : it->second) {
                 Hyps& lst = nxt[Key(phrase)];
                 for (auto* item : beam) {
-                    double t = transition(bigram, item->first, phrase, unigram);
+                    double t = i ? transition(bigram, item->first, phrase, unigram)
+                                 : context_transition(bigram, item->first, phrase, unigram);
                     for (auto& h : item->second)
                         lst.push_back(PathState{h.score + t, std::make_shared<Node>(Node{i, l, phrase, h.path})});
                 }
@@ -1534,9 +1580,9 @@ static std::vector<Segment> with_lm(double score, std::vector<Segment> path, con
     }
     lm.prepare(texts);  // (the model's steps for all of them at once: the same scores, sooner)
     std::vector<Segment> best = path;
-    double best_score = score + lm_term(lm, text, readings);
+    double best_score = score + lm_term(lm, text, readings) + word_term(path, bigram);
     for (size_t k = 0; k < rivals.size(); ++k) {
-        double sc = rivals[k].first + lm_term(lm, texts[k + 1], readings);
+        double sc = rivals[k].first + lm_term(lm, texts[k + 1], readings) + word_term(rivals[k].second, bigram);
         if (sc > best_score) {
             best = rivals[k].second;
             best_score = sc;

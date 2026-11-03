@@ -5,7 +5,8 @@
 // Script lines:  keys => expected text
 // keys: characters as typed, {ENTER} {ESC} {BACK} {DOWN} {UP} {LEFT} {RIGHT} {TAB}
 // {#5} (a numpad key) {SPACE} {SHIFT} (a Shift tap) {SBACK} (Shift+Backspace) {SSPACE} (Shift+Space)
-// {WAIT} (half a second). Lines starting with # are comments.
+// {WAIT} (half a second), {^,} (Ctrl + a key, with Shift if its character needs it), {^^,} (the same
+// with F13 held as well). Lines starting with # are comments.
 // A line starting with {PAGE}: the keys go to a window like a web page with no text box in
 // focus (browsers mark its TSF context disabled and empty), {NOFOCUS}: to a window the app
 // turned the input method off for (ImmAssociateContext NULL: games...), {PLAIN}: to a plain window with no text box (a media player's
@@ -350,6 +351,23 @@ int wmain(int argc, wchar_t** argv) {
                 if (name == "SHIFT") send({{VK_LSHIFT, false}, {VK_LSHIFT, true}});
                 else if (name.size() == 2 && name[0] == '#' && isdigit(static_cast<unsigned char>(name[1])))
                     tap(static_cast<WORD>(VK_NUMPAD0 + (name[1] - '0')));
+                else if (name.size() >= 2 && name[0] == '^') {
+                    // {^,}: Ctrl + the key (Shift too if the character needs it); {^^,}: F13 held as
+                    // well (any other key held: the program's shortcut, not the input method's)
+                    bool other = name.size() == 3 && name[1] == '^';
+                    SHORT vks = VkKeyScanW(static_cast<unsigned char>(name.back()));
+                    WORD vk = LOBYTE(vks);
+                    bool shift = (HIBYTE(vks) & 1) != 0;
+                    std::vector<std::pair<WORD, bool>> ev{{VK_LCONTROL, false}};
+                    if (other) ev.push_back({VK_F13, false});
+                    if (shift) ev.push_back({VK_LSHIFT, false});
+                    ev.push_back({vk, false});
+                    ev.push_back({vk, true});
+                    if (shift) ev.push_back({VK_LSHIFT, true});
+                    if (other) ev.push_back({VK_F13, true});
+                    ev.push_back({VK_LCONTROL, true});
+                    send(ev);
+                }
                 else if (name == "SBACK") tap(VK_BACK, true);
                 else if (name == "SSPACE") tap(VK_SPACE, true);
                 else if (name == "WAIT") pump(500);

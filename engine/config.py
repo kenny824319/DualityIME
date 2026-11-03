@@ -9,7 +9,8 @@ DEFAULTS = {
     "punctuation": "half",      # "half": , . ?   "full": ，。？
     "space": "half",            # "half" or "full" (　) when typing a space on its own
     "full_width": False,        # 全形 mode (Shift+Space): letters, digits, marks, spaces all full width
-    "ctrl_punct": False,        # Ctrl + a punctuation key types its full-width mark (Ctrl+, -> ，)
+    "ctrl_full_punct": True,    # Ctrl + a punctuation key types its full-width mark (Ctrl+, -> ，); on since 2026-11,
+                                # under a new name so that the ctrl_punct false every saved config.json has is left behind
     "preview": "keys_hint",     # unfinished syllable shows "keys" (su), the keys with "keys_hint" (ㄋㄧ under them) or "zhuyin" (ㄋㄧ)
     "shift_toggle": True,       # tapping Shift switches Chinese / English
     "start_mode": "mixed",      # switching to the IME starts in "mixed" (中英混打) or "english"

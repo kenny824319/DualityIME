@@ -28,6 +28,18 @@ w96{TAB}{ENTER} => 台灣
 hello  => hello 
 # Shift tap: English, then Chinese again
 {SHIFT}su3{SHIFT}su3{ENTER} => su3你
+# 長句選字加強 keeps cohesive words whole (新舊, 選字, 有件事倒是), not two common characters (我再);
+# 怎麼 sent, then 辦 alone: 怎麼辦 is a word (not 半)
+1j6ul4sj/4gk6ai7vup ru.4rul31p3{ENTER} => 不要弄什麼新舊腳本
+vm03y4{ENTER} => 選字
+xu/4j94u.3ru04g42l4g4ul4su3qu/6ej u vu84{ENTER} => 另外有件事倒是要你評估一下
+ji3y94d04d04{ENTER} => 我再看看
+yk3ai7{ENTER}104{ENTER} => 怎麼辦
+# Ctrl + a punctuation key (on by default): its full-width mark, after what is being typed, with Shift
+# too (Ctrl+Shift+; is ：); another key held as well (F13 here): the program's shortcut, no ，
+su3{^,} => 你，
+{^:} => ：
+{^^,}su3{ENTER} => 你
 # like the ASUS IME: the sentence waits for Enter; look up stays English
 look up {ENTER} => look up 
 su3cl3hello ji3{ESC} => 

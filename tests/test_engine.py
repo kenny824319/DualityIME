@@ -1249,6 +1249,17 @@ class ContextTest(Base):
         self.type(keys("ㄋㄧˇ ㄎㄜˇ ㄧˇ"))
         self.assertEqual(self.type(keys("ㄕˋ ㄕˋ")), "試試")
 
+    def test_word_across_the_previous_commit(self):
+        # 怎麼 sent, then 辦: the corpus counted 怎麼辦 as one word, never the pair 怎麼 + 辦, while
+        # 怎麼 + 半 (怎麼半天) was counted (2026-11-03 user)
+        self.assertEqual(self.type(keys("ㄗㄜˇ ㄇㄛ˙")), "怎麼")
+        self.assertEqual(self.type(keys("ㄅㄢˋ")), "辦")
+        self.assertEqual(self.type(keys("ㄅㄨˋ ㄌㄧˇ ㄒㄧㄤˇ ㄗㄜˇ ㄇㄛ˙")), "不理想怎麼")
+        self.assertEqual(self.type(keys("ㄅㄢˋ")), "辦")
+        # a pair the corpus counted, and no word made of the two, as before
+        self.assertEqual(self.type(keys("ㄧ ㄍㄜ˙")), "一個")
+        self.assertEqual(self.type(keys("ㄅㄢˋ")), "半")
+
 
 class KnownHardTest(Base):
     """Still wrong: 他/它 and 試試/逝世 need more than the previous phrase."""
@@ -1281,6 +1292,24 @@ class KnownHardWithLongSentenceTest(Base):
 
     def test_try_vs_pass_away(self):
         self.assertEqual(self.type(keys("ㄨㄛˇ ㄗㄞˋ ㄧ ㄘˋ ㄕˋ ㄕˋ")), "我再一次試試")
+
+    # (2026-11-03 users: the model split 新舊 into 心就, and could not bring back 選字 or 有件事倒是;
+    # 我再 is not turned into the word 我在. One test each: a sentence sent would teach the next one)
+    def test_word_not_split_by_the_model(self):
+        self.assertEqual(self.type(keys("ㄅㄨˊ ㄧㄠˋ ㄋㄨㄥˋ ㄕㄜˊ ㄇㄛ˙ ㄒㄧㄣ ㄐㄧㄡˋ ㄐㄧㄠˇ ㄅㄣˇ")), "不要弄什麼新舊腳本")
+
+    def test_word_over_two_common_characters(self):
+        self.assertEqual(self.type(keys("ㄒㄩㄢˇ ㄗˋ")), "選字")
+
+    def test_word_after_a_word(self):
+        self.assertEqual(self.type(keys("ㄨㄛˇ ㄗㄞˋ ㄒㄩㄢˇ ㄗˋ")), "我在選字")
+
+    def test_words_over_common_characters_in_a_sentence(self):
+        self.assertEqual(self.type(keys("ㄌㄧㄥˋ ㄨㄞˋ ㄧㄡˇ ㄐㄧㄢˋ ㄕˋ ㄉㄠˋ ㄕˋ ㄧㄠˋ ㄋㄧˇ ㄆㄧㄥˊ ㄍㄨ ㄧ ㄒㄧㄚˋ")),
+                         "另外有件事倒是要你評估一下")
+
+    def test_two_common_characters_get_no_word_bonus(self):
+        self.assertEqual(self.type(keys("ㄨㄛˇ ㄗㄞˋ ㄎㄢˋ ㄎㄢˋ")), "我再看看")
 
     def test_because_typed_with_a_second_tone_after_english(self):
         # (as the user typed it, 為 ㄨㄟˊ: 因 + 為 is the model's; without it 音為, English or not)
@@ -1895,10 +1924,23 @@ class PairPickTest(Base):
 
 
 class CtrlPunctuationTest(Base):
-    """Ctrl + a punctuation key types its full-width mark (a setting, off by default)."""
+    """Ctrl + a punctuation key types its full-width mark (a setting, on by default)."""
 
-    def test_off_by_default(self):
-        self.assertFalse(self.c.config.ctrl_punct)
+    def test_on_by_default(self):
+        self.assertTrue(self.c.config.ctrl_full_punct)
+
+    def test_the_old_setting_saved_off_is_left_behind(self):
+        # every config.json the settings tool wrote before has "ctrl_punct": false, chosen or not:
+        # the setting is on again under its new name, and off only when turned off under it
+        from engine.config import Config
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "config.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"ctrl_punct": False}, f)
+            self.assertTrue(Config(path).ctrl_full_punct)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"ctrl_punct": False, "ctrl_full_punct": False}, f)
+            self.assertFalse(Config(path).ctrl_full_punct)
 
     def test_full_width_marks(self):
         c = self.c
@@ -3698,14 +3740,22 @@ class LongSentenceTest(unittest.TestCase):
         self.assertEqual(self.text(["ㄋㄧˇ"], user, lm=self.scorer), "妳")
 
     def test_tie_keeps_engine_choice(self):
-        saved = composer.LM_WEIGHT
-        composer.LM_WEIGHT = 0.0
+        saved = composer.LM_WEIGHT, composer.WORD_BONUS
+        composer.LM_WEIGHT = composer.WORD_BONUS = 0.0
         try:
             for sentence in self.FIXED + self.HELD_OUT[:10]:
                 rd = self.readings(sentence)
                 self.assertEqual(self.text(rd, lm=self.scorer), self.text(rd))
         finally:
-            composer.LM_WEIGHT = saved
+            composer.LM_WEIGHT, composer.WORD_BONUS = saved
+
+    def test_cohesive_words(self):
+        # a word whose characters meet far more often than by chance; not two common characters
+        # that are often side by side (我在 would win over 我再 in 我再看看)
+        for word in ("新舊", "選字", "有件事", "倒是", "評估"):
+            self.assertTrue(composer._cohesive(self.bigram, word), word)
+        for word in ("我在", "我再", "在家"):
+            self.assertFalse(composer._cohesive(self.bigram, word), word)
 
     def test_char_outside_syllable_list(self):
         import numpy as np

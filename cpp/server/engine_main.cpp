@@ -94,7 +94,7 @@ bool migrate_user_data() {
 Json cfg_json(const Config& c) {
     // what the IME needs to know of the settings
     Json o = Json::object();
-    for (const char* k : {"shift_toggle", "start_mode", "lookup", "game_mode", "space", "full_width", "ctrl_punct",
+    for (const char* k : {"shift_toggle", "start_mode", "lookup", "game_mode", "space", "full_width", "ctrl_full_punct",
                           "cand_font", "cand_font_size", "cand_per_row", "theme"})
         if (auto* v = c.values().get(k)) o[k] = *v;
     return o;
@@ -176,7 +176,7 @@ Json handle(Session& s, const Json& req) {
     if (op == "key") {
         handled = c.key(one_char(req.get("ch")), text("special"), flag("caps"));
     } else if (op == "ctrl_punct") {
-        // Ctrl + a punctuation key (the setting ctrl_punct): its full-width mark
+        // Ctrl + a punctuation key (the setting ctrl_full_punct): its full-width mark
         if (auto ch = one_char(req.get("ch"))) handled = c.type_full_punct(*ch);
     } else if (op == "pick_at") {
         // clicked in the spread-out list: that one, as Enter would take it

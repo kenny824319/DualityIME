@@ -209,7 +209,7 @@ public class Backend {
     // the settings the IME reads (engine/config.py has the same defaults)
     static readonly Dictionary<string, object> Defaults = new Dictionary<string, object> {
         { "autocorrect", false }, { "long_sentence", true }, { "punctuation", "half" }, { "space", "half" },
-        { "full_width", false }, { "ctrl_punct", false }, { "preview", "keys_hint" }, { "shift_toggle", true }, { "start_mode", "mixed" },
+        { "full_width", false }, { "ctrl_full_punct", true }, { "preview", "keys_hint" }, { "shift_toggle", true }, { "start_mode", "mixed" },
         { "completion", true }, { "remember_words", true }, { "forget_words", 0 }, { "forget_emails", 0 }, { "import_memory", 0 }, { "lookup", true },
         { "lookup_size", "small" }, { "game_mode", false }, { "cand_font", "Microsoft JhengHei UI" },
         { "cand_font_size", 18 }, { "cand_per_row", 1 }

@@ -94,7 +94,7 @@ public:
     // Returns true if the key was consumed.
     bool key(std::optional<char32_t> ch, const std::string& special = "", bool caps = false);
     bool type_literal(char32_t ch);
-    // Ctrl + a punctuation key (the setting ctrl_punct): its full-width mark, after the text
+    // Ctrl + a punctuation key (the setting ctrl_full_punct): its full-width mark, after the text
     // typed so far (Ctrl+, -> ，). Only the keys with a Chinese mark: false for the others,
     // letters and digits, which stay the app's shortcuts.
     bool type_full_punct(char32_t ch);

@@ -32,6 +32,11 @@ CASES = [
     ("w961o3g4vu04u4fm {HOME}{RIGHT}{RIGHT}{RIGHT}" + "{DOWN}" * 31 + "{ENTER}{ENTER}") * 2 + "w961o3g4vu04u4fm {ENTER}",
     "ok hi go su ios 5k ", "5ke; {HOME}{DOWN}3{END}e; 1u0 {ENTER}",  # (浙 picked for 5k: kept as more comes)
     "ji3y94u h4g4g4{ENTER}",  # 我再一次試試: 試試 only with 長句選字加強 (逝世 without)
+    # a word across the phrase sent last (怎麼 sent, then 辦: not 半), and 長句選字加強 keeping cohesive
+    # words whole (新舊, 選字, 有件事倒是) but not two common characters (我在 for 我再看看)
+    "yk3ai7{ENTER}104{ENTER}1j4xu3vu;3yk3ai7{ENTER}104{ENTER}",
+    "1j6ul4sj/4gk6ai7vup ru.4rul31p3{ENTER}vm03y4{ENTER}ji3y94vm03y4{ENTER}ji3y94d04d04{ENTER}",
+    "xu/4j94u.3ru04g42l4g4ul4su3qu/6ej u vu84{ENTER}",
     # a 1-2 letter word after English that starts a common word is zhuyin (B 因為, 為 typed ㄨㄟˊ too,
     # thank 一個); one that starts a less common one stays English (look up 此操作, look up 還是)
     "cl3 B up jo6su3g4{ENTER}", "hello up jo4{ENTER}", "thank u ek4{ENTER}", "look up h3hl yji4{ENTER}",

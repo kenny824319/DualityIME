@@ -106,7 +106,7 @@ private:
         bool game_mode = false;  // 遊戲模式: in games, keys go straight through
         std::string space = "half";
         bool full_width = false;
-        bool ctrl_punct = false;  // Ctrl + a punctuation key types its full-width mark
+        bool ctrl_punct = true;  // Ctrl + a punctuation key types its full-width mark (the setting ctrl_full_punct)
         std::wstring cand_font = L"Microsoft JhengHei UI";
         int cand_font_size = 18;
         int cand_per_row = 1;
@@ -115,7 +115,7 @@ private:
     bool test_key_down(ITfContext* ctx, WPARAM vk, LPARAM lp);
     bool no_text_field(ITfContext* ctx);
     bool password_field(ITfContext* ctx);
-    bool ctrl_punct_key(ITfContext* ctx, WPARAM vk, LPARAM lp);  // Ctrl + a key the setting ctrl_punct makes full width
+    bool ctrl_punct_key(ITfContext* ctx, WPARAM vk, LPARAM lp);  // Ctrl + a key the setting ctrl_full_punct makes full width
     bool key_down(ITfContext* ctx, WPARAM vk, LPARAM lp);
     void key_up(WPARAM vk);
     bool wants_undo(WPARAM vk) const;
