@@ -39,6 +39,7 @@ const ustr FULL_SPACE = U"　";
 
 constexpr double COST_PARTIAL = 0.2;
 constexpr double COST_SPACE = 0.3;
+constexpr double SHORT_EN_WORD = -3.2;  // a 1-2 letter word after English is zhuyin if it starts a word this common (up 因為)
 constexpr double COST_EN_CHAR = 1.0;
 constexpr double COST_PUNCT_KEY = 0.5;
 constexpr double COST_FORCED_TOKEN = -100.0;
@@ -360,11 +361,22 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
     std::string_view rv0(raw);
     // the syllable ending at j and the next one make a known word (sugatau,4au04: 頁面,
     // so sugata + 頁, not sugat + 滅)
-    auto starts_phrase = [&](size_t j, const ustr& reading) {
+    // common: only a word scored at least this, also one the dictionary reads with one of the tones
+    // other (因為 is ㄧㄣ ㄨㄟˋ there; typed ㄨㄟˊ)
+    auto starts_phrase = [&](size_t j, const ustr& reading, std::optional<double> common = std::nullopt) {
         if (!lexicon) return false;
         for (size_t k = j + 2; k <= std::min(j + MAX_SYL_KEYS, n); ++k) {
             auto nxt = table.parse_syllable(rv0.substr(j, k - j));
-            if (nxt && !lexicon->lookup({reading, nxt->first}).empty()) return true;
+            if (!nxt) continue;
+            if (!common) {
+                if (!lexicon->lookup({reading, nxt->first}).empty()) return true;
+                continue;
+            }
+            for (auto& [p, s] : lexicon->lookup({reading, nxt->first}))
+                if (s >= *common) return true;
+            for (auto& [r, w] : lexicon->other_tones_words({reading, nxt->first}))
+                for (auto& [p, s] : lexicon->entries().at(*r))
+                    if (p == w && s >= *common) return true;
         }
         return false;
     };
@@ -544,7 +556,14 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
                            all_alpha(strip(best[i].tok.raw)));
         for (size_t j = i + 1; j <= end; ++j) {
             std::string piece = raw.substr(i, j - i);
-            double cost = english_piece_cost(piece, english, learned, after_word, mine,
+            bool word_after = after_word;
+            if (after_word && j == end && sp != std::string::npos && j - i <= 2) {
+                // (a 1-2 letter word after English that, read as zhuyin with its space, starts a
+                // word with the next syllable: B up jo6 is B 因為, not B up 為; look up 還是 stays)
+                auto zh = table.parse_syllable(rv0.substr(i, j + 1 - i));
+                if (zh && zh->second && starts_phrase(j + 1, zh->first, SHORT_EN_WORD)) word_after = false;
+            }
+            double cost = english_piece_cost(piece, english, learned, word_after, mine,
                                              contains(exact, ii) ? none : codes) + bonus + crosses(i, j);
             if (j == end && sp != std::string::npos)
                 offer(i, j + 1, cost, Token{Kind::En, piece + " ", U(piece + " "), ii});
@@ -1288,6 +1307,27 @@ double lm_term(const LmScorer& lm, const ustr& text, const std::vector<ustr>& re
 
 }  // namespace
 
+// What the user taught of the words inside phrase (起來 learned, inside 講起來): the best sum of the
+// bonuses of shorter words of 2+ characters in it, at their own readings and not overlapping, less
+// what phrase carries itself. Split, those words carry their bonus; whole, the word did not, so a
+// word learned once cut every longer one around it (講｜起來), and the character left alone was
+// chosen without the word (獎 picked once: 獎起來).
+static double inherited_bonus(const std::vector<ustr>& rds, const ustr& phrase, const UserModel& user) {
+    const int n = static_cast<int>(phrase.size());
+    if (n < 3 || n != static_cast<int>(rds.size())) return 0.0;
+    std::vector<double> best(n + 1, 0.0);
+    for (int b = 1; b <= n; ++b) {
+        best[b] = best[b - 1];
+        for (int a = 0; a < b - 1; ++a) {
+            if (b - a < n) {
+                double w = user.bonus(join(std::vector<ustr>(rds.begin() + a, rds.begin() + b), U'-'), phrase.substr(a, b - a));
+                if (w != 0.0 && best[a] + w > best[b]) best[b] = best[a] + w;
+            }
+        }
+    }
+    return std::max(0.0, best[n] - user.bonus(join(rds, U'-'), phrase));
+}
+
 static Search search(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user,
                      const std::map<std::pair<int, int>, ustr>& overrides, const BigramModel* bigram,
                      const std::optional<ustr>& prev_word, std::optional<bool> alone_ = std::nullopt) {
@@ -1333,6 +1373,10 @@ static Search search(const std::vector<ustr>& readings, const Lexicon& lexicon, 
                     if (has) kept.emplace_back(p, s + 1000.0 * static_cast<double>(inside.size()));
                 }
                 cands = std::move(kept);
+            } else if (l >= 3 && user) {
+                std::vector<ustr> rds(readings.begin() + i, readings.begin() + i + l);
+                for (auto& [p, s] : cands) s = s + inherited_bonus(rds, p, *user);
+                std::stable_sort(cands.begin(), cands.end(), [](const Scored& a, const Scored& b) { return -a.second < -b.second; });
             }
             if (!cands.empty() && l == 1 && user && ov == overrides.end()) {
                 // a place left to one character: the corpus's score of each, then what the user

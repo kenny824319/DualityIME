@@ -66,6 +66,7 @@ def english_words_in(text):
 
 COST_PARTIAL = 0.2
 COST_SPACE = 0.3
+SHORT_EN_WORD = -3.2  # a 1-2 letter word after English is zhuyin if it starts a word this common (up 因為)
 COST_EN_CHAR = 1.0
 COST_PUNCT_KEY = 0.5    # "," as ， rather than the start of a zhuyin syllable
 COST_FORCED_TOKEN = -100.0  # the user picked "English/number" for these keys
@@ -189,14 +190,24 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
         zhuyin to start (1 + 03 = 1俺, not 103 or 版), or a syllable picked to end."""
         return -COST_FORCED_TOKEN if any(i < c < j for c in cuts) else 0.0
 
-    def starts_phrase(j, reading):
+    def starts_phrase(j, reading, common=None):
         """The syllable ending at j and the next one make a known word (sugatau,4au04:
-        頁面, so sugata + 頁, not sugat + 滅)."""
+        頁面, so sugata + 頁, not sugat + 滅). common: only a word scored at least this, also
+        one the dictionary reads with one of the tones other (因為 is ㄧㄣ ㄨㄟˋ there; typed ㄨㄟˊ)."""
         if lexicon is None:
             return False
         for k in range(j + 2, min(j + MAX_SYL_KEYS, n) + 1):
             nxt = table.parse_syllable(raw[j:k])
-            if nxt and lexicon.lookup((reading, nxt[0])):
+            if not nxt:
+                continue
+            if common is None:
+                if lexicon.lookup((reading, nxt[0])):
+                    return True
+                continue
+            if any(s >= common for _, s in lexicon.lookup((reading, nxt[0]))):
+                return True
+            if any(s >= common for r, w in lexicon.other_tones_words((reading, nxt[0]))
+                   for p, s in lexicon.entries[r] if p == w):
                 return True
         return False
 
@@ -336,7 +347,14 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
             prev[1][-1].raw.endswith(" ") and prev[1][-1].raw.strip().isalpha()
         for j in range(i + 1, end + 1):
             piece = raw[i:j]
-            cost = english_piece_cost(piece, english, learned, after_word, mine, () if i in exact else codes) + \
+            word_after = after_word
+            if after_word and j == end and sp >= 0 and j - i <= 2:
+                # (a 1-2 letter word after English that, read as zhuyin with its space, starts a
+                # word with the next syllable: B up jo6 is B 因為, not B up 為; look up 還是 stays)
+                zh = table.parse_syllable(raw[i:j + 1])
+                if zh and zh[1] and starts_phrase(j + 1, zh[0], SHORT_EN_WORD):
+                    word_after = False
+            cost = english_piece_cost(piece, english, learned, word_after, mine, () if i in exact else codes) + \
                 bonus + crosses(i, j)
             if j == end and sp >= 0:
                 offer(j + 1, cost, prev, Token("en", piece + " ", piece + " ", i))
@@ -935,6 +953,26 @@ def run_score(readings, lexicon, user, bigram):
     return max(v[0] for v in ends.values()) if ends else None
 
 
+def inherited_bonus(rds, phrase, user):
+    """What the user taught of the words inside phrase (起來 learned, inside 講起來): the best sum
+    of the bonuses of shorter words of 2+ characters in it, at their own readings and not
+    overlapping, less what phrase carries itself. Split, those words carry their bonus; whole, the
+    word did not, so a word learned once cut every longer one around it (講｜起來), and the
+    character left alone was chosen without the word (獎 picked once: 獎起來)."""
+    n = len(phrase)
+    if n < 3 or n != len(rds):
+        return 0.0
+    best = [0.0] * (n + 1)
+    for b in range(1, n + 1):
+        best[b] = best[b - 1]
+        for a in range(0, b - 1):
+            if b - a < n:
+                w = user.bonus("-".join(rds[a:b]), phrase[a:b])
+                if w and best[a] + w > best[b]:
+                    best[b] = best[a] + w
+    return max(0.0, best[n] - user.bonus("-".join(rds), phrase))
+
+
 def _search(readings, lexicon, user, overrides, bigram, prev_word, alone=None):
     """convert's beam search: ({last phrase: (score, path)} at the end, options, full). alone: the
     syllable is all that is typed (None: a run of one syllable)."""
@@ -963,6 +1001,9 @@ def _search(readings, lexicon, user, overrides, bigram, prev_word, alone=None):
             elif inside:
                 cands = [(p, s + 1000.0 * len(inside)) for p, s in cands
                          if len(p) == l and all(p[a - i:a - i + b] == overrides[(a, b)] for a, b in inside)]
+            elif l >= 3 and user:
+                cands = sorted(((p, s + inherited_bonus(readings[i:i + l], p, user)) for p, s in cands),
+                               key=lambda x: -x[1])
             if cands and l == 1 and user and span not in overrides:
                 # a place left to one character: the corpus's score of each, then what the user
                 # taught of it - typed on its own the whole bonus, in a sentence place_weight

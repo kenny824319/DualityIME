@@ -3,6 +3,10 @@
 # typing and Enter
 su3cl3{ENTER} => 你好
 ji3m/4googlen. {ENTER} => 我用google搜
+# a 1-2 letter word after English that starts a common word is zhuyin (為 typed ㄨㄟˊ too); look up stays
+# (before up is picked as English below: then it is English everywhere)
+cl3 B up jo6su3g4{ENTER} => 好 B 因為你是
+look up c96g4{ENTER} => look up 還是
 # still being typed: the text is in the document already, underlined
 su3cl3 => 你好
 # candidates (like the ASUS IME): at the end the last character, before 你 the phrases from there

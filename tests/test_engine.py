@@ -167,6 +167,15 @@ class MixedEnglishTest(Base):
     def test_english_context_makes_ambiguous_word_english(self):
         self.assertEqual(self.type("look up "), "look up ")
 
+    def test_short_word_after_english_that_starts_a_common_word_is_zhuyin(self):
+        # (reported 2026-11-03: 好 B 因為你是 came out 好 B up 為你是; 為 typed ㄨㄟˊ, the
+        # dictionary's 因為 is ㄨㄟˋ)
+        for raw, expected in (("cl3 B up jo4su3g4", "好 B 因為你是"), ("hello up jo4", "hello 因為"),
+                              ("look up " + keys("ㄘˇ ㄘㄠ ㄗㄨㄛˋ"), "look up 此操作"),  # (因此: not that common)
+                              ("look up " + keys("ㄏㄞˊ ㄕˋ"), "look up 還是"), ("look up ", "look up ")):
+            with self.subTest(raw=raw):
+                self.assertEqual(self.type(raw), expected)
+
     def test_shifted_punctuation(self):
         self.assertEqual(self.type(keys("ㄏㄠˇ") + "!"), "好!")
         self.c.config.set(punctuation="full")
@@ -1250,7 +1259,32 @@ class KnownHardTest(Base):
 
     @unittest.expectedFailure
     def test_try_vs_pass_away(self):
+        self.c.config.set(long_sentence=False)
+        self.c.settings_changed()
         self.assertEqual(self.type(keys("ㄨㄛˇ ㄗㄞˋ ㄧ ㄘˋ ㄕˋ ㄕˋ")), "我再一次試試")
+
+
+class KnownHardWithLongSentenceTest(Base):
+    """What 長句選字加強 gets right of KnownHardTest: keep it right (it needs data/lm.bin and numpy)."""
+
+    def setUp(self):
+        super().setUp()
+        from engine import lm
+        self.assertIsNotNone(lm.shared(), "data/lm.bin or numpy missing")
+        self.c.config.set(long_sentence=True)
+        self.c.settings_changed()
+
+    def tearDown(self):
+        self.c.config.set(long_sentence=False)
+        self.c.settings_changed()
+        super().tearDown()
+
+    def test_try_vs_pass_away(self):
+        self.assertEqual(self.type(keys("ㄨㄛˇ ㄗㄞˋ ㄧ ㄘˋ ㄕˋ ㄕˋ")), "我再一次試試")
+
+    def test_because_typed_with_a_second_tone_after_english(self):
+        # (as the user typed it, 為 ㄨㄟˊ: 因 + 為 is the model's; without it 音為, English or not)
+        self.assertEqual(self.type("cl3 B up jo6su3g4"), "好 B 因為你是")
 
 
 class PinnedPhraseTest(Base):
@@ -1336,14 +1370,38 @@ class LearnedSinglesTest(Base):
         self.learn("ㄒㄧㄢˋ-ㄗㄞˋ", "現在")
         self.assertEqual(self.type(keys("ㄒㄧㄢˋ ㄗㄞˋ")), "現在")
 
-    @unittest.expectedFailure
     def test_a_learned_single_and_a_learned_word_do_not_outvote_a_longer_word(self):
-        # OPEN (docs/status.md, 選字與校正 2; reported 2026-11-02): 獎 picked once alone and 起來
-        # picked once as a word make 講起來 獎起來; either one alone does not
+        # (reported 2026-11-02) 獎 picked once alone and 起來 picked once as a word made 講起來
+        # 獎起來: 起來 learned cut 講起來 into 講|起來, and the character left alone was 獎
         self.learn("ㄐㄧㄤˇ", "獎")
         self.learn("ㄑㄧˇ-ㄌㄞˊ", "起來")
         self.assertEqual(self.type(keys("ㄐㄧㄤˇ ㄑㄧˇ ㄌㄞˊ ㄨㄛˇ ㄧㄝˇ ㄐㄩㄝˊ ㄉㄜ˙ ㄎㄚˇ ㄎㄚˇ")),
                          "講起來我也覺得卡卡")
+
+    def test_a_longer_word_carries_the_learned_words_inside_it(self):
+        from engine.composer import inherited_bonus
+        u = self.c.user
+        self.assertEqual(inherited_bonus(["ㄐㄧㄤˇ", "ㄑㄧˇ", "ㄌㄞˊ"], "講起來", u), 0.0)
+        self.learn("ㄑㄧˇ-ㄌㄞˊ", "起來")
+        self.assertEqual(inherited_bonus(["ㄐㄧㄤˇ", "ㄑㄧˇ", "ㄌㄞˊ"], "講起來", u), u.bonus("ㄑㄧˇ-ㄌㄞˊ", "起來"))
+        # (not the same characters there: nothing)
+        self.assertEqual(inherited_bonus(["ㄎㄞ", "ㄑㄧˇ", "ㄌㄞˊ"], "開啟來", u), 0.0)
+        # two learned words side by side: both, as the split would carry both
+        self.learn("ㄒㄧㄢˋ-ㄗㄞˋ", "現在")
+        self.learn("ㄕˊ-ㄐㄧㄢ", "時間")
+        self.assertAlmostEqual(inherited_bonus(["ㄒㄧㄢˋ", "ㄗㄞˋ", "ㄕˊ", "ㄐㄧㄢ"], "現在時間", u),
+                               u.bonus("ㄒㄧㄢˋ-ㄗㄞˋ", "現在") + u.bonus("ㄕˊ-ㄐㄧㄢ", "時間"))
+        # the longer word learned itself: only what the words inside carry more
+        self.learn("ㄐㄧㄤˇ-ㄑㄧˇ-ㄌㄞˊ", "講起來")
+        self.assertEqual(inherited_bonus(["ㄐㄧㄤˇ", "ㄑㄧˇ", "ㄌㄞˊ"], "講起來", u), 0.0)
+
+    def test_a_learned_word_still_beats_a_longer_word_without_it(self):
+        # 起來 picked where 開啟 + 來 came: still 開起來 (開啟來 has no 起來 in it)
+        self.learn("ㄑㄧˇ-ㄌㄞˊ", "起來")
+        for zhuyin, expected in (("ㄎㄞ ㄑㄧˇ ㄌㄞˊ", "開起來"), ("ㄐㄧㄤˇ ㄑㄧˇ ㄌㄞˊ", "講起來"),
+                                 ("ㄒㄧㄤˇ ㄑㄧˇ ㄌㄞˊ", "想起來")):
+            with self.subTest(expected=expected):
+                self.assertEqual(self.type(keys(zhuyin)), expected)
 
     def test_learned_singles_do_not_split_a_dictionary_word(self):
         self.learn("ㄨˋ", "務")
