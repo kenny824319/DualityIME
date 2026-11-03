@@ -120,6 +120,16 @@ function Get-ReleaseNotes {
     return ($lines -join "`n")
 }
 
+# The program to run: the one found on PATH, else the usual install path if it is there, else ""
+# (not installed: the caller stops, instead of running a path that is not there and reading the
+# exit code the command before left - 3.1.3 was reported published with no gh on the computer)
+function Resolve-Command {
+    param([string]$OnPath, [string]$Usual)
+    if ($OnPath) { return $OnPath }
+    if ($Usual -and (Test-Path -LiteralPath $Usual)) { return $Usual }
+    return ""
+}
+
 # ---- everything below runs only when the script is run, not when a test dot-sources it ----
 if ($MyInvocation.InvocationName -eq ".") { return }
 
@@ -127,8 +137,7 @@ if ($MyInvocation.InvocationName -eq ".") { return }
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
-$gh = (Get-Command gh -ErrorAction SilentlyContinue).Source
-if (-not $gh) { $gh = "C:\Program Files\GitHub CLI\gh.exe" }
+$gh = Resolve-Command -OnPath (Get-Command gh -ErrorAction SilentlyContinue).Source -Usual "C:\Program Files\GitHub CLI\gh.exe"
 
 function Stop-Release($msg) { Write-Host "STOP: $msg"; exit 1 }
 
@@ -143,6 +152,8 @@ function Invoke-Git {
 function Invoke-Change([string]$Exe, [string[]]$Arguments, [string]$FailMessage) {
     $line = "$Exe $($Arguments -join ' ')"
     if ($WhatIf) { Write-Host "[WhatIf] $line"; return }
+    # (a program that is not there sets no exit code: the one before it would read as success)
+    if (-not (Get-Command $Exe -ErrorAction SilentlyContinue)) { Stop-Release "$Exe not found; $line was not run. $FailMessage" }
     Write-Host "> $line"
     & $Exe @Arguments
     if ($LASTEXITCODE -ne 0) {
@@ -244,6 +255,11 @@ if ($Phase -eq "prepare") {
 }
 
 # ---- publish ----
+if (-not $gh) {
+    $ghHint = "GitHub CLI (gh) is not installed: winget install GitHub.cli, then gh auth login"
+    if ($WhatIf) { Write-Host "[WhatIf] note: $ghHint; a real run would stop here"; $gh = "gh" }
+    else { Stop-Release $ghHint }
+}
 if ($WhatIf) { Write-Host "[WhatIf] git fetch --tags" } else { Invoke-Git fetch --tags | Out-Null }
 $head = @(Invoke-Git rev-parse HEAD)[0]
 $remote = & git rev-parse -q --verify "refs/remotes/origin/$branch"
