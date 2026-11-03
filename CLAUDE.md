@@ -164,6 +164,7 @@ is dropped.
 | A Release is of exactly what was checked and pushed | release.ps1 (prepare runs check.py after the version commit; publish needs HEAD = `origin/<branch>`) |
 | Releasing to `main` is the user's call | guard_bash asks for `git merge`; otherwise nothing |
 | A push is of exactly what passed the full check | push_audit.py (check.py records the tree; guard_bash runs the audit before every push) |
+| The full check is of one state: nothing is edited while it runs | check.py (compares the tree at start and end; fails and records nothing if they differ) |
 | Pushed code adds no debug logging, key recording, network or new kind of file | push_audit.py (exceptions: `.claude/push-audit-allow.txt`, the user's) |
 | The IME's debug log is off when pushing | push_audit.py (`%TEMP%\dualityime_debug.log` must not exist) |
 | The push rules are the user's to change | guard_paths (`.claude/hooks/`, `push_audit.py`, `push-audit-allow.txt`, `last-check.json`) |
