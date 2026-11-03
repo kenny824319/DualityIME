@@ -795,6 +795,26 @@ def transition(bigram, prev, phrase, unigram):
     return log10_add(LOG_BIGRAM_WEIGHT + b, UNSEEN_PAIR + unigram)
 
 
+def context_transition(bigram, prev, phrase, unigram):
+    """transition() from the phrase sent last (prev_word) to the first phrase of the run. The corpus
+    was cut into the dictionary's words, so a pair that makes one of them was never counted as a
+    pair: 怎麼 sent, then 辦 alone lost to 半 (怎麼半天 was counted, 怎麼辦 only as one word). Such
+    a pair counts as count(怎麼辦) / count(怎麼) when that is more than the pair's own count. Only
+    at the start of a run: inside one, the whole word is a path of its own."""
+    if bigram is None or not prev:
+        return unigram
+    b = bigram.logp(prev, phrase)
+    if len(prev) + len(phrase) <= MAX_PHRASE_LEN:
+        whole, part = bigram.unigram(prev + phrase), bigram.unigram(prev)
+        if whole is not None and part is not None:
+            share = min(0.0, whole - part)
+            if b is None or share > b:
+                b = share
+    if b is None:
+        return UNSEEN_PAIR + unigram
+    return log10_add(LOG_BIGRAM_WEIGHT + b, UNSEEN_PAIR + unigram)
+
+
 def log10_add(x, y):
     """log10(10**x + 10**y) without computing 10**x: a phrase the user picked
     carries a +1000 bonus, and 10**1000 does not fit in a float."""
@@ -847,6 +867,10 @@ def single_scores(reading, scored, lexicon, user, bigram):
 
 
 LM_WEIGHT = 0.5    # 長句選字加強: log10 of the model's probability counts this much against the engine's score
+WORD_BONUS = 0.4   # ...and each character inside a cohesive word this much: the model reads characters,
+                   # and split 新舊 into 心就 (decisions.md, 2026-11-03)
+WORD_COHESION = 1.0  # cohesive: log10 count(word) - the sum of its characters' (新舊 1.74, 選字 1.13; not
+                     # 我在 0.39, two common characters that meet often: 我再看看 stays)
 LN10 = 2.302585092994046  # (written out: the C++ engine uses the same digits)
 NBEST_K = 5        # n-best: paths kept per (position, last phrase)
 NBEST_N = 10       # ...and distinct texts the model scores
@@ -880,8 +904,31 @@ def _taught(key, phrase, user):
     return user is not None and (phrase in user.custom.get(key, ()) or user.learned(key, phrase))
 
 
+def _cohesive(bigram, phrase):
+    """phrase occurs in the corpus far more often than its characters would meet by chance
+    (WORD_COHESION); a phrase or character the corpus never counted is not."""
+    whole = bigram.unigram(phrase)
+    if whole is None:
+        return False
+    chars = 0.0
+    for ch in phrase:
+        u = bigram.unigram(ch)
+        if u is None:
+            return False
+        chars += u
+    return whole - chars >= WORD_COHESION
+
+
+def _word_chars(path, bigram):
+    """Characters of the path inside cohesive phrases of 2+ syllables (WORD_BONUS)."""
+    if bigram is None:
+        return 0
+    return sum(l for _, l, p in path if l > 1 and _cohesive(bigram, p))
+
+
 def _with_lm(score, path, readings, lexicon, user, overrides, bigram, prev_word, options, full, lm):
-    """長句選字加強: the best of the n-best by score + LM_WEIGHT * the model's log10 probability.
+    """長句選字加強: the best of the n-best by score + LM_WEIGHT * the model's log10 probability
+    + WORD_BONUS for each character inside a cohesive word.
     Each text as repick makes it (同音字偏好 still counts, and the model judges what is shown); the
     engine's own choice comes first and only a strictly better one replaces it. What the user
     taught is never changed: picks are in every path already (+1000 in options), and a word of
@@ -894,7 +941,8 @@ def _with_lm(score, path, readings, lexicon, user, overrides, bigram, prev_word,
     # (and a word around a pick: 適時 for 時 picked in 事實, which 事 + 時 would carry the pick too)
     kept = [(i, l, p) for i, l, p in path if l > 1 and (_taught("-".join(readings[i:i + l]), p, user)
                                                          or any(a < i + l and i < a + b for a, b in overrides))]
-    best, best_score = path, score + LM_WEIGHT * (lm.text_score(text, readings) / (1024 * LN10))
+    best, best_score = path, score + LM_WEIGHT * (lm.text_score(text, readings) / (1024 * LN10)) + \
+        WORD_BONUS * _word_chars(path, bigram)
     seen = {text}
     for s, hyp in nbest(readings, options, bigram, prev_word, NBEST_K, NBEST_N):
         hyp = repick(hyp, readings, lexicon, options, full, user, bigram, prev_word, overrides, True)
@@ -904,7 +952,7 @@ def _with_lm(score, path, readings, lexicon, user, overrides, bigram, prev_word,
         seen.add(text)
         if len(text) != n or any(text[i:i + l] != p for i, l, p in kept):
             continue
-        s = s + LM_WEIGHT * (lm.text_score(text, readings) / (1024 * LN10))
+        s = s + LM_WEIGHT * (lm.text_score(text, readings) / (1024 * LN10)) + WORD_BONUS * _word_chars(hyp, bigram)
         if s > best_score:
             best, best_score = hyp, s
     return best
@@ -929,7 +977,7 @@ def nbest(readings, options, bigram, prev_word, k, n):
             for phrase, unigram in cands:
                 lst = nxt.setdefault(phrase, [])
                 for prev, hyps in beam:
-                    t = transition(bigram, prev, phrase, unigram)
+                    t = (context_transition if i == 0 else transition)(bigram, prev, phrase, unigram)
                     for score, path in hyps:
                         lst.append((score + t, path + [(i, l, phrase)]))
                 lst.sort(key=lambda h: -h[0])
@@ -1030,7 +1078,7 @@ def _search(readings, lexicon, user, overrides, bigram, prev_word, alone=None):
             nxt = states[i + l]
             for phrase, unigram in cands:
                 for prev, (score, path) in beam:
-                    c = score + transition(bigram, prev, phrase, unigram)
+                    c = score + (context_transition if i == 0 else transition)(bigram, prev, phrase, unigram)
                     if phrase not in nxt or c > nxt[phrase][0]:
                         nxt[phrase] = (c, path + [(i, l, phrase)])
     return states[n], options, full
@@ -1175,7 +1223,7 @@ def repick(path, readings, lexicon, options, full, user, bigram, prev_word, over
             after = (nphrase, next(u for p, u in options[(ni, nl)] if p == nphrase))
         best, best_score = phrase, None
         for p, u in cands:
-            score = transition(bigram, prev, p, u)
+            score = (context_transition if k == 0 else transition)(bigram, prev, p, u)
             if after:
                 score += transition(bigram, p, after[0], after[1])
             if best_score is None or score > best_score:
@@ -2161,7 +2209,7 @@ class Composer:
         self.commit = before + sym
 
     def type_full_punct(self, ch):
-        """Ctrl + a punctuation key (the setting ctrl_punct): its full-width mark, after the
+        """Ctrl + a punctuation key (the setting ctrl_full_punct): its full-width mark, after the
         text typed so far (Ctrl+, -> ，). Only the keys with a Chinese mark (PUNCT_KEYS, PUNCT):
         others, and letters and digits, stay the app's shortcuts (False)."""
         sym = PUNCT_KEYS.get(ch) or PUNCT.get(ch)

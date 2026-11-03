@@ -52,7 +52,7 @@ def main(user_path, script_path, config_path=None):
                     extra = "1" if c.key("{", caps=caps) else "0"
                 elif name[0] == "#":
                     extra = "1" if c.type_literal(name[1]) else "0"
-                elif name[0] == "^":  # Ctrl + a key: the full-width mark (setting ctrl_punct)
+                elif name[0] == "^":  # Ctrl + a key: the full-width mark (setting ctrl_full_punct)
                     extra = "1" if c.type_full_punct(name[1]) else "0"
                 else:
                     extra = "1" if c.key(special=name) else "0"

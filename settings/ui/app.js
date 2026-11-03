@@ -331,7 +331,7 @@ function pageTyping() {
     card(
       row("標點符號字元寬度", "", width),
       row("全形英數模式", "英數、標點與空白皆輸出為全形（如 ＡＢＣ１２３）。", cfgToggle("full_width", "全形英數模式")),
-      row("Ctrl + 標點打全形", "按住 Ctrl 再按標點鍵即輸出全形標點。開啟後，程式中相同組合的快捷鍵在中英混打時會失效", cfgToggle("ctrl_punct", "Ctrl + 標點打全形")),
+      row("Ctrl + 標點打全形", "按住 Ctrl 再按標點鍵即輸出全形標點。開啟後，程式中相同組合的快捷鍵在中英混打時會失效", cfgToggle("ctrl_full_punct", "Ctrl + 標點打全形")),
       row("注音自動校正",
         h("span", {}, "按到旁邊的鍵、注音順序打錯、同一個鍵按兩次或漏打聲調時，看整句自動改成最可能的字。可透過 ↓ 選回原本打的。",
           h("span", { class: "row-warn" }, "注意：偶爾會把打對的字或數字也改掉。")),
