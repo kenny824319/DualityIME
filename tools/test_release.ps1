@@ -79,5 +79,12 @@ $kept = @(" * 問題修正。使用說明寫錯了", " * 問題修正。實機�
     " * 選字學習：x", " + 新增設定：y")
 Check "notes user items" (Get-ReleaseNotes -Version "3.1.2" -Messages @((@($internal[0]) + $kept + @($internal[1])) -join "`n")) ($kept -join "`n")
 
+# the program to run: on PATH, else the usual install path if it is there, else "" (not installed:
+# publish stops; 3.1.3 was reported published with no gh on the computer)
+Check "command on path" (Resolve-Command -OnPath "C:\x\gh.exe" -Usual "C:\nowhere\gh.exe") "C:\x\gh.exe"
+Check "command usual path" (Resolve-Command -OnPath "" -Usual $script) $script
+Check "command missing" (Resolve-Command -OnPath "" -Usual "C:\nowhere\gh.exe") ""
+Check "command missing, no usual" (Resolve-Command -OnPath "" -Usual "") ""
+
 if ($fail -gt 0) { Write-Host "$fail FAILED"; exit 1 }
 Write-Host "ALL PASSED"

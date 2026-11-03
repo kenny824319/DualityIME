@@ -10,3 +10,4 @@
 - [Tokenizer input changes mid-composition](project_tokenizer_input_mid_composition.md) — commit_head's learn_word / reload_custom / day rollover re-number picks
 - [ps -File array params](project_ps_file_array_params.md) — `powershell -File x.ps1 -Trailers a,b` gives one string; a 2nd value binds to $Repo
 - [Entry points bypass key()](project_entry_points_bypass_key.md) — type_literal etc. skip the bar dispatch; caret from ↑-at-end is fake (我5吧, bar stays)
+- [PS missing command exit code](project_ps_missing_command_exitcode.md) — `& $missing` keeps the previous $LASTEXITCODE; Get-Command first, keep recovery msg
