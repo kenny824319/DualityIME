@@ -20,9 +20,8 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Speech.Synthesis;
 using System.Text;
+using System.Threading;
 using System.Web.Script.Serialization;
-using System.Windows.Automation;
-using System.Windows.Automation.Text;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
@@ -39,7 +38,29 @@ static class Lookup {
         if (args.Length >= 2 && args[0] == "--add-word") return Print(AddWord(args[1], Zhuyin(args[1])));
         if (args.Length >= 3 && args[0] == "--add-shortcut") return Print(AddShortcut(args[1], args[2]));
         if (args.Length >= 2 && args[0] == "--text") text = args[1];
-        if (text == null) text = SelectedText();
+        // one window at a time: a double Ctrl tap could start several of us at once. Made by a
+        // lookup.exe running as administrator (started from such a program), the mutex and the event
+        // are its own: then this one just opens its window, without the one-window rule
+        bool first = true;
+        try {
+            single = new Mutex(true, @"Local\DualityIME.Lookup", out first);
+            CloseRequest = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\DualityIME.Lookup.Close");
+        } catch (Exception) {
+            first = true;
+            CloseRequest = null;
+        }
+        if (!first) {
+            // another one: a window of ours left open (behind another program, say) is asked to close
+            // and this takes its place; one still starting drops the request when its window comes
+            // up (LookupWindow.OnShown) and keeps its turn, as does one asking for a 映射詞彙 code.
+            // (Asked through an event of our own: its window has a hidden owner, so CloseMainWindow
+            // cannot find it)
+            CloseRequest.Set();
+            // (3 s: closing while it reads aloud, then the process exiting, can take more than a second)
+            try { first = single.WaitOne(3000); } catch (AbandonedMutexException) { first = true; }
+        }
+        if (!first) return 0;
+        if (text == null) text = SelectedTextWithin(2000);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         Application.Run(new LookupWindow((text ?? "").Trim()));
@@ -53,21 +74,52 @@ static class Lookup {
         return 0;
     }
 
+    static Mutex single;  // (held for the whole run)
+    // set by a lookup started while this one's window is up: the window closes (null: none to share)
+    public static EventWaitHandle CloseRequest;
+
     // ---- the selection ----------------------------------------------------------------
+    // Through UI Automation's own COM interface: System.Windows.Automation's TextPatternRange.GetText
+    // crashes inside UIAutomationCore.dll (7.2.22621.4249: an access violation no catch stops) in
+    // every program, so the window never came up (2026-11-04).
+    const int UIA_TextPatternId = 10014;
+    static readonly Guid CUIAutomation = new Guid("ff48dba4-60ef-4201-aa87-54103eef594e");
+
+    // On a thread of its own in the MTA (Microsoft's advice for UI Automation clients: not from a UI
+    // thread), and no longer than ms: a program slow to answer gives "沒有選取文字" instead of a
+    // lookup.exe left waiting with the one-window mutex
+    static string SelectedTextWithin(int ms) {
+        string found = null;
+        var t = new Thread(() => { found = SelectedText(); });
+        t.IsBackground = true;  // (still waiting when the window closes: it does not keep us running)
+        t.SetApartmentState(ApartmentState.MTA);
+        t.Start();
+        return t.Join(ms) ? found : null;
+    }
+
     static string SelectedText() {
         try {
-            AutomationElement e = AutomationElement.FocusedElement;
-            // the focused element, or a parent that holds the text (a document around a caret)
-            for (int up = 0; e != null && up < 4; up++) {
+            var uia = (IUIAutomation)Activator.CreateInstance(Type.GetTypeFromCLSID(CUIAutomation));
+            IUIAutomationElement e;
+            IUIAutomationTreeWalker walker;
+            if (uia.GetFocusedElement(out e) != 0 || uia.get_RawViewWalker(out walker) != 0) return null;
+            // the focused element, or a parent that holds the selection: in Chrome a heading of a GitHub
+            // README is 7 levels under the document that has it, and the control view skips the
+            // document (2026-11-04); the first one with selected text
+            for (int up = 0; e != null && up < 20; up++) {
                 object pattern;
-                if (e.TryGetCurrentPattern(TextPattern.Pattern, out pattern)) {
-                    TextPatternRange[] ranges = ((TextPattern)pattern).GetSelection();
-                    if (ranges.Length > 0) {
-                        string s = ranges[0].GetText(MaxText + 1);
-                        if (!string.IsNullOrWhiteSpace(s)) return s;
-                    }
-                }
-                e = TreeWalker.ControlViewWalker.GetParent(e);
+                var text = e.GetCurrentPattern(UIA_TextPatternId, out pattern) == 0 ? pattern as IUIAutomationTextPattern : null;
+                IUIAutomationTextRangeArray ranges;
+                int count;
+                IUIAutomationTextRange range;
+                string s;
+                if (text != null && text.GetSelection(out ranges) == 0 && ranges != null &&
+                    ranges.get_Length(out count) == 0 && count > 0 && ranges.GetElement(0, out range) == 0 && range != null &&
+                    range.GetText(MaxText + 1, out s) == 0 && !string.IsNullOrWhiteSpace(s))
+                    return s;
+                IUIAutomationElement parent;
+                if (walker.GetParentElement(e, out parent) != 0) break;
+                e = parent;
             }
         } catch (Exception) { }
         return null;
@@ -262,6 +314,24 @@ class LookupWindow : Form {
     protected override void OnShown(EventArgs e) {
         base.OnShown(e);
         Activate();  // so Esc and clicking elsewhere work
+        // another lookup asks this one to make way (Lookup.CloseRequest). A request sent while this
+        // one was still starting (reading a slow program's selection) is dropped: this one keeps its
+        // turn, and its sender gives up (it may already have, and acting on its request now would
+        // close this window with no other to replace it)
+        if (Lookup.CloseRequest != null) {
+            Lookup.CloseRequest.Reset();
+            WaitForCloseRequest();
+        }
+    }
+
+    void WaitForCloseRequest() {
+        ThreadPool.RegisterWaitForSingleObject(Lookup.CloseRequest, (state, timedOut) => {
+            try {
+                // (not while 加入映射詞彙 asks for a code: what is typed there would be lost; the other
+                // lookup gives up and this one waits for the next request)
+                BeginInvoke((Action)(() => { if (asking) WaitForCloseRequest(); else Close(); }));
+            } catch (Exception) { }
+        }, null, Timeout.Infinite, true);
     }
 
     static bool IsEnglish(string s) { return s.Any(char.IsLetter) && s.All(c => c < 128); }
@@ -325,4 +395,74 @@ class LookupWindow : Form {
         if (voice != null) voice.Dispose();
         base.OnFormClosed(e);
     }
+}
+
+// ---- UI Automation's COM interface (UIAutomationClient.h), only the methods used ----------------
+// The vtable order must match the header: the methods before the ones used are placeholders.
+[ComImport, Guid("30cbe57d-d9d0-452a-ab13-7ac5ac4825ee"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IUIAutomation {
+    void CompareElements();
+    void CompareRuntimeIds();
+    void GetRootElement();
+    void ElementFromHandle();
+    void ElementFromPoint();
+    [PreserveSig] int GetFocusedElement(out IUIAutomationElement element);
+    void GetRootElementBuildCache();
+    void ElementFromHandleBuildCache();
+    void ElementFromPointBuildCache();
+    void GetFocusedElementBuildCache();
+    void CreateTreeWalker();
+    void get_ControlViewWalker();
+    void get_ContentViewWalker();
+    [PreserveSig] int get_RawViewWalker(out IUIAutomationTreeWalker walker);
+}
+
+[ComImport, Guid("4042c624-389c-4afc-a630-9df854a541fc"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IUIAutomationTreeWalker {
+    [PreserveSig] int GetParentElement(IUIAutomationElement element, out IUIAutomationElement parent);
+}
+
+[ComImport, Guid("d22108aa-8ac5-49a5-837b-37bbb3d7591e"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IUIAutomationElement {
+    void SetFocus();
+    void GetRuntimeId();
+    void FindFirst();
+    void FindAll();
+    void FindFirstBuildCache();
+    void FindAllBuildCache();
+    void BuildUpdatedCache();
+    void GetCurrentPropertyValue();
+    void GetCurrentPropertyValueEx();
+    void GetCachedPropertyValue();
+    void GetCachedPropertyValueEx();
+    void GetCurrentPatternAs();
+    void GetCachedPatternAs();
+    [PreserveSig] int GetCurrentPattern(int patternId, [MarshalAs(UnmanagedType.IUnknown)] out object pattern);
+}
+
+[ComImport, Guid("32eba289-3583-42c9-9c59-3b6d9a1e9b6a"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IUIAutomationTextPattern {
+    void RangeFromPoint();
+    void RangeFromChild();
+    [PreserveSig] int GetSelection(out IUIAutomationTextRangeArray ranges);
+}
+
+[ComImport, Guid("ce4ae76a-e717-4c98-81ea-47371d028eb6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IUIAutomationTextRangeArray {
+    [PreserveSig] int get_Length(out int length);
+    [PreserveSig] int GetElement(int index, out IUIAutomationTextRange range);
+}
+
+[ComImport, Guid("a543cc6a-f4ae-494b-8239-c814481187a8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IUIAutomationTextRange {
+    void Clone();
+    void Compare();
+    void CompareEndpoints();
+    void ExpandToEnclosingUnit();
+    void FindAttribute();
+    void FindText();
+    void GetAttributeValue();
+    void GetBoundingRectangles();
+    void GetEnclosingElement();
+    [PreserveSig] int GetText(int maxLength, [MarshalAs(UnmanagedType.BStr)] out string text);
 }

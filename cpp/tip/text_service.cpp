@@ -89,9 +89,24 @@ const char* special_of(WPARAM vk) {
     return nullptr;
 }
 
+// One of our programs, from the app the user is typing in. That app may bring a window to the front;
+// a program it starts may not unless it is given that right: lookup.exe's window opened behind the
+// browser, never had the focus to close on losing it, and blocked every later lookup (2026-11-04).
+// No error box if it fails (it would come up inside the app's key handling).
 void run(const std::wstring& file, const std::wstring& args, int show) {
-    ShellExecuteW(nullptr, L"open", file.c_str(), args.empty() ? nullptr : args.c_str(), module_dir(g_module).c_str(),
-                  show);
+    std::wstring dir = module_dir(g_module);
+    SHELLEXECUTEINFOW info{};
+    info.cbSize = sizeof info;
+    info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI;
+    info.lpVerb = L"open";
+    info.lpFile = file.c_str();
+    info.lpParameters = args.empty() ? nullptr : args.c_str();
+    info.lpDirectory = dir.c_str();
+    info.nShow = show;
+    if (ShellExecuteExW(&info) && info.hProcess) {
+        AllowSetForegroundWindow(GetProcessId(info.hProcess));
+        CloseHandle(info.hProcess);
+    }
 }
 
 void open_settings() { run(module_dir(g_module) + L"settings.exe", L"", SW_SHOWNORMAL); }  // (the settings app)
