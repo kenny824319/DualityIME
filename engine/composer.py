@@ -586,7 +586,8 @@ def _model_reads_it(tokens, run, k, readings, lexicon, user, bigram, lm, numbers
 
 def _check_corrections(tokens, table, lexicon, user=None, exact=(), bigram=None, lm=None):
     """The 注音自動校正 that needs the words around a syllable, once the keys are split:
-    digits read out of order (817) stay zhuyin on their own (吧) or in a word (好吧), else they
+    digits read out of order (817) stay zhuyin on their own (吧) or in a word (好吧), or at the end
+    of a run when 長句選字加強's model expects the syllable there (lm, _model_reads_it: 我們走吧), else they
     are a number (有813個: 把個 is a word, but no likelier than 把 and 個 apart; you are 817); a syllable read with a key
     next to the one typed takes, of the ones it may be, the one that makes the best word
     around it; a syllable typed without its tone takes the tone that reads best in the sentence

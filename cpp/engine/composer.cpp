@@ -817,14 +817,15 @@ std::vector<Token> check_corrections(std::vector<Token> tokens, const SyllableTa
                                      const LmScorer* lm) {
     // the 注音自動校正 that needs the words around a syllable (see engine/composer.py): digits
     // out of order stay zhuyin on their own (吧) or in a word likelier than the characters apart
-    // (好吧), else they are a number (有813個, you are 817); a syllable read with a key next to the one typed takes the
+    // (好吧), or at the end of a run when 長句選字加強's model expects the syllable there
+    // (model_reads_it: 我們走吧), else they are a number (有813個, you are 817); a syllable read with a key next to the one typed takes the
     // one that makes the best word; a syllable typed without its tone takes the tone that reads
     // best in the sentence (5k邊: 這邊); a syllable that spells something is swapped for its
     // neighbour's (one that makes a word around it) when the sentence around it reads better by
     // SWAP_GAIN_NO_WORD (老嗎 -> 好嗎), or by SWAP_GAIN_WORD if the keys typed make a word of the
     // dictionary (你老嗎 -> 你好嘛; tuned, not larger) - never if they make one of the user's own.
-    // Settled before conversion, so picks (by reading) keep. Never the language model of
-    // 長句選字加強: it cost most of its time per key, for no measurable gain.
+    // Settled before conversion, so picks (by reading) keep. The sentence scores never use the
+    // language model of 長句選字加強: it cost most of its time per key, for no measurable gain.
     const CorrectionMemory* memory = user ? &user->corrections : nullptr;
     auto picked = [&](const Token& t) -> std::optional<ustr> {
         if (!memory || contains(exact, t.start)) return std::nullopt;
