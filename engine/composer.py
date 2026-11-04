@@ -560,21 +560,26 @@ def _zh_runs(tokens):
         yield run
 
 
-def _model_reads_it(tokens, run, k, readings, lexicon, user, bigram, lm):
+def _model_reads_it(tokens, run, k, readings, lexicon, user, bigram, lm, numbers):
     """Digits out of order run[k], about to become a number: the model expects the syllable after
     the Chinese before it enough to keep it (我們走817 -> 我們走吧, 房間號碼是817 stays). Only the last
     syllable of a run with Chinese before it, and nothing being typed right after (the first key of
     個: 我們走817 stays, not 我們走吧ㄍ and 817個 back). The text before is the engine's own choice for
-    the syllables as read so far (before the other corrections), from the start of the run."""
+    the syllables as read so far (before the other corrections), from the start of the run - or from
+    after the last of its tokens already made a number (numbers: 我們走817個817 asks after 個, not
+    after 我們走吧個, which the user never sees)."""
     t = run[k]
     threshold = ORDER_LM_THRESHOLDS_Q16.get(t.value)
-    if lm is None or lexicon is None or threshold is None or k == 0 or k != len(run) - 1:
+    if lm is None or lexicon is None or threshold is None or k != len(run) - 1:
         return False
+    first = max((j + 1 for j in range(k) if id(run[j]) in numbers), default=0)
+    if first == k:
+        return False  # (no Chinese before it)
     i = next(i for i, x in enumerate(tokens) if x is t)
     if i + 1 < len(tokens) and tokens[i + 1].kind in ("zh", "partial"):
         return False
-    before = "".join(p for _, _, p in convert(readings[:k], lexicon, user, {}, bigram))
-    if len(before) != k:
+    before = "".join(p for _, _, p in convert(readings[first:k], lexicon, user, {}, bigram))
+    if len(before) != k - first:
         return False
     return lm.syllable_mass_q16(before, t.value) >= threshold
 
@@ -609,7 +614,7 @@ def _check_corrections(tokens, table, lexicon, user=None, exact=(), bigram=None,
             elif t.corrected == "order" and id(t) not in alone:
                 gain = _better_word(readings, k, lexicon, user) if lexicon is not None else None
                 if (gain is None or gain <= ORDER_DIGITS_GAIN) and \
-                        not _model_reads_it(tokens, run, k, readings, lexicon, user, bigram, lm):
+                        not _model_reads_it(tokens, run, k, readings, lexicon, user, bigram, lm, numbers):
                     numbers.add(id(t))
     if numbers:
         out = []

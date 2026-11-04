@@ -3924,8 +3924,10 @@ class OrderDigitsWithModelTest(Base):
         self.assertEqual(self.type(self.WE_GO + "817"), "我們走817")
 
     def test_only_the_end_of_the_run(self):
-        # (the first 817 has Chinese after it; P(ㄅㄚ˙ | 對) = 0.003: the second a number too)
-        self.assertEqual(self.type(self.WE_GO + "8172jo4817"), "我們走817對817")
+        # the first 817 has Chinese after it: a number; the model judges the second after what is
+        # shown before it, 個 / 了 alone (P 38 and 1249 < 1614), not 我們走吧個 (2467: 巴) - review 2026-11-04
+        self.assertEqual(self.type(self.WE_GO + "817ek7817"), "我們走817個817")
+        self.assertEqual(self.type(self.WE_GO + "817xk7817"), "我們走817了817")
 
     def test_after_english(self):
         # (English cuts the run: the text before it is not the model's)
