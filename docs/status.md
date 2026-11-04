@@ -16,6 +16,7 @@
 | 選字 | 長句選字加強：自己訓練的小型語言模型看整句選字（預設開啟） | `docs/superpowers/specs/2026-10-29-long-sentence-lm-design.md` |
 | 選字 | 長句選字加強不再把字典的詞拆成單字（新舊、選字、有件事倒是），「我再」不會變成「我在」；「怎麼」先送出再打「辦」不再是「半」 | `docs/architecture/decisions.md`（2026-11-03） |
 | 設定 | Ctrl + 標點打全形預設開啟，舊使用者更新後也開啟 | `docs/architecture/decisions.md`（2026-11-03） |
+| 框選查詢 | 修正查詢時視窗不出現（讀選取文字時當掉、視窗開在其他程式後面）；GitHub 標題這類網頁深處的選取也查得到 | `docs/architecture/decisions.md`（2026-11-04） |
 | 注音自動校正 | 看整句：漏打聲調（5k邊 → 這邊）、標點鍵開頭的順序打反（剛;e → 剛剛）、按到隔壁鍵拼成另一個音（現役 → 信義） | `docs/superpowers/specs/2026-10-29-adjacent-valid-sentence-design.md` 第 1 階段 |
 
 ## 待開發與待驗收

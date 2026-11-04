@@ -27,9 +27,9 @@ function Build($out, $files, $csArgs) {
 $settingsArgs = @("/target:winexe", "/platform:x64", "/reference:$wv\Microsoft.Web.WebView2.Core.dll",
     "/reference:$wv\Microsoft.Web.WebView2.WinForms.dll", "/reference:$fw\System.Web.Extensions.dll",
     "/reference:System.Windows.Forms.dll", "/reference:System.Drawing.dll")
-# 框選查詢 (started by the IME): UI Automation reads the selection, System.Speech reads it aloud
-$lookupArgs = @("/target:winexe", "/reference:$fw\WPF\UIAutomationClient.dll", "/reference:$fw\WPF\UIAutomationTypes.dll",
-    "/reference:$fw\WPF\WindowsBase.dll", "/reference:$fw\System.Web.Extensions.dll", "/reference:$speech")
+# 框選查詢 (started by the IME): UI Automation's COM interface reads the selection (declared in Lookup.cs:
+# System.Windows.Automation crashed in UIAutomationCore), System.Speech reads it aloud
+$lookupArgs = @("/target:winexe", "/reference:$fw\System.Web.Extensions.dll", "/reference:$speech")
 
 if (-not $Release) {
     # the settings app (a WebView2 window showing settings\ui) and lookup.exe, run from the project

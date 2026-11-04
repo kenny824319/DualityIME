@@ -115,6 +115,13 @@
   - 原因（使用者回報）：在其他程式都打不出中文。引擎是被以系統管理員身分執行的程式（裡面的輸入法在沒有引擎時會啟動它）或系統管理員視窗裡的腳本叫起來的，跟著有了系統管理員權限；它建立的通道擁有者是 Administrators，一般程式被拒絕。
   - 決定：引擎一啟動若有系統管理員權限，就以桌面 explorer 為父程序、用 explorer 的權限重開一份自己，自己結束（只在 explorer 不是系統管理員權限、而且是同一個帳號時；SYSTEM 或別的帳號的程式等的是自己帳號的通道）。重開不了就自己服務，而通道明確允許使用者的 SID，一般程式照樣連得上。測試腳本用 `--keep-elevated` 留在系統管理員權限（測試視窗也是，並且用 PID 追蹤）。
 
+- **框選查詢用 UI Automation 的 COM 介面讀選取，輸入法把前景交給它（2026-11-04）**
+  - 原因（使用者回報「有時候沒作用」，實測幾乎每次都沒視窗）：
+    1. .NET 的 `System.Windows.Automation` 讀選取文字（`TextPatternRange.GetText`）在 `UIAutomationCore.dll` 7.2.22621.4249 裡記憶體存取違規，`catch` 擋不住，`lookup.exe` 一啟動就結束（Chrome、記事本、終端機都一樣，PowerShell 直接呼叫也重現）。原生的 `IUIAutomation` 讀同一個選取正常。
+    2. 輸入法用 `ShellExecute` 啟動 `lookup.exe`，它沒有把視窗帶到前景的權限，視窗有時開在瀏覽器後面（實測：可見、在螢幕內、不是前景），沒拿到焦點也就不會「失去焦點就關閉」，一直開著，之後的查詢都被它擋住。
+    3. 往上找選取只走 ControlView 4 層：Chrome 裡 GitHub README 的標題在文件下 7 層，ControlView 也跳過了有選取的文件元件。
+  - 決定：`Lookup.cs` 自己宣告用到的 `IUIAutomation` 介面（不加互通 DLL），在 MTA 執行緒上讀、最多等 2 秒；從焦點往上走 RawView 最多 20 層，取第一個有選取文字的；同時只開一個（具名 Mutex），已經有一個開著時用具名事件請它關閉再取代（它的視窗有隱藏的擁有者，`CloseMainWindow` 找不到；也不必用程式名稱找，不會碰到別人的 lookup.exe）。輸入法啟動後呼叫 `AllowSetForegroundWindow(lookup 的 PID)`。
+
 ## 記憶檔
 
 - **校正記憶與代碼記憶存在獨立的 `keys.json`，不放 `user.json`**
