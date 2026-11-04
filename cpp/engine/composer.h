@@ -39,7 +39,8 @@ std::vector<Token> tokenize(const std::string& raw, const SyllableTable& table, 
                             const Fixed* fixed = nullptr, const Lexicon* lexicon = nullptr,
                             const std::set<int>* breaks = nullptr, const std::set<int>* exact = nullptr,
                             const Fixed* taken = nullptr,  // taken: start -> (end, reading) picked (注音自動校正)
-                            const BigramModel* bigram = nullptr);
+                            const BigramModel* bigram = nullptr,
+                            const LmScorer* lm = nullptr);  // lm: 長句選字加強, for digits out of order at the end
 
 struct Segment {
     int start, length;
