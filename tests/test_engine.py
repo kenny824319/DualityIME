@@ -3847,5 +3847,30 @@ class AutocorrectLMTest(AutocorrectTest):
         self.assertEqual(self.type("su3xl3a87"), "你好嗎")
         self.assertEqual(self.type("rup qu0 "), "今天")
 
+
+class SyllableMassTest(unittest.TestCase):
+    """The model's probability that the next character is one of a syllable's (the whole vocabulary's
+    softmax, Q16): what tells 我們走817 (吧) from 房間號碼是817 (a number)."""
+
+    def setUp(self):
+        from engine import lm
+        self.scorer = lm.shared()
+        self.assertIsNotNone(self.scorer, "data/lm.bin or numpy missing")
+
+    def test_mass_matches_the_experiment(self):
+        # (scratchpad 2026-11-04: P(ㄅㄚ˙ | 算了) = 0.2266, P(吧 | 房間號碼是) = 0.00009)
+        self.assertAlmostEqual(self.scorer.syllable_mass_q16("算了", "ㄅㄚ˙") / 65536, 0.2266, delta=0.01)
+        self.assertLess(self.scorer.syllable_mass_q16("房間號碼是", "ㄅㄚ˙"), int(0.002 * 65536))
+
+    def test_whole_vocabulary_is_one(self):
+        import numpy as np
+        lm = self.scorer.lm
+        everything = np.arange(len(lm.vocab), dtype=np.int64)
+        self.assertAlmostEqual(lm.mass_q16(self.scorer.state("我們"), everything), 65536, delta=2)
+
+    def test_syllable_without_characters_is_zero(self):
+        self.assertEqual(self.scorer.syllable_mass_q16("我們", "ㄅㄧㄤ"), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

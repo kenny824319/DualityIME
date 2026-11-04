@@ -27,6 +27,9 @@ public:
     std::vector<State> steps(const std::vector<const State*>& states, const std::vector<int>& cs) const;
     // Q10 natural log probability of each candidate id, among the candidates alone (<= 0)
     std::vector<int64_t> scores(const State& state, const std::vector<int>& cands) const;
+    // Q16 probability that the next character is one of ids, over the whole vocabulary (engine/lm.py
+    // CharLM.mass_q16: integers only, the exp table)
+    int64_t mass_q16(const State& state, const std::vector<int>& ids) const;
     int id(char32_t ch) const;  // the character's vocabulary id, 0 (<unk>) if the model does not know it
     int vocab() const { return V_; }
     bool avx2() const { return avx2_; }  // the vector path (off: no AVX2, or DUALITYIME_LM_SCALAR=1)
@@ -53,6 +56,7 @@ private:
     std::vector<int32_t> emb_m_, bias_, proj_m_, proj_b_;
     std::vector<Layer> layer_;
     std::vector<int32_t> sigmoid_, tanh_, exp_, log_;
+    mutable std::vector<int> all_;  // 0 .. V-1 (mass_q16), made on first use
 };
 
 // states (and scored syllables) kept across keys, then all dropped but the start (the same as
@@ -76,6 +80,9 @@ public:
     int64_t char_score(const ustr& before, char32_t ch, const ustr& syllable) const;
     // the sum of the characters' scores (Q10), one character per syllable
     int64_t text_score(const ustr& text, const std::vector<ustr>& readings) const;
+    // Q16 probability that the character after before is one of the syllable's (candidates, id 0 left
+    // out), over the whole vocabulary; 0 for a syllable with none (engine/lm.py Scorer.syllable_mass_q16)
+    int64_t syllable_mass_q16(const ustr& before, const ustr& syllable) const;
     // the states of every beginning of the texts, stepped together (text_score then finds them)
     void prepare(const std::vector<ustr>& texts) const;
     const CharLM& model() const { return lm_; }
@@ -90,6 +97,7 @@ private:
     std::unordered_map<ustr, std::vector<int>> cands_;
     mutable std::unordered_map<ustr, CharLM::State> states_;
     mutable std::unordered_map<ustr, std::vector<int64_t>> score_cache_;  // before + U'\0' + syllable
+    mutable std::unordered_map<ustr, int64_t> mass_cache_;               // before + U'\0' + syllable
 };
 
 // 長句選字加強's model and scorer, read from the file the first time they are asked for (with the

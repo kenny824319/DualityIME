@@ -348,6 +348,23 @@ std::vector<int64_t> CharLM::scores(const State& state, const std::vector<int>& 
     return d;
 }
 
+int64_t CharLM::mass_q16(const State& state, const std::vector<int>& ids) const {
+    if (all_.empty()) {
+        all_.resize(static_cast<size_t>(V_));
+        for (int i = 0; i < V_; ++i) all_[static_cast<size_t>(i)] = i;
+    }
+    std::vector<int64_t> lg = logits(state, all_);
+    int64_t top = *std::max_element(lg.begin(), lg.end());
+    int64_t total = 0;
+    for (auto& v : lg) {
+        v = exp_[static_cast<size_t>(std::min(top - v, EXP_RANGE))];  // Q16, the best one 1.0
+        total += v;
+    }
+    int64_t part = 0;
+    for (int c : ids) part += lg[static_cast<size_t>(c)];
+    return (part << 16) / total;
+}
+
 // ---- LmScorer ----
 
 LmScorer::LmScorer(const CharLM& lm, const Lexicon& lexicon) : lm_(lm), lexicon_(lexicon) {
@@ -372,10 +389,13 @@ void LmScorer::clear() const {
     states_.clear();
     states_[ustr()] = lm_.start();
     score_cache_.clear();
+    mass_cache_.clear();
 }
 
 void LmScorer::room() const {
-    if (states_.size() >= LM_STATES_KEPT || score_cache_.size() >= LM_STATES_KEPT) clear();
+    if (states_.size() >= LM_STATES_KEPT || score_cache_.size() >= LM_STATES_KEPT ||
+        mass_cache_.size() >= LM_STATES_KEPT)
+        clear();
 }
 
 void LmScorer::prepare(const std::vector<ustr>& texts) const {
@@ -444,6 +464,24 @@ int64_t LmScorer::char_score(const ustr& before, char32_t ch, const ustr& syllab
     auto at = std::lower_bound(cands->begin(), cands->end(), c);
     if (at != cands->end() && *at == c) return scores[at - cands->begin()];
     return *std::min_element(scores.begin(), scores.end());
+}
+
+int64_t LmScorer::syllable_mass_q16(const ustr& before, const ustr& syllable) const {
+    ustr key = before;
+    key.push_back(U'\0');
+    key += syllable;
+    auto it = mass_cache_.find(key);
+    if (it != mass_cache_.end()) return it->second;
+    int64_t mass = 0;
+    if (const std::vector<int>* cands = candidates(syllable)) {
+        std::vector<int> ids;
+        for (int c : *cands)
+            if (c > 0) ids.push_back(c);
+        if (!ids.empty()) mass = lm_.mass_q16(state(before), ids);
+    }
+    room();
+    mass_cache_.emplace(std::move(key), mass);
+    return mass;
 }
 
 int64_t LmScorer::text_score(const ustr& text, const std::vector<ustr>& readings) const {

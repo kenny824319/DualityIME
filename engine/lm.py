@@ -190,6 +190,16 @@ class CharLM:
         log_s = (k - 16) * LN2_Q + int(t["log"][frac])       # ln(s / 65536), Q10
         return d - log_s
 
+    def mass_q16(self, state, ids):
+        """Q16 probability that the next character is one of ids, over the whole vocabulary
+        (not among some candidates as scores): integers only, the exp table, as the C++ engine."""
+        t = self.t
+        if getattr(self, "_all", None) is None:
+            self._all = np.arange(len(self.vocab), dtype=np.int64)
+        lg = self.logits(state, self._all)
+        e = t["exp"][np.minimum(lg.max() - lg, EXP_RANGE)].astype(np.int64)  # Q16, the best one 1.0
+        return (int(e[ids].sum()) << 16) // int(e.sum())
+
 
 def load(data_dir=DATA_DIR):
     """The language model in data_dir, or None (no file, wrong format, no numpy). Never raises."""
@@ -223,6 +233,7 @@ class Scorer:
     def _clear(self):
         self.states = {"": self.lm.start()}
         self.score_cache = {}  # (text before, syllable) -> scores of the syllable's candidates
+        self.mass_cache = {}   # (text before, syllable) -> syllable_mass_q16
 
     def candidates(self, syllable):
         """Sorted vocabulary ids of every character a word of the dictionary writes for the
@@ -239,7 +250,8 @@ class Scorer:
         return self._cands.get(syllable)
 
     def _room(self):
-        if len(self.states) >= LM_STATES_KEPT or len(self.score_cache) >= LM_STATES_KEPT:
+        if len(self.states) >= LM_STATES_KEPT or len(self.score_cache) >= LM_STATES_KEPT or \
+                len(self.mass_cache) >= LM_STATES_KEPT:
             self._clear()
 
     def state(self, text):
@@ -269,6 +281,21 @@ class Scorer:
         c = self.lm.ids.get(ch, 0)
         i = int(np.searchsorted(cands, c))
         return int(scores[i]) if i < len(cands) and cands[i] == c else int(scores.min())
+
+    def syllable_mass_q16(self, before, syllable):
+        """Q16 probability that the character after before (from the start of the run) is one of
+        the syllable's (candidates, the unknown id 0 left out), over the whole vocabulary: how
+        much 吧 the model expects after 我們走 (注音自動校正, digits out of order). 0 for a
+        syllable with no characters."""
+        key = (before, syllable)
+        mass = self.mass_cache.get(key)
+        if mass is None:
+            cands = self.candidates(syllable)
+            ids = cands[cands > 0] if cands is not None else None
+            mass = self.lm.mass_q16(self.state(before), ids) if ids is not None and len(ids) else 0
+            self._room()
+            self.mass_cache[key] = mass
+        return mass
 
     def text_score(self, text, readings):
         """The sum of the characters' scores (Q10), one character per syllable."""
