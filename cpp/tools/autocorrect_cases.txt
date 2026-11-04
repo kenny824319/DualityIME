@@ -9,6 +9,10 @@ cl3817{ENTER} => 好吧
 817{ENTER} => 吧
 u.3813ek7{ENTER} => 有813個
 you are 817{ENTER} => you are 817
+# at the end of a run of Chinese: the syllable when the language model expects it after the text
+# before (我們走吧), else a number (房間號碼是817)
+ji3ap7y.3817{ENTER} => 我們走吧
+z;6ru0 cl4a83g4817{ENTER} => 房間號碼是817
 # a key typed twice
 ssu3{ENTER} => 你
 # a key next to the right one, spelling another syllable: 今篇 is no word, 今天 is

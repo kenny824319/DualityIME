@@ -789,20 +789,26 @@ const std::unordered_map<ustr, int64_t> ORDER_LM_THRESHOLDS_Q16 = {
 // digits out of order tokens[run[k]], about to become a number: the model expects the syllable after
 // the Chinese before it enough to keep it (我們走817 -> 我們走吧). Only the last syllable of a run with
 // Chinese before it and nothing being typed right after; the text before is the engine's own choice
-// for the syllables as read so far, from the start of the run (engine/composer.py _model_reads_it)
+// for the syllables as read so far, from the start of the run or from after the last of its tokens
+// already made a number (engine/composer.py _model_reads_it)
 bool model_reads_it(const std::vector<Token>& tokens, const std::vector<size_t>& run, size_t k,
                     const std::vector<ustr>& rds, const Lexicon* lexicon, const UserModel* user,
-                    const BigramModel* bigram, const LmScorer* lm) {
+                    const BigramModel* bigram, const LmScorer* lm, const std::set<size_t>& numbers) {
     const Token& t = tokens[run[k]];
     auto threshold = ORDER_LM_THRESHOLDS_Q16.find(t.value);
-    if (!lm || !lexicon || threshold == ORDER_LM_THRESHOLDS_Q16.end() || k == 0 || k + 1 != run.size()) return false;
+    if (!lm || !lexicon || threshold == ORDER_LM_THRESHOLDS_Q16.end() || k + 1 != run.size()) return false;
+    size_t first = 0;
+    for (size_t j = 0; j < k; ++j)
+        if (numbers.count(run[j])) first = j + 1;
+    if (first == k) return false;  // (no Chinese before it)
     size_t i = run[k];
     if (i + 1 < tokens.size() && (tokens[i + 1].kind == Kind::Zh || tokens[i + 1].kind == Kind::Partial)) return false;
     ustr before;
-    for (auto& seg : convert(std::vector<ustr>(rds.begin(), rds.begin() + static_cast<std::ptrdiff_t>(k)), *lexicon,
-                             user, {}, bigram, std::nullopt))
+    for (auto& seg : convert(std::vector<ustr>(rds.begin() + static_cast<std::ptrdiff_t>(first),
+                                               rds.begin() + static_cast<std::ptrdiff_t>(k)),
+                             *lexicon, user, {}, bigram, std::nullopt))
         before += seg.phrase;
-    if (before.size() != k) return false;
+    if (before.size() != k - first) return false;
     return lm->syllable_mass_q16(before, t.value) >= threshold->second;
 }
 
@@ -848,7 +854,7 @@ std::vector<Token> check_corrections(std::vector<Token> tokens, const SyllableTa
             if (alone.count(run[k])) continue;
             std::optional<double> gain;
             if (lexicon) gain = better_word(rds, k, *lexicon, user);
-            if ((!gain || *gain <= ORDER_DIGITS_GAIN) && !model_reads_it(tokens, run, k, rds, lexicon, user, bigram, lm))
+            if ((!gain || *gain <= ORDER_DIGITS_GAIN) && !model_reads_it(tokens, run, k, rds, lexicon, user, bigram, lm, numbers))
                 numbers.insert(run[k]);
         }
     }
