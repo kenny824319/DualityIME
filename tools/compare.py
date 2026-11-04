@@ -37,14 +37,15 @@ CASES = [
     "yk3ai7{ENTER}104{ENTER}1j4xu3vu;3yk3ai7{ENTER}104{ENTER}",
     "1j6ul4sj/4gk6ai7vup ru.4rul31p3{ENTER}vm03y4{ENTER}ji3y94vm03y4{ENTER}ji3y94d04d04{ENTER}",
     "xu/4j94u.3ru04g42l4g4ul4su3qu/6ej u vu84{ENTER}",
-    # digits out of order at the end of a run: the model's probability against the syllable's
-    # threshold with 長句選字加強 on (我們走吧, 算了吧), numbers kept (房間號碼是817, 電話是824, 跑了817 km),
-    # Chinese or a syllable being typed after it (817個, 817e), only the end of the run (817對817)
+    # digits out of order at the end of a run. 817 is a number in AUTOCORRECT's keys.json (picked back
+    # twice), so with that file these lines go the "picked twice" way and never ask the model; they
+    # still compare the cases around it: Chinese or a syllable being typed after it (817個, 817e),
+    # English after it, a number the model says no to (電話是824)
     "ji3ap7y.3817{ENTER}ji3ap7y.3817 ok{ENTER}nj04xk7817{ENTER}hello ji3ap7y.3817{ENTER}",
     "z;6ru0 cl4a83g4817{ENTER}2u04cj84g4824{ENTER}ql3xk7817 km{ENTER}",
     "ji3ap7y.3817ek7{ENTER}ji3ap7y.3817e{BACK}{ENTER}ji3ap7y.38172jo4817{ENTER}",
-    # (817 is a number in AUTOCORRECT's keys.json, picked back twice: the model is never asked there.
-    # 814 is not: 趕快把, 你先爸 come from the model; 我們走817個817 asks after 個, not 我們走吧個)
+    # the model's answer itself, with 814 (not in keys.json): 趕快把 and 你先爸 come from the model;
+    # 我們走814個814 asks after 個, not after 我們走罷個
     "e03dj94814{ENTER}su3vu0 814{ENTER}ji3ap7y.3814ek7814{ENTER}ji3ap7y.3814xk7814{ENTER}",
     # a 1-2 letter word after English that starts a common word is zhuyin (B 因為, 為 typed ㄨㄟˊ too,
     # thank 一個); one that starts a less common one stays English (look up 此操作, look up 還是)
