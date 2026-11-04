@@ -194,9 +194,10 @@ class CharLM:
         """Q16 probability that the next character is one of ids, over the whole vocabulary
         (not among some candidates as scores): integers only, the exp table, as the C++ engine."""
         t = self.t
-        if getattr(self, "_all", None) is None:
-            self._all = np.arange(len(self.vocab), dtype=np.int64)
-        lg = self.logits(state, self._all)
+        if getattr(self, "_emb_wide", None) is None:  # (widened once, 38 MB: not again on each call)
+            self._emb_wide = t["emb_q"].astype(np.int64)
+        p = requant(self.wide["proj_q"] @ state[-1], t["proj_m"]) + t["proj_b"]
+        lg = requant(self._emb_wide @ p, t["emb_m"]) + t["bias"]  # (logits() over the whole vocabulary)
         e = t["exp"][np.minimum(lg.max() - lg, EXP_RANGE)].astype(np.int64)  # Q16, the best one 1.0
         return (int(e[ids].sum()) << 16) // int(e.sum())
 

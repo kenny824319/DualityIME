@@ -83,6 +83,38 @@ SWAP_WINDOW = 3           # syllables on each side of it that count (run_score)
 RUN_SCORES_KEPT = 50000   # run_score results kept across keys (then all dropped and started again)
 _RUN_SCORES = {}
 ORDER_DIGITS_GAIN = 1.0    # ...and for digits out of order to stay zhuyin (好吧, not 有813個 -> 有把個)
+# 長句選字加強 on: digits out of order at the end of a run of Chinese stay the syllable when the model's
+# probability that the next character is one of the syllable's (Scorer.syllable_mass_q16, Q16) is at
+# least this: per syllable, as low as 0.02 while numbers there turn into it at most 0.25% of the
+# time (held-out web text, tools/lm/order_thresholds.py; 2026-11-04 design). The C++ engine has the
+# same table (a test compares them).
+ORDER_LM_THRESHOLDS_Q16 = {
+    "ㄅㄢˇ": 1825,   # 0.0278 版板
+    "ㄅㄢˋ": 3994,   # 0.0609 辦半
+    "ㄉㄢˇ": 1311,   # 0.0200 膽
+    "ㄉㄢˋ": 1609,   # 0.0246 但蛋
+    "ㄓㄢˇ": 1311,   # 0.0200 展
+    "ㄓㄢˋ": 7239,   # 0.1105 站戰
+    "ㄅㄚˇ": 1311,   # 0.0200 把
+    "ㄅㄚˋ": 1311,   # 0.0200 爸罷
+    "ㄅㄚˊ": 1311,   # 0.0200 拔
+    "ㄅㄚ˙": 1614,   # 0.0246 吧
+    "ㄉㄚˇ": 1311,   # 0.0200 打
+    "ㄉㄚˋ": 6134,   # 0.0936 大
+    "ㄉㄚˊ": 12815,  # 0.1955 達答
+    "ㄉㄚ˙": 1311,   # 0.0200
+    "ㄓㄚˇ": 1311,   # 0.0200 眨
+    "ㄓㄚˋ": 1311,   # 0.0200 炸
+    "ㄓㄚˊ": 1311,   # 0.0200 札
+    "ㄅㄞˇ": 9752,   # 0.1488 百
+    "ㄅㄞˋ": 1311,   # 0.0200 拜敗
+    "ㄅㄞˊ": 9753,   # 0.1488 白
+    "ㄉㄞˇ": 1311,   # 0.0200 歹
+    "ㄉㄞˋ": 6770,   # 0.1033 帶代
+    "ㄓㄞˇ": 1311,   # 0.0200 窄
+    "ㄓㄞˋ": 1311,   # 0.0200 債
+    "ㄓㄞˊ": 1311,   # 0.0200 宅
+}
 COST_RARE = 3.0         # syllable whose most common character is obscure (ㄙㄟ 㩙)
 RARE_SCORE = -6.0       # log10 frequency below which a syllable counts as obscure
 MAX_SYL_KEYS = 5        # initial + medial + final + tone, plus slack
@@ -109,7 +141,7 @@ class Token:
 
 def tokenize(raw, table, user=None, english=(), forced=(), after_english=False,
              digits_as_zhuyin=False, literal=(), chinese=(), fixed=None, lexicon=None, breaks=(), exact=(),
-             taken=None, bigram=None):
+             taken=None, bigram=None, lm=None):
     """Split raw keys into the cheapest sequence of tokens.
 
     literal: raw offsets of keys that are always themselves (numpad digits and
@@ -120,6 +152,8 @@ def tokenize(raw, table, user=None, english=(), forced=(), after_english=False,
         user picked the character of the keys typed).
     taken: {start: (end, reading)} keys read as the given syllable (注音自動校正: picked from
         the list, si3 as ㄋㄧˇ); they cut the text too.
+    lm: 長句選字加強's scorer (None: off), asked about digits out of order at the end of a run
+        (_check_corrections).
     Other arguments: see _tokenize_run.
     """
     cuts = sorted([(p, p + 1, None) for p in literal if p < len(raw)] +
@@ -129,7 +163,7 @@ def tokenize(raw, table, user=None, english=(), forced=(), after_english=False,
     if not cuts:
         tokens = _tokenize_run(raw, table, user, english, forced, after_english, digits_as_zhuyin, chinese, lexicon,
                                breaks, exact)
-        return _check_corrections(tokens, table, lexicon, user, exact, bigram) if table.autocorrect else tokens
+        return _check_corrections(tokens, table, lexicon, user, exact, bigram, lm) if table.autocorrect else tokens
     tokens, start = [], 0
     for a, b, text in cuts + [(len(raw), len(raw), None)]:
         if a < start:
@@ -152,7 +186,7 @@ def tokenize(raw, table, user=None, english=(), forced=(), after_english=False,
             else:
                 tokens.append(Token("fix", raw[a:b], text, a))
         start = b
-    return _check_corrections(tokens, table, lexicon, user, exact, bigram) if table.autocorrect else tokens
+    return _check_corrections(tokens, table, lexicon, user, exact, bigram, lm) if table.autocorrect else tokens
 
 
 def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=False,
@@ -526,7 +560,26 @@ def _zh_runs(tokens):
         yield run
 
 
-def _check_corrections(tokens, table, lexicon, user=None, exact=(), bigram=None):
+def _model_reads_it(tokens, run, k, readings, lexicon, user, bigram, lm):
+    """Digits out of order run[k], about to become a number: the model expects the syllable after
+    the Chinese before it enough to keep it (我們走817 -> 我們走吧, 房間號碼是817 stays). Only the last
+    syllable of a run with Chinese before it, and nothing being typed right after (the first key of
+    個: 我們走817 stays, not 我們走吧ㄍ and 817個 back). The text before is the engine's own choice for
+    the syllables as read so far (before the other corrections), from the start of the run."""
+    t = run[k]
+    threshold = ORDER_LM_THRESHOLDS_Q16.get(t.value)
+    if lm is None or lexicon is None or threshold is None or k == 0 or k != len(run) - 1:
+        return False
+    i = next(i for i, x in enumerate(tokens) if x is t)
+    if i + 1 < len(tokens) and tokens[i + 1].kind in ("zh", "partial"):
+        return False
+    before = "".join(p for _, _, p in convert(readings[:k], lexicon, user, {}, bigram))
+    if len(before) != k:
+        return False
+    return lm.syllable_mass_q16(before, t.value) >= threshold
+
+
+def _check_corrections(tokens, table, lexicon, user=None, exact=(), bigram=None, lm=None):
     """The 注音自動校正 that needs the words around a syllable, once the keys are split:
     digits read out of order (817) stay zhuyin on their own (吧) or in a word (好吧), else they
     are a number (有813個: 把個 is a word, but no likelier than 把 and 個 apart; you are 817); a syllable read with a key
@@ -555,7 +608,8 @@ def _check_corrections(tokens, table, lexicon, user=None, exact=(), bigram=None)
                 numbers.add(id(t))  # (picked as a number twice)
             elif t.corrected == "order" and id(t) not in alone:
                 gain = _better_word(readings, k, lexicon, user) if lexicon is not None else None
-                if gain is None or gain <= ORDER_DIGITS_GAIN:
+                if (gain is None or gain <= ORDER_DIGITS_GAIN) and \
+                        not _model_reads_it(tokens, run, k, readings, lexicon, user, bigram, lm):
                     numbers.add(id(t))
     if numbers:
         out = []
@@ -1328,7 +1382,7 @@ class Composer:
                     pinned[old[s + k].start] = (old[s + k].raw, v[0][k])
         self.tokens = tokenize(self.raw, self.table, self.user, self.english, self.forced,
                                self.after_english, self.digits_as_zhuyin, self.literal, self.chinese, self.fixed,
-                               self.lexicon, self.breaks, self.exact, self.taken, self.bigram)
+                               self.lexicon, self.breaks, self.exact, self.taken, self.bigram, self._lm())
         if self.table.autocorrect:
             for t in self.tokens:
                 pin = pinned.get(t.start)
@@ -2118,7 +2172,7 @@ class Composer:
         trial = tokenize(self.raw, self.table, self.user, self.english, forced, self.after_english,
                          self.digits_as_zhuyin, self.literal - set(unlit), (self.chinese - set(unchinese)) | {s},
                          {a: v for a, v in self.fixed.items() if a != unfix}, self.lexicon, self.breaks,
-                         self.exact, self.taken, self.bigram)
+                         self.exact, self.taken, self.bigram, self._lm())
         inside = [t for t in trial if s <= t.start < end]
         if not inside or inside[0].start != s or any(t.kind != "zh" for t in inside) or \
                 inside[-1].start + len(inside[-1].raw) != end:

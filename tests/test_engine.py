@@ -3872,5 +3872,107 @@ class SyllableMassTest(unittest.TestCase):
         self.assertEqual(self.scorer.syllable_mass_q16("我們", "ㄅㄧㄤ"), 0)
 
 
+class OrderDigitsWithModelTest(Base):
+    """注音自動校正 with 長句選字加強: digits out of order at the end of a run of Chinese read as the
+    syllable when the model expects it there enough (ORDER_LM_THRESHOLDS_Q16), else a number
+    (docs/superpowers/specs/2026-11-04-reversed-digits-lm-design.md)."""
+
+    WE_GO = "ji3ap7y.3"  # 我們走
+
+    def setUp(self):
+        super().setUp()
+        from engine import lm
+        self.assertIsNotNone(lm.shared(), "data/lm.bin or numpy missing")
+        self.c.user.corrections.forget()
+        self.c.user.phrases.clear()
+        self.c.user.phrase_used.clear()
+        self.c.config.set(autocorrect=True, long_sentence=True)
+        self.c.settings_changed()
+
+    def tearDown(self):
+        self.c.key(special="ESC")
+        self.c.key(special="ESC")
+        self.c.config.set(autocorrect=False, long_sentence=DEFAULTS["long_sentence"])
+        self.c.settings_changed()
+        super().tearDown()
+
+    def test_end_of_sentence_reads_as_chinese(self):
+        self.assertEqual(self.type(self.WE_GO + "817"), "我們走吧")  # (P 0.026 >= 0.0246)
+        self.assertEqual(self.type(self.WE_GO + "817 ok"), "我們走吧 ok")
+        self.assertEqual(self.type(keys("ㄙㄨㄢˋ ㄌㄜ˙") + "817"), "算了吧")
+
+    def test_numbers_stay(self):
+        self.assertEqual(self.type(keys("ㄈㄤˊ ㄐㄧㄢ ㄏㄠˋ ㄇㄚˇ ㄕˋ") + "817"), "房間號碼是817")
+        self.assertEqual(self.type(keys("ㄉㄧㄢˋ ㄏㄨㄚˋ ㄕˋ") + "824"), "電話是824")
+        self.assertEqual(self.type(keys("ㄆㄠˇ ㄌㄜ˙") + "817 km"), "跑了817 km")
+        self.assertEqual(self.type(self.WE_GO + "817ek7"), "我們走817個")
+
+    def test_next_syllable_being_typed_keeps_the_number(self):
+        # (the first key of 個: not 我們走吧ㄍ first and 我們走817個 after)
+        for ch in self.WE_GO + "817e":
+            self.c.key(ch)
+        self.assertTrue(self.c.composition.startswith("我們走817"), self.c.composition)
+
+    def test_long_sentence_off_keeps_the_old_rule(self):
+        self.c.config.set(long_sentence=False)
+        self.c.settings_changed()
+        self.assertEqual(self.type(self.WE_GO + "817"), "我們走817")
+
+    def test_autocorrect_off_keeps_the_old_rule(self):
+        self.c.config.set(autocorrect=False)
+        self.c.settings_changed()
+        self.assertEqual(self.type(self.WE_GO + "817"), "我們走817")
+
+    def test_only_the_end_of_the_run(self):
+        # (the first 817 has Chinese after it; P(ㄅㄚ˙ | 對) = 0.003: the second a number too)
+        self.assertEqual(self.type(self.WE_GO + "8172jo4817"), "我們走817對817")
+
+    def test_after_english(self):
+        # (English cuts the run: the text before it is not the model's)
+        self.assertEqual(self.type("hello " + self.WE_GO + "817"), "hello 我們走吧")
+
+    def test_picked_back_as_a_number_twice(self):
+        # (the 校正記憶 of the keys, as for 817 on its own: the number from then on)
+        c = self.c
+        for _ in range(2):
+            self.type(self.WE_GO + "817", enter=False)
+            c.key(special="DOWN")
+            c._pick(len(c.candidates) - 1)
+            c.key(special="ENTER")
+            self.assertEqual(c.commit, "我們走817")
+        self.assertEqual(self.type(self.WE_GO + "817"), "我們走817")
+
+    def test_threshold_tables_agree(self):
+        # (the C++ engine's copy: each entry on a line of its own, {U"ㄅㄚ˙", 1612},)
+        import re
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cpp", "engine", "composer.cpp")
+        src = open(path, encoding="utf-8").read()
+        table = src[src.index("ORDER_LM_THRESHOLDS_Q16 = {"):]
+        table = table[:table.index("};")]
+        cpp = {s: int(v) for s, v in re.findall(r'\{U"([^"]+)", (\d+)\}', table)}
+        self.assertEqual(cpp, composer.ORDER_LM_THRESHOLDS_Q16)
+
+    def test_text_before_not_one_character_a_syllable(self):
+        # (the run before converts to fewer characters than syllables: no model, a number; the
+        # lm passed in would fail the test if it were asked)
+        Token = composer.Token
+        tokens = [Token("zh", "ji3", "ㄨㄛˇ", 0), Token("zh", "817", "ㄅㄚ˙", 3, "order")]
+
+        class NotAsked:
+            def syllable_mass_q16(self, before, syllable):
+                raise AssertionError("asked the model")
+
+        def short_convert(readings, *args, **kwargs):
+            return []
+        saved = composer.convert
+        composer.convert = short_convert
+        try:
+            out = composer._check_corrections(tokens, self.c.table, self.c.lexicon, self.c.user, (), self.c.bigram,
+                                              NotAsked())
+        finally:
+            composer.convert = saved
+        self.assertEqual([(t.kind, t.raw) for t in out], [("zh", "ji3"), ("en", "817")])
+
+
 if __name__ == "__main__":
     unittest.main()
