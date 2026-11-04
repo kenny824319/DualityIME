@@ -755,8 +755,60 @@ std::unordered_map<ustr, double>& run_scores() {
     return kept;
 }
 
+// 長句選字加強 on: digits out of order at the end of a run of Chinese stay the syllable when the
+// model's probability that the next character is one of the syllable's (Q16) is at least this
+// (engine/composer.py ORDER_LM_THRESHOLDS_Q16; a test compares the two tables)
+const std::unordered_map<ustr, int64_t> ORDER_LM_THRESHOLDS_Q16 = {
+    {U"ㄅㄢˇ", 1825},
+    {U"ㄅㄢˋ", 3994},
+    {U"ㄉㄢˇ", 1311},
+    {U"ㄉㄢˋ", 1609},
+    {U"ㄓㄢˇ", 1311},
+    {U"ㄓㄢˋ", 7239},
+    {U"ㄅㄚˇ", 1311},
+    {U"ㄅㄚˋ", 1311},
+    {U"ㄅㄚˊ", 1311},
+    {U"ㄅㄚ˙", 1614},
+    {U"ㄉㄚˇ", 1311},
+    {U"ㄉㄚˋ", 6134},
+    {U"ㄉㄚˊ", 12815},
+    {U"ㄉㄚ˙", 1311},
+    {U"ㄓㄚˇ", 1311},
+    {U"ㄓㄚˋ", 1311},
+    {U"ㄓㄚˊ", 1311},
+    {U"ㄅㄞˇ", 9752},
+    {U"ㄅㄞˋ", 1311},
+    {U"ㄅㄞˊ", 9753},
+    {U"ㄉㄞˇ", 1311},
+    {U"ㄉㄞˋ", 6770},
+    {U"ㄓㄞˇ", 1311},
+    {U"ㄓㄞˋ", 1311},
+    {U"ㄓㄞˊ", 1311},
+};
+
+// digits out of order tokens[run[k]], about to become a number: the model expects the syllable after
+// the Chinese before it enough to keep it (我們走817 -> 我們走吧). Only the last syllable of a run with
+// Chinese before it and nothing being typed right after; the text before is the engine's own choice
+// for the syllables as read so far, from the start of the run (engine/composer.py _model_reads_it)
+bool model_reads_it(const std::vector<Token>& tokens, const std::vector<size_t>& run, size_t k,
+                    const std::vector<ustr>& rds, const Lexicon* lexicon, const UserModel* user,
+                    const BigramModel* bigram, const LmScorer* lm) {
+    const Token& t = tokens[run[k]];
+    auto threshold = ORDER_LM_THRESHOLDS_Q16.find(t.value);
+    if (!lm || !lexicon || threshold == ORDER_LM_THRESHOLDS_Q16.end() || k == 0 || k + 1 != run.size()) return false;
+    size_t i = run[k];
+    if (i + 1 < tokens.size() && (tokens[i + 1].kind == Kind::Zh || tokens[i + 1].kind == Kind::Partial)) return false;
+    ustr before;
+    for (auto& seg : convert(std::vector<ustr>(rds.begin(), rds.begin() + static_cast<std::ptrdiff_t>(k)), *lexicon,
+                             user, {}, bigram, std::nullopt))
+        before += seg.phrase;
+    if (before.size() != k) return false;
+    return lm->syllable_mass_q16(before, t.value) >= threshold->second;
+}
+
 std::vector<Token> check_corrections(std::vector<Token> tokens, const SyllableTable& table, const Lexicon* lexicon,
-                                     const UserModel* user, const std::set<int>& exact, const BigramModel* bigram) {
+                                     const UserModel* user, const std::set<int>& exact, const BigramModel* bigram,
+                                     const LmScorer* lm) {
     // the 注音自動校正 that needs the words around a syllable (see engine/composer.py): digits
     // out of order stay zhuyin on their own (吧) or in a word likelier than the characters apart
     // (好吧), else they are a number (有813個, you are 817); a syllable read with a key next to the one typed takes the
@@ -796,7 +848,8 @@ std::vector<Token> check_corrections(std::vector<Token> tokens, const SyllableTa
             if (alone.count(run[k])) continue;
             std::optional<double> gain;
             if (lexicon) gain = better_word(rds, k, *lexicon, user);
-            if (!gain || *gain <= ORDER_DIGITS_GAIN) numbers.insert(run[k]);
+            if ((!gain || *gain <= ORDER_DIGITS_GAIN) && !model_reads_it(tokens, run, k, rds, lexicon, user, bigram, lm))
+                numbers.insert(run[k]);
         }
     }
     if (!numbers.empty()) {
@@ -948,7 +1001,8 @@ std::vector<Token> tokenize(const std::string& raw, const SyllableTable& table, 
                             const English& english, const std::set<int>& forced, bool after_english,
                             bool digits_as_zhuyin, const std::set<int>& literal, const std::set<int>& chinese,
                             const Fixed* fixed, const Lexicon* lexicon, const std::set<int>* breaks,
-                            const std::set<int>* exact, const Fixed* taken, const BigramModel* bigram) {
+                            const std::set<int>* exact, const Fixed* taken, const BigramModel* bigram,
+                            const LmScorer* lm) {
     // literal: raw offsets of keys that are always themselves (numpad); fixed: keys shown
     // as picked from the replacement bar (ㄏㄠˇ, clˇ); taken: keys read as a syllable picked
     // from the list (注音自動校正: si3 as ㄋㄧˇ). They cut the text in two.
@@ -972,7 +1026,7 @@ std::vector<Token> tokenize(const std::string& raw, const SyllableTable& table, 
     const std::set<int>& brk = breaks ? *breaks : no_breaks;
     const std::set<int>& ex = exact ? *exact : no_breaks;
     auto checked = [&](std::vector<Token> toks) {
-        return table.autocorrect ? check_corrections(std::move(toks), table, lexicon, user, ex, bigram) : toks;
+        return table.autocorrect ? check_corrections(std::move(toks), table, lexicon, user, ex, bigram, lm) : toks;
     };
     if (cuts.empty())
         return checked(tokenize_run(raw, table, user, english, forced, after_english, digits_as_zhuyin, chinese,
@@ -1682,7 +1736,7 @@ void Composer::settings_changed() {
 
 std::vector<Token> Composer::retokenize(const std::set<int>& chinese) const {
     return tokenize(raw, table_, &user, english_, forced_, after_english_, digits_as_zhuyin_, literal_, chinese,
-                    &fixed_, &lexicon_, &breaks_, &exact_, &taken_, bigram_);
+                    &fixed_, &lexicon_, &breaks_, &exact_, &taken_, bigram_, lm());
 }
 
 const LmScorer* Composer::lm() const {
@@ -2641,7 +2695,7 @@ std::optional<std::pair<int, std::vector<ustr>>> Composer::reads_as_chinese(int 
         if (a != unfix) fixed[a] = v;
     auto trial =
         tokenize(raw, table_, &user, english_, forced, after_english_, digits_as_zhuyin_, lit, ch, &fixed, &lexicon_,
-                 &breaks_, &exact_, &taken_, bigram_);
+                 &breaks_, &exact_, &taken_, bigram_, lm());
     std::vector<const Token*> inside;
     for (auto& t : trial)
         if (s <= t.start && t.start < end) inside.push_back(&t);
