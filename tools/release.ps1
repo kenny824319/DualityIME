@@ -5,7 +5,11 @@
 #          release binaries (cpp\publish.cmd) and the installer, then print the commit to push. develop with no packaged change: nothing happens.
 #          develop stops first when origin/main has commits develop lacks (main's X.(Y+1).0 bump): merge main
 #          back into develop, else its pre-releases would come out below the stable release.
-# publish: after the commit is pushed and HEAD equals origin/<branch>, create the GitHub Release
+#          It also stops when engine/ or cpp/engine/ changed since the last tag and no end-to-end case
+#          file (cpp/tools/*.txt) did (Get-MissingE2eCases).
+# Between them: install the installer just built, run tools\e2e_all.ps1 (every end-to-end case file), push.
+# publish: after the commit is pushed and HEAD equals origin/<branch>, and out\e2e-record.json is of this
+#          commit and of the DLL in bin\ (Get-E2eRecordProblem), create the GitHub Release
 #          (develop = prerelease). The tag is created by GitHub (--target), never locally. main then
 #          prints the commands that bring develop up to main (it does not run them).
 # -Version (publish only): release that version as it is, no bump (the new repo's first v3.0.0).
@@ -71,6 +75,42 @@ function Get-PrepareSteps {
     return @("py -3 .claude/scripts/check.py",
              "cmd /c cpp\publish.cmd",
              "powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Release")
+}
+
+# prepare's gate. Commits: those since the last release, newest first, each {Subject, Files, Message}.
+# $null when no commit changed the engine (engine/, cpp/engine/), or the newest one that did is followed
+# (itself included) by one that changes an end-to-end case file (cpp/tools/*.txt) or says none is needed
+# (" * 實機測試：不需要新案例（理由）", written only with the user's OK); else why it stops. A 選字 fix
+# adds the reported sentences as end-to-end cases: 3.1.5 fixed 自由 / 現象 with unit tests only (the
+# user, 2026-11-06), after an earlier fix of the same release had added its cases - so "a case file
+# changed since the last release" let it through.
+function Get-MissingE2eCases {
+    param([object[]]$Commits)
+    $covered = $false
+    foreach ($c in @($Commits)) {
+        $paths = @($c.Files | Where-Object { $_ } | ForEach-Object { ($_ -replace '\\', '/').Trim() })
+        if (@($paths | Where-Object { $_ -like "cpp/tools/*.txt" }).Count -or
+            "$($c.Message)" -match '(?m)^\s*\* 實機測試：不需要新案例') { $covered = $true }
+        if (@($paths | Where-Object { $_ -like "engine/*" -or $_ -like "cpp/engine/*" }).Count) {
+            if ($covered) { return $null }
+            return "引擎改了（$($c.Subject)），之後卻沒有新增端到端案例：把回報的句子加進 cpp\tools 的案例檔；" +
+                   "真的不需要時，經使用者同意在提交訊息寫「 * 實機測試：不需要新案例（理由）」"
+        }
+    }
+    return $null
+}
+
+# publish's gate: $null when out\e2e-record.json (tools\e2e_all.ps1 writes it when every end-to-end case
+# file passed) is of this commit and of the DLL built in bin\, else why it stops. 3.1.5 went out without
+# them (the user, 2026-11-06: 「少了端到端就不叫完整測試」).
+function Get-E2eRecordProblem {
+    param([string]$RecordText, [string]$Head, [string]$Dll)
+    $fix = "安裝 out 裡這一版的安裝檔，再跑 tools\e2e_all.ps1（跑的時候不要碰鍵盤），全部通過後重跑 -Phase publish"
+    if (-not $RecordText) { return "沒有端到端測試的紀錄（out\e2e-record.json）：$fix" }
+    try { $r = $RecordText | ConvertFrom-Json } catch { return "端到端測試的紀錄讀不懂：$fix" }
+    if ($r.head -ne $Head) { return "端到端測試是在另一個提交（$($r.head)）跑的，不是 ${Head}：$fix" }
+    if ($r.dll -ne $Dll) { return "端到端測試用的輸入法 DLL 不是這次建置的 bin\DualityIME64.dll：$fix" }
+    return $null
 }
 
 function Get-ReleaseArguments {
@@ -203,6 +243,23 @@ if ($Phase -eq "prepare") {
             else { Stop-Release $behind }
         }
     }
+    # (since the last release: the nearest tag; none yet, a new repo: no gate)
+    $lastTag = (& git describe --tags --abbrev=0 HEAD 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $lastTag) {
+        $since = @()
+        foreach ($sha in @(Invoke-Git rev-list "$lastTag..HEAD")) {
+            $since += [pscustomobject]@{
+                Subject = (@(Invoke-Git log -1 --format=%h%x20%s $sha)[0])
+                Files = @(Invoke-Git -c core.quotepath=false show --name-only --format= $sha)
+                Message = (@(Invoke-Git log -1 --format=%B $sha) -join "`n")
+            }
+        }
+        $missing = Get-MissingE2eCases -Commits $since
+        if ($missing) {
+            if ($WhatIf) { Write-Host "[WhatIf] note: $missing (a real run would stop here)" }
+            else { Stop-Release $missing }
+        }
+    }
     $tagExists = Test-TagExists "v$current"
     $headSubject = @(Invoke-Git log -1 --format=%s)[0]
     $next = Get-PrepareVersion -Current $current -Channel $Channel -TagExists $tagExists -HeadSubject $headSubject
@@ -249,8 +306,11 @@ if ($Phase -eq "prepare") {
         Invoke-Change $parts[0] @($parts[1..($parts.Count - 1)]) $failMsg
     }
     Write-Host ""
-    Write-Host "Version $next is committed, checked and built. Push it, then run -Phase publish:"
+    Write-Host "Version $next is committed, checked and built. Then, in this order:"
+    Write-Host "  install out\DualityIME-$next-setup.exe (the user: administrator rights)"
+    Write-Host "  powershell -ExecutionPolicy Bypass -File tools\e2e_all.ps1   (every end-to-end case file; keep off the keyboard)"
     Write-Host "  git push origin $branch"
+    Write-Host "  -Phase publish (it refuses without the end-to-end record of this commit and this DLL)"
     exit 0
 }
 
@@ -277,6 +337,15 @@ if (-not (Test-Path $installer)) {
     $hint = if ($Version) { "run installer\build.ps1 -Release" } else { "run -Phase prepare first" }
     if ($WhatIf) { Write-Host "[WhatIf] note: $installer is missing ($hint); a real run would stop here" }
     else { Stop-Release "$installer is missing; $hint" }
+}
+$recordFile = Join-Path $root "out\e2e-record.json"
+$builtDll = Join-Path $root "bin\DualityIME64.dll"
+$recordText = if (Test-Path $recordFile) { [IO.File]::ReadAllText($recordFile) } else { "" }
+$dllHash = if (Test-Path $builtDll) { (Get-FileHash -LiteralPath $builtDll -Algorithm SHA256).Hash } else { "" }
+$e2eProblem = Get-E2eRecordProblem -RecordText $recordText -Head $head -Dll $dllHash
+if ($e2eProblem) {
+    if ($WhatIf) { Write-Host "[WhatIf] note: $e2eProblem (a real run would stop here)" }
+    else { Stop-Release $e2eProblem }
 }
 
 $nearest = (& git describe --tags --abbrev=0 HEAD)

@@ -4,6 +4,7 @@
 # a learned word does not cut a longer one around it (講起來, not 獎 + 起來); nor into a cohesive word
 # though the corpus has the pair across words (文字由, 出現像: not 字由, 現像)
 #   powershell -ExecutionPolicy Bypass -File cpp\tools\e2e.ps1 cpp\tools\learned_singles_cases.txt -User cpp\tools\learned_singles_user.json
+# e2e-args: -User cpp\tools\learned_singles_user.json
 y4ru3{ENTER} => 自己
 su3y4ru3{ENTER} => 妳自己
 z; vu;4{ENTER} => 方向
