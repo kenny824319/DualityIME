@@ -41,7 +41,7 @@
 
 ### 協作機制（`/collab:correct` 2026-11-03，使用者決定 3.1.4 發版後另開分支做）
 
-8. 改了 `cpp/tip/` 卻用已安裝的舊 DLL 跑 e2e（e2e 用剛建置的引擎、但 DLL 是系統註冊的那份）：`cpp/tools/e2e.ps1` 開頭檢查，`cpp/tip/` 和 `origin/develop` 不同而註冊的 `DualityIME64.dll`（`HKCR\CLSID\{7F9854C9-…}\InprocServer32`）和建置出來的雜湊不同時停下，訊息請使用者裝 `release.ps1 -Phase prepare` 建出的安裝檔（推送前），或開發註冊時跑 `cpp\deploy.cmd`；`deploy.cmd` 只換 `cpp\build\stage`（`register.cmd` 的位置），裝了安裝版時沒用而且會先停掉引擎（2026-11-03 實際發生）。CLAUDE.md Commands 與 Workflow 5 補上，規則表加一列
+8. 開發途中單獨跑 `cpp/tools/e2e.ps1` 時，仍可能用已安裝的舊 DLL 測改過的 `cpp/tip/`（e2e 用剛建置的引擎、但 DLL 是系統註冊的那份；2026-11-03 實際發生）。發版前的 `tools/e2e_all.ps1` 已經會比對裝著的 DLL 和 `bin\` 的（2026-11-06）；剩下的是 `e2e.ps1` 本身：`cpp/tip/` 和 `origin/develop` 不同而註冊的 `DualityIME64.dll`（`HKCR\CLSID\{7F9854C9-…}\InprocServer32`）和建置出來的不同時停下，訊息請使用者裝剛建置的安裝檔；`deploy.cmd` 只換 `cpp\build\stage`，裝了安裝版時沒用而且會先停掉引擎
 9. 重現與量測的腳本只放在 scratchpad，換電腦或工作階段就沒了（817 的重現腳本、2026-11-03 的離線重算與學習紀錄比對）：把 scratchpad 的 `lm_sweep.py`（存每句前 10 個候選與分數、先確認和 `convert()` 逐句相同、換參數重算）和 `user_sweep.py`（`user.json` 副本改前改後比對：常用 6000 詞單獨與接在「我」後、repo 文件句子）整理成 `tools/lm/rerank_sweep.py`、`tools/user_sweep.py`，重跑要得到 decisions.md 2026-11-03 的數字；「仍有效的工作方式」與第 3 項改成指向它們，刪掉 review-backlog 裡 `decode.py` 那行
 10. 沒查證就說成事實（這次三次：搜尋摘要當原文、受保護的遊戲用 `tasklist /m` 判斷沒載入、「以前發版不跑 deploy.cmd」）：CLAUDE.md Gotchas 加「受反作弊保護的程式 `tasklist /m`、`Get-Process` 的模組是空的，用 `Win32_ModuleLoadTrace` 看」，Workflow 2 的證據規則加例子「搜尋工具的摘要不是原文，沒打開原文就標成摘要」
 

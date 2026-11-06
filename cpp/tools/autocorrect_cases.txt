@@ -1,5 +1,6 @@
 # End-to-end checks with 注音自動校正 on (one engine for all lines, so 校正記憶 carries over):
 #   powershell -ExecutionPolicy Bypass -File cpp\tools\e2e.ps1 cpp\tools\autocorrect_cases.txt -Config cpp\tools\autocorrect_config.json
+# e2e-args: -Config cpp\tools\autocorrect_config.json
 # (長句選字加強 writes 嗎 for ㄇㄚ˙ here, 3.0.2 嘛; with the setting off these read si3好嗎, 好817, 817, ss以, 今篇, jie好, si31)
 # a key next to the right one, spelling nothing (u for i) or as a tone key (e for 3)
 si3cl3a87{ENTER} => 你好嗎

@@ -34,6 +34,9 @@ You review uncommitted changes in 兩儀輸入法 (DualityIME, a Windows IME). D
    - English the user typed must never turn Chinese: `_protected_offsets` applies to every
      correction path, learned ones too (abc@si3.com).
    - Tests and tools use temporary folders, never `%APPDATA%\\DualityIME`.
+   - A 選字 (selection) fix adds the reported sentences to an end-to-end case file in
+     `cpp/tools/` in the same change, not only a unit test (3.1.5 fixed 自由 / 現象 without one;
+     release.ps1 prepare stops on it, but only at release time).
    - `README.md` and `docs/settings-ui-kit-text.md` follow user-visible behaviour and UI text.
    - `.bat` / `.cmd` / `.ps1`: CRLF (`.gitattributes`); `.ps1` read by PowerShell 5.1 is ASCII
      or UTF-8 with BOM.

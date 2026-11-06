@@ -86,5 +86,45 @@ Check "command usual path" (Resolve-Command -OnPath "" -Usual $script) $script
 Check "command missing" (Resolve-Command -OnPath "" -Usual "C:\nowhere\gh.exe") ""
 Check "command missing, no usual" (Resolve-Command -OnPath "" -Usual "") ""
 
+# prepare's gate (commits newest first): the newest commit that changed the engine must be followed,
+# itself included, by an end-to-end case file change or the user-approved line. 3.1.5: an earlier fix
+# had added its cases, the 自由 / 現象 fix after it none - that must stop.
+function New-Commit($subject, $files, $message = " * x") { [pscustomobject]@{ Subject = $subject; Files = $files; Message = $message } }
+$fix = New-Commit "8d5bf7b fix" @("engine/composer.py", "cpp/engine/composer.cpp", "tests/test_engine.py")
+$earlier = New-Commit "b56e40f 817" @("engine/composer.py", "cpp/tools/autocorrect_cases.txt")
+$version = New-Commit "0ecf7c2 version" @("VERSION")
+$cases = New-Commit "3b8fcfa cases" @("cpp/tools/tsf_test.txt")
+Check "e2e cases: 3.1.5 as released" ((Get-MissingE2eCases -Commits @($version, $fix, $earlier)) -like "引擎改了（8d5bf7b fix）*cpp\tools*") $true
+Check "e2e cases: cases after the fix" (Get-MissingE2eCases -Commits @($cases, $version, $fix, $earlier)) $null
+Check "e2e cases: in the same commit" (Get-MissingE2eCases -Commits @($version, $earlier)) $null
+Check "e2e cases: approved none" (Get-MissingE2eCases -Commits @($version, (New-Commit "a speed" @("cpp/engine/lm.cpp") " * 開發工具：a`n * 實機測試：不需要新案例（只改速度）"))) $null
+Check "e2e cases: no engine" (Get-MissingE2eCases -Commits @((New-Commit "a tip" @("cpp/tip/ui.cpp", "docs/a.md")))) $null
+Check "e2e cases: nothing" (Get-MissingE2eCases -Commits @()) $null
+Check "e2e cases: backslashes" ((Get-MissingE2eCases -Commits @((New-Commit "a" @("cpp\engine\lm.cpp")))) -ne $null) $true
+Check "e2e cases: a json is no case" ((Get-MissingE2eCases -Commits @((New-Commit "a" @("engine/lm.py", "cpp/tools/autocorrect_config.json")))) -ne $null) $true
+Check "e2e cases: cases before the fix" ((Get-MissingE2eCases -Commits @($fix, $cases)) -ne $null) $true
+
+# publish's gate: the record tools\e2e_all.ps1 writes, of this commit and of the DLL built in bin\
+$rec = '{"head": "abc123", "dll": "D11"}'
+Check "e2e record ok" (Get-E2eRecordProblem -RecordText $rec -Head "abc123" -Dll "D11") $null
+Check "e2e record missing" ((Get-E2eRecordProblem -RecordText "" -Head "abc123" -Dll "D11") -like "沒有端到端測試的紀錄*tools\e2e_all.ps1*") $true
+Check "e2e record other commit" ((Get-E2eRecordProblem -RecordText $rec -Head "def456" -Dll "D11") -like "端到端測試是在另一個提交（abc123）跑的*") $true
+Check "e2e record other dll" ((Get-E2eRecordProblem -RecordText $rec -Head "abc123" -Dll "D22") -like "*不是這次建置的*") $true
+Check "e2e record no dll built" ((Get-E2eRecordProblem -RecordText $rec -Head "abc123" -Dll "") -ne $null) $true
+Check "e2e record garbage" ((Get-E2eRecordProblem -RecordText "not json" -Head "abc123" -Dll "D11") -like "*讀不懂*") $true
+
+# every case file is found, with its options; probes without "=>" are not case files
+. (Join-Path $PSScriptRoot "e2e_all.ps1")
+$fixture = Join-Path $env:TEMP "dualityime-e2e-cases-test"
+New-Item -ItemType Directory -Force $fixture | Out-Null
+[IO.File]::WriteAllText((Join-Path $fixture "b_cases.txt"), "# x`n# e2e-args: -Config cpp\tools\b.json`nsu3{ENTER} => 你`n")
+[IO.File]::WriteAllText((Join-Path $fixture "a_plain.txt"), "# y`nsu3{ENTER} => 你`n")
+[IO.File]::WriteAllText((Join-Path $fixture "c_probe.txt"), "# a probe`nsu3{ENTER}`n# not => a case`n")
+$found = @(Get-E2eCaseFiles $fixture)
+Check "case files" (($found | ForEach-Object { "$(Split-Path $_.File -Leaf):$($_.Args -join ' ')" }) -join " | ") "a_plain.txt: | b_cases.txt:-Config cpp\tools\b.json"
+$repoCases = @(Get-E2eCaseFiles (Join-Path (Split-Path $PSScriptRoot -Parent) "cpp\tools") | ForEach-Object { Split-Path $_.File -Leaf })
+Check "repo case files" ($repoCases -join " ") "autocorrect_cases.txt learned_singles_cases.txt long_sentence_off.txt pair_cases.txt tsf_test.txt"
+Remove-Item $fixture -Recurse -Force -ErrorAction SilentlyContinue
+
 if ($fail -gt 0) { Write-Host "$fail FAILED"; exit 1 }
 Write-Host "ALL PASSED"
