@@ -48,7 +48,8 @@ WebView2. `README.md` is the user manual. Users install from GitHub Releases
   types with and types keys into a window — say before starting so the user keeps off the keyboard):
   every case file: `powershell -ExecutionPolicy Bypass -File tools\e2e_all.ps1` (`-List` shows them: each
   `cpp\tools\*.txt` with `keys => text` lines, its options on a `# e2e-args:` line; it first checks the
-  installed DLL is the one built in `bin\`, and writes `out\e2e-record.json` when all pass); one file:
+  DLL Windows loads and the engine it starts are the ones built in `bin\`, and writes `out\e2e-record.json`
+  only when every file ran to its summary with nothing failed); one file:
   `powershell -ExecutionPolicy Bypass -File cpp\tools\e2e.ps1 [cases.txt] [-Config file.json] [-User user.json]`
   (`-User`: a user.json to start from: picks without "used" never fade). A 選字 fix adds the reported
   sentences to a case file in the same change.
@@ -103,10 +104,10 @@ WebView2. `README.md` is the user manual. Users install from GitHub Releases
    `-Phase prepare` bumps `VERSION` (develop X.Y.(Z+1), main X.(Y+1).0), commits it, runs the full check,
    `cpp\publish.cmd` and `installer\build.ps1 -Release` (develop with nothing packaged changed — `cpp/`, `installer/`, `settings/`, `data/`,
    `VERSION` — does nothing; it stops when the newest commit since the last tag that changed `engine/` or
-   `cpp/engine/` has no end-to-end case after it); then the user installs `out\DualityIME-X.Y.Z-setup.exe`
+   `cpp/engine/` has no commit adding a case line (`keys => text`) after it); then the user installs `out\DualityIME-X.Y.Z-setup.exe`
    and Claude runs `tools\e2e_all.ps1` (say so first: keep off the keyboard); then Claude runs `git push`
    itself (so guard_bash and push_audit check it);
-   then `-Phase publish` (it refuses without `out\e2e-record.json` of this commit and of `bin\`'s DLL)
+   then `-Phase publish` (it refuses without `out\e2e-record.json` of this commit and of `bin\`'s DLL and engine)
    creates the Release `vX.Y.Z` with the installer (develop = Pre-release; the tag is
    made by GitHub, never locally). Claude passes this session's attribution lines as one string, `-Trailers "line|line"`
    (the default is none). The release notes list only what users notice: commit items starting with
@@ -168,8 +169,8 @@ is dropped.
 | Claude commits and pushes; other git writes (reset, amend, checkout --, tag, merge, rebase) ask | guard_bash git whitelist (`PROJECT_GIT_POLICY = "push"`) |
 | Nothing on GitHub is deleted or rewritten by Claude | guard_bash BLOCK (`gh repo delete`, `gh api -X DELETE`, force / delete / mirror pushes) |
 | A Release is of exactly what was checked and pushed | release.ps1 (prepare runs check.py after the version commit; publish needs HEAD = `origin/<branch>`) |
-| A Release passed every end-to-end case file, typed with the DLL it ships | release.ps1 publish (`Get-E2eRecordProblem`: `out\e2e-record.json` of HEAD and of `bin\DualityIME64.dll`, which `tools\e2e_all.ps1` writes only when the installed DLL is that one and every `cpp\tools` case file passed) |
-| A release whose engine changed has new end-to-end cases (a 選字 fix adds the reported sentences) | release.ps1 prepare (`Get-MissingE2eCases`; exception: a commit line ` * 實機測試：不需要新案例（理由）`, only with the user's OK) |
+| A Release passed every end-to-end case file, typed with the DLL and engine it ships | release.ps1 publish (`Get-E2eRecordProblem`: `out\e2e-record.json` of HEAD and of `bin\`'s DLL and engine, which `tools\e2e_all.ps1` writes only when the registered DLL and the test engine are those and every `cpp\tools` case file ran to its summary with 0 failed) |
+| A release whose engine changed has new end-to-end cases (a 選字 fix adds the reported sentences) | release.ps1 prepare (`Get-MissingE2eCases`: a commit adding case lines at or after the newest engine change; exception: a commit line ` * 實機測試：不需要新案例（理由）`, only with the user's OK) |
 | Releasing to `main` is the user's call | guard_bash asks for `git merge`; otherwise nothing |
 | A push is of exactly what passed the full check | push_audit.py (check.py records the tree; guard_bash runs the audit before every push) |
 | The full check is of one state: nothing is edited while it runs | check.py (compares the tree at start and end; fails and records nothing if they differ) |

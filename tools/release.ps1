@@ -77,20 +77,26 @@ function Get-PrepareSteps {
              "powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Release")
 }
 
-# prepare's gate. Commits: those since the last release, newest first, each {Subject, Files, Message}.
+# prepare's gate. Commits: those since the last release, newest first, each {Subject, Files, Message,
+# AddedCases} (AddedCases: the case lines, "keys => text", the commit adds to cpp/tools/*.txt).
 # $null when no commit changed the engine (engine/, cpp/engine/), or the newest one that did is followed
-# (itself included) by one that changes an end-to-end case file (cpp/tools/*.txt) or says none is needed
-# (" * 實機測試：不需要新案例（理由）", written only with the user's OK); else why it stops. A 選字 fix
-# adds the reported sentences as end-to-end cases: 3.1.5 fixed 自由 / 現象 with unit tests only (the
-# user, 2026-11-06), after an earlier fix of the same release had added its cases - so "a case file
-# changed since the last release" let it through.
+# (itself included) by one that adds a case line or says none is needed (" * 實機測試：不需要新案例
+# （理由）", written only with the user's OK); else why it stops. A 選字 fix adds the reported sentences
+# as end-to-end cases: 3.1.5 fixed 自由 / 現象 with unit tests only (the user, 2026-11-06), after an
+# earlier fix of the same release had added its cases - so "a case file changed since the last release"
+# let it through; and a comment changed in a case file is no case.
+function Get-AddedCaseLines {
+    # (a diff of case files: the added lines that are cases - not comments, not the +++ header)
+    param([string[]]$DiffLines)
+    return @($DiffLines | Where-Object { $_ -match '^\+(?!\+\+ )(?!#).* => ' }).Count
+}
+
 function Get-MissingE2eCases {
     param([object[]]$Commits)
     $covered = $false
     foreach ($c in @($Commits)) {
         $paths = @($c.Files | Where-Object { $_ } | ForEach-Object { ($_ -replace '\\', '/').Trim() })
-        if (@($paths | Where-Object { $_ -like "cpp/tools/*.txt" }).Count -or
-            "$($c.Message)" -match '(?m)^\s*\* 實機測試：不需要新案例') { $covered = $true }
+        if ($c.AddedCases -gt 0 -or "$($c.Message)" -match '(?m)^\s*\* 實機測試：不需要新案例') { $covered = $true }
         if (@($paths | Where-Object { $_ -like "engine/*" -or $_ -like "cpp/engine/*" }).Count) {
             if ($covered) { return $null }
             return "引擎改了（$($c.Subject)），之後卻沒有新增端到端案例：把回報的句子加進 cpp\tools 的案例檔；" +
@@ -101,15 +107,16 @@ function Get-MissingE2eCases {
 }
 
 # publish's gate: $null when out\e2e-record.json (tools\e2e_all.ps1 writes it when every end-to-end case
-# file passed) is of this commit and of the DLL built in bin\, else why it stops. 3.1.5 went out without
-# them (the user, 2026-11-06: 「少了端到端就不叫完整測試」).
+# file passed) is of this commit and of the DLL and engine built in bin\, else why it stops. 3.1.5 went
+# out without them (the user, 2026-11-06: 「少了端到端就不叫完整測試」).
 function Get-E2eRecordProblem {
-    param([string]$RecordText, [string]$Head, [string]$Dll)
+    param([string]$RecordText, [string]$Head, [string]$Dll, [string]$Engine)
     $fix = "安裝 out 裡這一版的安裝檔，再跑 tools\e2e_all.ps1（跑的時候不要碰鍵盤），全部通過後重跑 -Phase publish"
     if (-not $RecordText) { return "沒有端到端測試的紀錄（out\e2e-record.json）：$fix" }
     try { $r = $RecordText | ConvertFrom-Json } catch { return "端到端測試的紀錄讀不懂：$fix" }
     if ($r.head -ne $Head) { return "端到端測試是在另一個提交（$($r.head)）跑的，不是 ${Head}：$fix" }
     if ($r.dll -ne $Dll) { return "端到端測試用的輸入法 DLL 不是這次建置的 bin\DualityIME64.dll：$fix" }
+    if ($r.engine -ne $Engine) { return "端到端測試用的引擎不是這次建置的 bin\DualityIMEEngine.exe：$fix" }
     return $null
 }
 
@@ -252,6 +259,7 @@ if ($Phase -eq "prepare") {
                 Subject = (@(Invoke-Git log -1 --format=%h%x20%s $sha)[0])
                 Files = @(Invoke-Git -c core.quotepath=false show --name-only --format= $sha)
                 Message = (@(Invoke-Git log -1 --format=%B $sha) -join "`n")
+                AddedCases = Get-AddedCaseLines @(Invoke-Git -c core.quotepath=false show --format= -U0 $sha -- "cpp/tools/*.txt")
             }
         }
         $missing = Get-MissingE2eCases -Commits $since
@@ -342,7 +350,9 @@ $recordFile = Join-Path $root "out\e2e-record.json"
 $builtDll = Join-Path $root "bin\DualityIME64.dll"
 $recordText = if (Test-Path $recordFile) { [IO.File]::ReadAllText($recordFile) } else { "" }
 $dllHash = if (Test-Path $builtDll) { (Get-FileHash -LiteralPath $builtDll -Algorithm SHA256).Hash } else { "" }
-$e2eProblem = Get-E2eRecordProblem -RecordText $recordText -Head $head -Dll $dllHash
+$builtEngine = Join-Path $root "bin\DualityIMEEngine.exe"
+$engineHash = if (Test-Path $builtEngine) { (Get-FileHash -LiteralPath $builtEngine -Algorithm SHA256).Hash } else { "" }
+$e2eProblem = Get-E2eRecordProblem -RecordText $recordText -Head $head -Dll $dllHash -Engine $engineHash
 if ($e2eProblem) {
     if ($WhatIf) { Write-Host "[WhatIf] note: $e2eProblem (a real run would stop here)" }
     else { Stop-Release $e2eProblem }

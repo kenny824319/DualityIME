@@ -21,3 +21,4 @@
 - [TIP popups outside place_ui](project_tip_popups_outside_place_ui.md) — show_mode / show_menu skip place_ui; SymbolKeyboard was_visible hides a remade window
 - [guard blocks Stop-Process probes](project_guard_blocks_stop_process_probe.md) — any command text with Stop-Process is blocked; probe PS pipes another way
 - [Keyboard state phantom keys](project_keyboard_state_phantom_keys.md) — GetKeyboardState shows IME codes (0xF1) held for good; "other key held" scans must whitelist real keys
+- [Start-Process ExitCode null](project_ps_start_process_exitcode_null.md) — PS 5.1 -PassThru -Redirect: ExitCode $null, exit 0; e2e.ps1 passes FAILs; cache $p.Handle
