@@ -94,14 +94,17 @@ function New-Commit($subject, $files, $added = 0, $message = " * x") {
 }
 $fix = New-Commit "8d5bf7b fix" @("engine/composer.py", "cpp/engine/composer.cpp", "tests/test_engine.py")
 $earlier = New-Commit "b56e40f 817" @("engine/composer.py", "cpp/tools/autocorrect_cases.txt") 2
-$version = New-Commit "0ecf7c2 version" @("VERSION")
+$versionCommit = New-Commit "0ecf7c2 version" @("VERSION")
 $cases = New-Commit "3b8fcfa cases" @("cpp/tools/tsf_test.txt") 7
 $comment = New-Commit "54c3315 e2e-args" @("cpp/tools/autocorrect_cases.txt", "tools/e2e_all.ps1") 0
-Check "e2e cases: 3.1.5 as released" ((Get-MissingE2eCases -Commits @($version, $fix, $earlier)) -like "引擎改了（8d5bf7b fix）*cpp\tools*") $true
-Check "e2e cases: cases after the fix" (Get-MissingE2eCases -Commits @($cases, $version, $fix, $earlier)) $null
-Check "e2e cases: only a comment after" ((Get-MissingE2eCases -Commits @($comment, $version, $fix, $earlier)) -ne $null) $true
-Check "e2e cases: in the same commit" (Get-MissingE2eCases -Commits @($version, $earlier)) $null
-Check "e2e cases: approved none" (Get-MissingE2eCases -Commits @($version, (New-Commit "a speed" @("cpp/engine/lm.cpp") 0 " * 開發工具：a`n * 實機測試：不需要新案例（只改速度）"))) $null
+# (release.ps1's typed parameters stay in this scope after the dot-source: a fixture named $version
+# was turned into a string by [string]$Version)
+Check "e2e cases: fixtures are commits" (@($fix, $earlier, $versionCommit, $cases, $comment | Where-Object { $null -eq $_.Subject }).Count) 0
+Check "e2e cases: 3.1.5 as released" ((Get-MissingE2eCases -Commits @($versionCommit, $fix, $earlier)) -like "引擎改了（8d5bf7b fix）*cpp\tools*") $true
+Check "e2e cases: cases after the fix" (Get-MissingE2eCases -Commits @($cases, $versionCommit, $fix, $earlier)) $null
+Check "e2e cases: only a comment after" ((Get-MissingE2eCases -Commits @($comment, $versionCommit, $fix, $earlier)) -ne $null) $true
+Check "e2e cases: in the same commit" (Get-MissingE2eCases -Commits @($versionCommit, $earlier)) $null
+Check "e2e cases: approved none" (Get-MissingE2eCases -Commits @($versionCommit, (New-Commit "a speed" @("cpp/engine/lm.cpp") 0 " * 開發工具：a`n * 實機測試：不需要新案例（只改速度）"))) $null
 Check "e2e cases: no engine" (Get-MissingE2eCases -Commits @((New-Commit "a tip" @("cpp/tip/ui.cpp", "docs/a.md")))) $null
 Check "e2e cases: nothing" (Get-MissingE2eCases -Commits @()) $null
 Check "e2e cases: backslashes" ((Get-MissingE2eCases -Commits @((New-Commit "a" @("cpp\engine\lm.cpp")))) -ne $null) $true
