@@ -14,8 +14,19 @@ $build = Join-Path $PSScriptRoot "..\build"
 $installed = Join-Path $env:ProgramFiles "DualityIME\DualityIMEEngine.exe"
 $built = Join-Path $build "x64-Release\DualityIMEEngine.exe"
 $engine = if (Test-Path $built) { $built } else { $installed }
-Get-Process DualityIMEEngine, sz_tsftest -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep -Milliseconds 300
+# No other engine may hold the pipe when the test engine starts (it would leave at once, "already
+# running"): the everyday one a run before started through explorer.exe may show up late, and an
+# input method that gets the focus back starts one. Stopped until none is left half a second on.
+function Stop-OtherEngines {
+    for ($i = 0; $i -lt 10; $i++) {
+        $running = @(Get-Process DualityIMEEngine -ErrorAction SilentlyContinue)
+        if ($running.Count -eq 0 -and $i -gt 0) { return }
+        $running | Stop-Process -Force
+        Start-Sleep -Milliseconds 500
+    }
+}
+Get-Process sz_tsftest -ErrorAction SilentlyContinue | Stop-Process -Force
+Stop-OtherEngines
 $dir = Join-Path $env:TEMP "sz-e2e"
 Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory $dir | Out-Null
@@ -29,8 +40,12 @@ $caps = [Console]::CapsLock
 if ($caps) { Press-CapsLock }
 try {
     # (--keep-elevated: it stays this elevated process's child, for the elevated test window and $ours)
-    $ours = Start-Process $engine -ArgumentList "--user-dir", "`"$dir`"", "--data-dir", "`"$(Join-Path $root 'data')`"", "--keep-elevated" -PassThru
-    Start-Sleep -Milliseconds 1200
+    for ($try = 1; $try -le 3; $try++) {
+        $ours = Start-Process $engine -ArgumentList "--user-dir", "`"$dir`"", "--data-dir", "`"$(Join-Path $root 'data')`"", "--keep-elevated" -PassThru
+        Start-Sleep -Milliseconds 1200
+        if (-not $ours.HasExited) { break }
+        Stop-OtherEngines  # (one came up in between and took the pipe: once more)
+    }
     if ($ours.HasExited) { "STOPPED: the test engine did not start"; exit 1 }
     $out = Join-Path $dir "out.txt"
     # the language it is set up under for this user (中文(香港) is a setting)
