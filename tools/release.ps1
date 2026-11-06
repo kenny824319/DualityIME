@@ -5,8 +5,8 @@
 #          release binaries (cpp\publish.cmd) and the installer, then print the commit to push. develop with no packaged change: nothing happens.
 #          develop stops first when origin/main has commits develop lacks (main's X.(Y+1).0 bump): merge main
 #          back into develop, else its pre-releases would come out below the stable release.
-#          It also stops when engine/ or cpp/engine/ changed since the last tag and no end-to-end case
-#          file (cpp/tools/*.txt) did (Get-MissingE2eCases).
+#          It also stops when no commit at or after the newest change of engine/ or cpp/engine/ since the
+#          last tag adds an end-to-end case line ("keys => text" in cpp/tools/*.txt; Get-MissingE2eCases).
 # Between them: install the installer just built, run tools\e2e_all.ps1 (every end-to-end case file), push.
 # publish: after the commit is pushed and HEAD equals origin/<branch>, and out\e2e-record.json is of this
 #          commit and of the DLL in bin\ (Get-E2eRecordProblem), create the GitHub Release
