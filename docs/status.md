@@ -14,8 +14,11 @@
 | 選字學習 | 學過的詞不再把字典裡含它的長詞拆開（學過「起來」又單獨選過「獎」，「講起來」不再打成「獎起來」） | `docs/architecture/decisions.md`（2026-11-03） |
 | 中英判斷 | 英文後面的 1–2 字母字，讀成注音能組成很常用的詞時當注音（「好 B 因為」不再是「好 B up 為」） | `docs/architecture/decisions.md`（2026-11-03） |
 | 選字 | 長句選字加強：自己訓練的小型語言模型看整句選字（預設開啟） | `docs/superpowers/specs/2026-10-29-long-sentence-lm-design.md` |
+| 選字學習 | 常選的同音字不再換進緊密的詞（「字」選多次後「自由」不再是「字由」，「現象」不再是「現像」；常選「她／妳」不會出現「其她」「迷妳」） | `docs/architecture/decisions.md`（2026-11-05） |
 | 選字 | 長句選字加強不再把字典的詞拆成單字（新舊、選字、有件事倒是），「我再」不會變成「我在」；「怎麼」先送出再打「辦」不再是「半」 | `docs/architecture/decisions.md`（2026-11-03） |
 | 設定 | Ctrl + 標點打全形預設開啟，舊使用者更新後也開啟 | `docs/architecture/decisions.md`（2026-11-03） |
+| 符號鍵盤 | Shift + ` 打出 ~，只有 ` 叫出符號鍵盤 | `docs/architecture/decisions.md`（2026-11-05） |
+| 輸入法視窗 | Windows 搜尋框、開始功能表裡看得到注音提示與候選字 | `docs/architecture/decisions.md`（2026-11-06） |
 | 框選查詢 | 修正查詢時視窗不出現（讀選取文字時當掉、視窗開在其他程式後面）；GitHub 標題這類網頁深處的選取也查得到 | `docs/architecture/decisions.md`（2026-11-04） |
 | 注音自動校正 | 句尾順序打反的數字由長句選字加強判斷：「我們走817」→ 我們走吧，「房間號碼是817」照舊是數字（每個音節各自門檻） | `docs/superpowers/specs/2026-11-04-reversed-digits-lm-design.md` |
 | 注音自動校正 | 看整句：漏打聲調（5k邊 → 這邊）、標點鍵開頭的順序打反（剛;e → 剛剛）、按到隔壁鍵拼成另一個音（現役 → 信義） | `docs/superpowers/specs/2026-10-29-adjacent-valid-sentence-design.md` 第 1 階段 |
@@ -33,11 +36,14 @@
 4. 有反作弊的遊戲在遊戲中打不了字（2026-11-03 使用者回報：英雄聯盟、APEX、鬥陣特攻不行，爐石可以；README 已列為已知限制）。LoL 實測（核心的模組載入事件 `Win32_ModuleLoadTrace`）：遊戲本體載入了 TSF 和 Google 日文（有 Google 簽章）的 DLL，切到假名後能打日文，兩儀的 DLL 卻沒有被載入，啟動前就切到兩儀也一樣；兩儀的 DLL 沒有數位簽章，最可能是反作弊只放行有簽章的 DLL（推論，還沒用簽章驗證過）。模組清單在受保護的遊戲裡讀不到（`tasklist /m` 是空的），要用載入事件看。做法：先用自簽憑證在會擋的遊戲裡試（要裝根憑證、`deploy.cmd` 換 DLL），有效再買憑證。選項：Certum 開源憑證約 €49／年（個人、要開源授權，repo 目前沒有 LICENSE），SignPath 免費但不能含非開源元件（WebView2）、要在 GitHub Actions 建置，Azure Artifact Signing 個人只限美加，OV 憑證約 US$130–300／年。簽章後遊戲可能一開始就把輸入法關閉，要確認在遊戲裡切得回中文。VRChat 不一樣：兩儀和 Google 日文都有載入，但都打不了，是 VRChat 自己不收輸入法的字
 5. 口語語助詞缺輕聲讀音（2026-11-03 使用者回報「囉」打不出）：字典（McBopomofo）沒有 囉 ㄌㄨㄛ˙、喔／哦 ㄛ˙、耶 ㄧㄝ˙、欸 ㄟ˙、咧 ㄌㄧㄝ˙、嘿 ㄏㄟ˙、唉 ㄞ˙、呦 ㄧㄡ˙、咩 ㄇㄧㄝ˙、齁 ㄏㄡ˙（這些音沒有任何字，按鍵變成英文字母，`xji7`），嘍 ㄌㄡ˙、唷 ㄧㄛ˙、哇 ㄨㄚ˙、嚕 ㄌㄨ˙ 只有冷僻字。個人詞庫也補不起來：音節表只看內建字典，個人詞庫加了「囉 ㄌㄨㄛ˙」照樣是 `xji7`。要做的：`tools/build_lexicon.py` 加一份口語輕聲補充清單（分數低，不搶一般字），以及個人詞庫的讀音也算有效音節
 
+6. 選字記憶蓋過長句選字加強（2026-11-05 使用者回報「越來越多人反映」）：單字選過就套到所有同音位置（「是」選多次後「的事」→的是、「她」選一次後「他的」→她的），選過的詞蓋過斷詞或同音詞（學過「不是」後「不適合」→不是和、學過「粒子」後「例子」→粒子）。設計 `docs/superpowers/specs/2026-11-05-model-first-memory-design.md`（模型優先、記憶只在分不出來時決定、個人詞庫永遠優先、同音習慣上限 ±2）量過但沒實作：文件句子本來對→變錯 68、變對 61，剩下的錯多半是模型自己判斷錯（從左往右讀：「電腦較舊」→教就）。前提是換能看整句的模型（和第 3 項同一件事），換了之後用 `C:\Users\kenny\Data\lm\memory_eval\` 的資料與腳本重量
+7. Claude 桌面版輸入框（偶爾也在瀏覽器）打到一半，組字的文字先被送出，後面又出現一份同樣的、還在組字的文字（2026-11-05 使用者回報，偶發，還沒重現）。推論：網頁編輯器重畫時把組字的文字定案了，卻沒通知輸入法（沒有 `OnCompositionTerminated`），下一個鍵就把整段寫到新位置。查法：本機診斷版在 `set_text` 比對「上次寫進去的」和「現在讀回來的」組字內容（只記長度），等它再發生時讀紀錄；不能直接以「讀回來不同」就重設，透過 IMM32 的舊程式與終端機讀回來的內容本來就可能不同
+
 ### 協作機制（`/collab:correct` 2026-11-03，使用者決定 3.1.4 發版後另開分支做）
 
-6. 改了 `cpp/tip/` 卻用已安裝的舊 DLL 跑 e2e（e2e 用剛建置的引擎、但 DLL 是系統註冊的那份）：`cpp/tools/e2e.ps1` 開頭檢查，`cpp/tip/` 和 `origin/develop` 不同而註冊的 `DualityIME64.dll`（`HKCR\CLSID\{7F9854C9-…}\InprocServer32`）和建置出來的雜湊不同時停下，訊息請使用者裝 `release.ps1 -Phase prepare` 建出的安裝檔（推送前），或開發註冊時跑 `cpp\deploy.cmd`；`deploy.cmd` 只換 `cpp\build\stage`（`register.cmd` 的位置），裝了安裝版時沒用而且會先停掉引擎（2026-11-03 實際發生）。CLAUDE.md Commands 與 Workflow 5 補上，規則表加一列
-7. 重現與量測的腳本只放在 scratchpad，換電腦或工作階段就沒了（817 的重現腳本、2026-11-03 的離線重算與學習紀錄比對）：把 scratchpad 的 `lm_sweep.py`（存每句前 10 個候選與分數、先確認和 `convert()` 逐句相同、換參數重算）和 `user_sweep.py`（`user.json` 副本改前改後比對：常用 6000 詞單獨與接在「我」後、repo 文件句子）整理成 `tools/lm/rerank_sweep.py`、`tools/user_sweep.py`，重跑要得到 decisions.md 2026-11-03 的數字；「仍有效的工作方式」與第 3 項改成指向它們，刪掉 review-backlog 裡 `decode.py` 那行
-8. 沒查證就說成事實（這次三次：搜尋摘要當原文、受保護的遊戲用 `tasklist /m` 判斷沒載入、「以前發版不跑 deploy.cmd」）：CLAUDE.md Gotchas 加「受反作弊保護的程式 `tasklist /m`、`Get-Process` 的模組是空的，用 `Win32_ModuleLoadTrace` 看」，Workflow 2 的證據規則加例子「搜尋工具的摘要不是原文，沒打開原文就標成摘要」
+8. 改了 `cpp/tip/` 卻用已安裝的舊 DLL 跑 e2e（e2e 用剛建置的引擎、但 DLL 是系統註冊的那份）：`cpp/tools/e2e.ps1` 開頭檢查，`cpp/tip/` 和 `origin/develop` 不同而註冊的 `DualityIME64.dll`（`HKCR\CLSID\{7F9854C9-…}\InprocServer32`）和建置出來的雜湊不同時停下，訊息請使用者裝 `release.ps1 -Phase prepare` 建出的安裝檔（推送前），或開發註冊時跑 `cpp\deploy.cmd`；`deploy.cmd` 只換 `cpp\build\stage`（`register.cmd` 的位置），裝了安裝版時沒用而且會先停掉引擎（2026-11-03 實際發生）。CLAUDE.md Commands 與 Workflow 5 補上，規則表加一列
+9. 重現與量測的腳本只放在 scratchpad，換電腦或工作階段就沒了（817 的重現腳本、2026-11-03 的離線重算與學習紀錄比對）：把 scratchpad 的 `lm_sweep.py`（存每句前 10 個候選與分數、先確認和 `convert()` 逐句相同、換參數重算）和 `user_sweep.py`（`user.json` 副本改前改後比對：常用 6000 詞單獨與接在「我」後、repo 文件句子）整理成 `tools/lm/rerank_sweep.py`、`tools/user_sweep.py`，重跑要得到 decisions.md 2026-11-03 的數字；「仍有效的工作方式」與第 3 項改成指向它們，刪掉 review-backlog 裡 `decode.py` 那行
+10. 沒查證就說成事實（這次三次：搜尋摘要當原文、受保護的遊戲用 `tasklist /m` 判斷沒載入、「以前發版不跑 deploy.cmd」）：CLAUDE.md Gotchas 加「受反作弊保護的程式 `tasklist /m`、`Get-Process` 的模組是空的，用 `Win32_ModuleLoadTrace` 看」，Workflow 2 的證據規則加例子「搜尋工具的摘要不是原文，沒打開原文就標成摘要」
 
 ## 仍有效的工作方式
 

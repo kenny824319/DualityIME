@@ -116,6 +116,10 @@ Popup::~Popup() {
 }
 
 bool Popup::create(const wchar_t* class_name) {
+    // (an owner the app closed since: none, or the window could not be made)
+    if (owner_for_new_ && !IsWindow(owner_for_new_)) owner_for_new_ = nullptr;
+    // (owned by another window now: made again, a window's layer is set when it is made)
+    if (hwnd_ && owner_ != owner_for_new_) DestroyWindow(hwnd_);
     if (hwnd_) return true;
     WNDCLASSEXW wc{sizeof wc};
     if (!GetClassInfoExW(g_module, class_name, &wc)) {
@@ -128,8 +132,9 @@ bool Popup::create(const wchar_t* class_name) {
         RegisterClassExW(&wc);
     }
     hwnd_ = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, class_name, kName, WS_POPUP, 0, 0,
-                            10, 10, nullptr, nullptr, g_module, this);
+                            10, 10, owner_for_new_, nullptr, g_module, this);
     if (!hwnd_) return false;
+    owner_ = owner_for_new_;
     DWORD corners = 2;  // rounded corners on Windows 11
     DwmSetWindowAttribute(hwnd_, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &corners, sizeof corners);
     return true;
@@ -182,8 +187,9 @@ LRESULT CALLBACK Popup::proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == WM_MOUSEACTIVATE) return MA_NOACTIVATE;  // clicking must not take the focus from the app
     if (msg == WM_ERASEBKGND) return 1;
     if (!self) return DefWindowProcW(hwnd, msg, wp, lp);
-    if (msg == WM_NCDESTROY) {
+    if (msg == WM_NCDESTROY) {  // (also when the app closes the window that owns it)
         self->hwnd_ = nullptr;
+        self->visible_ = false;
         return DefWindowProcW(hwnd, msg, wp, lp);
     }
     try {
@@ -612,8 +618,8 @@ void SymbolKeyboard::save_position(bool keep) {
 }
 
 void SymbolKeyboard::show(int page, int cursor, const RECT& caret) {
-    bool was_visible = visible_;
     if (!create(L"DualityIMESymbols")) return;
+    bool was_visible = visible_;  // (after create: a window made again for a new owner is hidden)
     if (items_.empty()) build();
     page_ = page;
     cursor_ = cursor;

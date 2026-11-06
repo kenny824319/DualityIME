@@ -1,4 +1,4 @@
-// Symbol keyboard opened with ` / ~ (three pages): each key of the keyboard
+// Symbol keyboard opened with ` (three pages): each key of the keyboard
 // types the symbol printed on it.
 #pragma once
 #include <optional>
@@ -16,6 +16,6 @@ const std::vector<std::string>& page_names();
 ustr symbol(int page, int index);
 std::optional<int> key_index(char32_t ch);  // index into KEYS of the key that typed ch
 int neighbour(int index, const std::string& direction);
-inline bool is_open_key(char32_t ch) { return ch == '`' || ch == '~'; }
+inline bool is_open_key(char32_t ch) { return ch == '`'; }  // (Shift+` types ~, as any other symbol key)
 
 }  // namespace sz::symbols

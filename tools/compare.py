@@ -90,7 +90,7 @@ CASES = [
     "su3cl3", "ji3ap7", "m/4googlen. ", "googlen. ", "done. ", "m/4done. {DOWN}1", "claudezp vu ",
     "claudefm4", "python3", "gpt4", "slack ", "104", "10{DOWN}4", "18 ", "18{ENTER}", "su3,", "su3,{ENTER}",
     "w96{TAB}{TAB}", "w96{RIGHT}", "internati{TAB}", "abc@gmail.com ", "abc{TAB}", "{CAPS}su3{CAPS}",
-    "{CAPS}usb{CAPS} ", "`1", "`{TAB}{DOWN}{ENTER}", "~", "su3{LEFT}{DOWN}2", "su3cl3{HOME}{DOWN}{DOWN}{ENTER}",
+    "{CAPS}usb{CAPS} ", "`1", "`{TAB}{DOWN}{ENTER}", "~", "su3~cl3", "{FW}~{FW}", "y4u.6{ENTER}vu04vu;4{ENTER}ji3y4u.6{ENTER}", "su3{LEFT}{DOWN}2", "su3cl3{HOME}{DOWN}{DOWN}{ENTER}",
     "up {UNDO}", "up {DOWN}1", "look up ", "ssu3", "us3", "su3{BACK}", "su3cl3{BACK}{BACK}", "{#1}{#2}",
     "su3{#5}", "1", "1{DOWN}1", "Python寫", "su3 cl3!", "a\"b", "{FW}abc {FW}", "su3[", "{LB}", "you are 18",
     "ji3 m/4 google n. vu04", "ru,4ru,4", "5j/ ej/4 5j/ ej/4 ", "su3{DOWN}{PGDN}{PGUP}{DOWN}{DOWN} ",
@@ -200,7 +200,9 @@ AUTOCORRECT = {"format": 1, "standard": {"picks": {"si3": {"ㄋㄧˇ": 3}, "817"
                                                   "mp3": {"en": 20000}}},
                "eten": {"picks": {"cl3": {"": 5}}, "used": {"cl3": {"": 20000}}}}
 
-IMPORTED = {"phrases": {"ㄊㄞˊ-ㄨㄢ": {"臺灣": 30}, "ㄋㄧˇ-ㄏㄠˇ": {"妳好": 12}}, "english": ["up", "t"],
+# (字 and 像 written for good: repick may not put them into 自由, 現象 - variant_is_written, VARIANT_PAIR)
+IMPORTED = {"phrases": {"ㄊㄞˊ-ㄨㄢ": {"臺灣": 30}, "ㄋㄧˇ-ㄏㄠˇ": {"妳好": 12}, "ㄗˋ": {"字": 7}, "ㄒㄧㄤˋ": {"像": 8}},
+            "english": ["up", "t"],
             "words": {"python": 5}, "emails": {"kazumasan@example.com": 3}}
 
 

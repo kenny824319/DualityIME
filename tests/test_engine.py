@@ -297,9 +297,15 @@ class SymbolKeyboardTest(Base):
         self.assertIsNone(c.symbol_page)
         self.assertEqual(c.commit, "")
 
-    def test_tilde_opens_it_too(self):
-        self.assertTrue(self.c.key("~"))
-        self.assertEqual(self.c.symbol_page, 0)
+    def test_tilde_types_a_tilde(self):
+        # Shift+` is ~, as any other symbol key (users: it could not be typed at all); ` alone opens the keyboard
+        c = self.c
+        self.assertTrue(c.key("~"))
+        self.assertIsNone(c.symbol_page)
+        self.assertEqual(c.commit, "~")
+        self.assertEqual(self.type(keys("ㄋㄧˇ ㄏㄠˇ") + "~"), "你好~")
+        c.config.set(full_width=True)
+        self.assertEqual(self.type("~"), "～")
 
     def test_each_key_types_its_symbol(self):
         c = self.c
@@ -1479,6 +1485,27 @@ class LearnedSinglesTest(Base):
         self.assertEqual(self.type(keys("ㄈㄤ ㄒㄧㄤˋ")), "方向")
         self.assertEqual(self.type(keys("ㄋㄧˇ ㄕㄨㄛ")), "妳說")
         self.assertEqual(self.type(keys("ㄗˋ")), "字")  # (on its own it is as picked)
+
+    def test_a_homophone_picked_for_good_stays_out_of_cohesive_words(self):
+        # the user's case: 字 picked 7 times, 像 8: 字 before 由 and 現 before 像 are in the corpus
+        # (文字由, 出現像), which had made 字由 of 自由 and 現像 of 現象; 她 and 妳 picked for good:
+        # not into 其他, 維他命, 迷你 either, while 她要, 妳來 (no cohesive words) still take them
+        self.learn("ㄗˋ", "字", 7)
+        self.learn("ㄗˋ", "自")
+        self.learn("ㄒㄧㄤˋ", "像", 8)
+        self.learn("ㄏㄨㄚˋ", "畫", 10)
+        for zhuyin, expected in (("ㄗˋ ㄧㄡˊ", "自由"), ("ㄨㄛˇ ㄗˋ ㄧㄡˊ", "我自由"),
+                                 ("ㄒㄧㄢˋ ㄒㄧㄤˋ", "現象"), ("ㄒㄧㄤˋ ㄓㄥ", "象徵"),
+                                 ("ㄕㄨㄣˋ ㄑㄧˊ ㄗˋ ㄖㄢˊ", "順其自然"), ("ㄨㄣˊ ㄏㄨㄚˋ", "文化")):
+            with self.subTest(expected=expected):
+                self.assertEqual(self.type(keys(zhuyin)), expected)
+        self.learn("ㄊㄚ", "她", 5)
+        self.learn("ㄋㄧˇ", "妳", 5)
+        # (妳來 first: after 她要 the words before make it 你來, with or without this rule)
+        for zhuyin, expected in (("ㄋㄧˇ ㄌㄞˊ", "妳來"), ("ㄊㄚ ㄧㄠˋ", "她要"), ("ㄑㄧˊ ㄊㄚ", "其他"),
+                                 ("ㄨㄟˊ ㄊㄚ ㄇㄧㄥˋ", "維他命"), ("ㄇㄧˊ ㄋㄧˇ", "迷你")):
+            with self.subTest(expected=expected):
+                self.assertEqual(self.type(keys(zhuyin)), expected)
 
     def test_a_word_picked_stays_against_a_homophone_picked_for_good(self):
         # 他說 picked, 她 picked 5 times: 他說 stays until 她說 is picked more often (a tie: 他說)

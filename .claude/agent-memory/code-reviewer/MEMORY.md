@@ -17,4 +17,6 @@
 - [Named event leftover](project_named_event_leftover.md) — "please close" event Set by a requester that gave up kills the owner's window later; elevated DACL
 - [compare.py 817 memory](project_compare_817_memory.md) — compare's keys.json has 817 picked as a number twice: 817 cases never reach the order rules
 - [check_corrections pre-split runs](project_check_corrections_presplit_runs.md) — first loop's runs include earlier 817s that become numbers (我們走817個817 -> 個巴)
+- [compare picks alternate](project_compare_picks_alternate.md) — `y4{DOWN}2{ENTER}`x5 alternates 字/自, never strong: probe that a compare case reaches the code
+- [TIP popups outside place_ui](project_tip_popups_outside_place_ui.md) — show_mode / show_menu skip place_ui; SymbolKeyboard was_visible hides a remade window
 - [Keyboard state phantom keys](project_keyboard_state_phantom_keys.md) — GetKeyboardState shows IME codes (0xF1) held for good; "other key held" scans must whitelist real keys

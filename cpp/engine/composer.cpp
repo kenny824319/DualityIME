@@ -1098,6 +1098,8 @@ std::vector<Scored> phrase_candidates(const std::vector<ustr>& readings, const L
 
 constexpr double SINGLE_EDGE = 2.0;  // a learned single character's bonus, less this, halved: its edge over its homophones
 constexpr double STRONG_PICKS = 5;   // picked this often (or in the personal dictionary), a homophone goes into words too (3: 記 into 國際)
+constexpr double VARIANT_PAIR = -2.0;  // ...into a cohesive word only beside a neighbour it precedes or follows this often in
+                                      // the corpus (log10: 她說 -1.63; not 字由 -2.88 for 自由, 現像 -2.35, 其她 -3.88)
 
 // (char, unigram) for one syllable, with what the user taught counted only against its homophones.
 // The order among them stays (線 picked for ㄒㄧㄢˋ still comes first), but the place as a whole
@@ -1204,17 +1206,29 @@ static std::optional<char32_t> strong_homophone(const ustr& reading, const Lexic
 // the word's own score and the homophones' bonus on top, so whatever it is it wins (字己 for 自己
 // with 字 picked 6 times). Only one the user picked (repick then keeps the one picked more), or,
 // the word not picked either, one whose characters put in are each next to a neighbour in the
-// corpus (她 before 說: 她說; never 字 before 己, 方 before 像).
+// corpus (她 before 說: 她說; never 字 before 己, 方 before 像) - and, in a cohesive word (自由, 現象,
+// 其他: cohesive), often enough (VARIANT_PAIR): 字 before 由 and 現 before 像 are in the corpus,
+// across words (文字由, 出現像), and made 字由 of every 自由.
+namespace { bool cohesive(const BigramModel& bigram, const ustr& phrase); }
 static bool variant_is_written(const ustr& key, const ustr& phrase, const ustr& variant, const UserModel& user,
                                const BigramModel* bigram) {
     if (user.bonus(key, variant)) return true;
     if (user.bonus(key, phrase) || !bigram) return false;
+    int word = -1;  // (whether phrase is cohesive, worked out once if needed)
     for (size_t j = 0; j < variant.size(); ++j) {
         if (variant[j] == phrase[j]) continue;
         ustr ch(1, variant[j]);
-        bool left = j > 0 && bigram->logp(ustr(1, variant[j - 1]), ch).has_value();
-        bool right = j + 1 < variant.size() && bigram->logp(ch, ustr(1, variant[j + 1])).has_value();
-        if (!left && !right) return false;
+        std::optional<double> best;
+        if (j > 0) best = bigram->logp(ustr(1, variant[j - 1]), ch);
+        if (j + 1 < variant.size()) {
+            auto r = bigram->logp(ch, ustr(1, variant[j + 1]));
+            if (r && (!best || *r > *best)) best = r;
+        }
+        if (!best) return false;
+        if (*best < VARIANT_PAIR) {
+            if (word < 0) word = cohesive(*bigram, phrase) ? 1 : 0;
+            if (word) return false;
+        }
     }
     return true;
 }
@@ -3925,10 +3939,8 @@ bool Composer::key(std::optional<char32_t> ch, const std::string& special, bool 
         after_english_ = false;
         return true;
     }
-    const Token* last = tokens.empty() ? nullptr : &tokens.back();
-    if (symbols::is_open_key(c) &&
-        !(c == '~' && last && last->kind == Kind::En && !ends_with(last->raw, std::string(" ")))) {
-        open_symbols();  // (inside an English word, e.g. a path, ~ is just ~; ` opens it anywhere, `` types a `)
+    if (symbols::is_open_key(c)) {
+        open_symbols();  // (` opens it anywhere, `` types a `)
         return true;
     }
     bool upper = caps && is_alpha(c);

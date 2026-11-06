@@ -21,6 +21,10 @@ public:
     void hide();
     bool visible() const { return visible_; }
     HWND hwnd() const { return hwnd_; }
+    // The window the IME's windows belong to in this process (set_owner), or none. In the
+    // Windows 11 search box and Start (immersive apps) the app's windows are in a layer above
+    // every topmost window: the IME's own ones are seen there only owned by the app's window.
+    static void set_owner(HWND owner) { owner_for_new_ = owner; }
 
 protected:
     bool create(const wchar_t* class_name);
@@ -32,6 +36,8 @@ protected:
     bool visible_ = false;
 
 private:
+    static inline thread_local HWND owner_for_new_ = nullptr;  // (each UI thread its own, as the popups)
+    HWND owner_ = nullptr;  // (the owner hwnd_ was made with)
     static LRESULT CALLBACK proc(HWND, UINT, WPARAM, LPARAM);
     void paint();
 };
