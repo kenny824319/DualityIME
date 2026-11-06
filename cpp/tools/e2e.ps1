@@ -52,6 +52,9 @@ try {
     $lang = if (@((Get-WinUserLanguageList).InputMethodTips) -like "0C04:{7F9854C9*") { @("--lang", "0c04") } else { @() }
     $p = Start-Process "$build\x64-Release\sz_tsftest.exe" -ArgumentList (@("`"$Script`"") + @($Mode | Where-Object { $_ }) + $lang) `
         -PassThru -RedirectStandardOutput $out
+    # (the handle read now, or ExitCode is empty once it has exited and the script exits 0 whatever
+    # failed: 2026-11-06 a failing case and a stopped run both came back 0)
+    $null = $p.Handle
     # (about 3 s a line at most: long scripts, e.g. from tools/asus_diff.py, get the time they need)
     $lines = @(Get-Content $Script | Where-Object { $_ -and -not $_.StartsWith("#") }).Count
     if (-not $p.WaitForExit([Math]::Max(120000, $lines * 3000))) { "HUNG"; Stop-Process $p -Force }
