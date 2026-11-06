@@ -19,4 +19,5 @@
 - [check_corrections pre-split runs](project_check_corrections_presplit_runs.md) — first loop's runs include earlier 817s that become numbers (我們走817個817 -> 個巴)
 - [compare picks alternate](project_compare_picks_alternate.md) — `y4{DOWN}2{ENTER}`x5 alternates 字/自, never strong: probe that a compare case reaches the code
 - [TIP popups outside place_ui](project_tip_popups_outside_place_ui.md) — show_mode / show_menu skip place_ui; SymbolKeyboard was_visible hides a remade window
+- [guard blocks Stop-Process probes](project_guard_blocks_stop_process_probe.md) — any command text with Stop-Process is blocked; probe PS pipes another way
 - [Keyboard state phantom keys](project_keyboard_state_phantom_keys.md) — GetKeyboardState shows IME codes (0xF1) held for good; "other key held" scans must whitelist real keys
