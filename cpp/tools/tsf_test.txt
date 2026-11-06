@@ -55,6 +55,9 @@ ji3, => 我,
 # the symbol keyboard: ` then a key types the symbol on it
 `1 => 1
 `q => 《
+# Shift+` is ~, as any other symbol key (only ` opens the keyboard)
+~{ESC} => ~
+su3cl3~{ENTER} => 你好~
 # English then a whole digit syllable
 pime103{ENTER} => pime版
 python3{ENTER} => python3

@@ -1,7 +1,8 @@
 # End-to-end checks with characters picked one at a time (learned_singles_user.json: 字 6 times,
 # 自 once, 像 5 times, 妳 5 times, 獎 once, the word 起來 once); a homophone picked for good goes into
 # a word only where the corpus has it next to its neighbour (妳說), never into a non-word (字己, 方像);
-# a learned word does not cut a longer one around it (講起來, not 獎 + 起來)
+# a learned word does not cut a longer one around it (講起來, not 獎 + 起來); nor into a cohesive word
+# though the corpus has the pair across words (文字由, 出現像: not 字由, 現像)
 #   powershell -ExecutionPolicy Bypass -File cpp\tools\e2e.ps1 cpp\tools\learned_singles_cases.txt -User cpp\tools\learned_singles_user.json
 y4ru3{ENTER} => 自己
 su3y4ru3{ENTER} => 妳自己
@@ -9,3 +10,8 @@ z; vu;4{ENTER} => 方向
 su3gji {ENTER} => 妳說
 y4{ENTER} => 字
 ru;3fu3x96ji3u,3rm,62k7d83d83{ENTER} => 講起來我也覺得卡卡
+y4u.6{ENTER} => 自由
+ji3y4u.6{ENTER} => 我自由
+vu04vu;4{ENTER} => 現象
+gjp4fu6y4b06{ENTER} => 順其自然
+jp6cj84{ENTER} => 文化
