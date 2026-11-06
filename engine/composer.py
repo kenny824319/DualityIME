@@ -884,6 +884,8 @@ def log10_add(x, y):
 
 SINGLE_EDGE = 2.0  # a learned single character's bonus, less this, halved: its edge over its homophones
 STRONG_PICKS = 5   # picked this often (or in the personal dictionary), a homophone goes into words too (3: 記 into 國際)
+VARIANT_PAIR = -2.0  # ...into a cohesive word only beside a neighbour it precedes or follows this often in the
+                     # corpus (log10: 她說 -1.63; not 字由 -2.88 for 自由, 現像 -2.35, 其她 -3.88)
 ORIG_FIRST = 3     # 注音自動校正 swapped a syllable: this many of what the keys typed spell come second in ↓
 KEPT = "kept"      # marks an override that keeps a character as it was around a pick, not picked itself
 
@@ -1204,16 +1206,31 @@ def variant_is_written(rds, phrase, variant, user, bigram):
     takes the word's own score and the homophones' bonus on top, so whatever it is it wins (字己
     for 自己 with 字 picked 6 times). Only one the user picked (repick then keeps the one picked
     more), or, the word not picked either, one whose characters put in are each next to a
-    neighbour in the corpus (她 before 說: 她說; never 字 before 己, 方 before 像)."""
+    neighbour in the corpus (她 before 說: 她說; never 字 before 己, 方 before 像) - and, in a
+    cohesive word (自由, 現象, 其他: _cohesive), often enough (VARIANT_PAIR): 字 before 由 and 現
+    before 像 are in the corpus, across words (文字由, 出現像), and made 字由 of every 自由."""
     key = "-".join(rds)
     if user.bonus(key, variant):
         return True
     if user.bonus(key, phrase) or bigram is None:
         return False
+    word = None  # (whether phrase is cohesive, worked out once if needed)
     for j, ch in enumerate(variant):
-        if ch != phrase[j] and not (j > 0 and bigram.logp(variant[j - 1], ch) is not None or
-                                    j + 1 < len(variant) and bigram.logp(ch, variant[j + 1]) is not None):
+        if ch == phrase[j]:
+            continue
+        pairs = []
+        if j > 0:
+            pairs.append(bigram.logp(variant[j - 1], ch))
+        if j + 1 < len(variant):
+            pairs.append(bigram.logp(ch, variant[j + 1]))
+        best = max((lp for lp in pairs if lp is not None), default=None)
+        if best is None:
             return False
+        if best < VARIANT_PAIR:
+            if word is None:
+                word = _cohesive(bigram, phrase)
+            if word:
+                return False
     return True
 
 
@@ -2868,7 +2885,7 @@ class Composer:
         BACK DEL ENTER ESC LEFT RIGHT UP DOWN HOME END PGUP PGDN TAB STAB.
         caps: Caps Lock is on (ch is then in upper case unless Shift is held;
         only Shift makes a letter surely English).
-        ` or ~ opens the symbol keyboard (see symbol_page).
+        ` opens the symbol keyboard (see symbol_page); ~ is typed as any other symbol key.
         Returns True if the key was consumed."""
         self.commit = ""
         self.last_commit = None
@@ -2899,9 +2916,7 @@ class Composer:
             self.context_word = None
             self.after_english = False
             return True
-        last = self.tokens[-1] if self.tokens else None
-        if ch in symbols.OPEN_KEYS and not (ch == "~" and last and last.kind == "en" and not last.raw.endswith(" ")):
-            # (inside an English word, e.g. a path, ~ is just ~; ` opens it anywhere, `` types a `)
+        if ch in symbols.OPEN_KEYS:  # (` opens it anywhere, `` types a `)
             self.open_symbols()
             return True
         upper = caps and ch.isalpha()

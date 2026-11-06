@@ -1,4 +1,4 @@
-"""Symbol keyboard opened with ` / ~ (the same three pages as the ASUS IME):
+"""Symbol keyboard opened with ` (the same three pages as the ASUS IME):
 each key of the keyboard types the symbol printed on it."""
 
 # keys in keyboard order, one string per row
@@ -32,7 +32,7 @@ PAGES = [
 ]
 assert all(len(symbols) == len(KEYS) for _, symbols in PAGES)
 
-OPEN_KEYS = ("`", "~")
+OPEN_KEYS = ("`",)  # (Shift+` types ~, as any other symbol key)
 
 
 def key_index(ch):

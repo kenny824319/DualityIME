@@ -1196,6 +1196,33 @@ int cells(const std::wstring& text, int upto) {  // terminal cells taken by text
     }
     return n;
 }
+
+bool in_app_container() {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    DWORD is = 0, n = 0;
+    bool yes = GetTokenInformation(token, TokenIsAppContainer, &is, sizeof is, &n) && is;
+    CloseHandle(token);
+    return yes;
+}
+
+// The Windows 11 search box and Start (immersive apps) are in a layer above every topmost
+// window: the IME's windows are seen there owned by the app's window (Popup::set_owner; measured
+// 2026-11-06: layer 15 unowned, hidden; 6 owned, as the search box). Elsewhere they belong to no
+// window, as always. Only a window of this thread (another's would tie the two input queues).
+void own_popups(ITfContext* ctx) {
+    // (the search box is an app container too, should IsImmersiveProcess not say it)
+    static const bool immersive = IsImmersiveProcess(GetCurrentProcess()) != FALSE || in_app_container();
+    if (!immersive) return;
+    ComPtr<ITfContextView> view;
+    HWND hwnd = nullptr;
+    if (SUCCEEDED(ctx->GetActiveView(&view)) && view) view->GetWnd(&hwnd);
+    if (!hwnd) hwnd = GetFocus();  // (when the app tells no window)
+    if (!hwnd) hwnd = GetForegroundWindow();
+    HWND root = hwnd ? GetAncestor(hwnd, GA_ROOT) : nullptr;
+    bool mine = root && GetWindowThreadProcessId(root, nullptr) == GetCurrentThreadId();
+    Popup::set_owner(mine ? root : nullptr);
+}
 }  // namespace
 
 bool TextService::in_terminal(ITfContext* ctx) {
@@ -1229,6 +1256,7 @@ bool TextService::char_rect(TfEditCookie ec, ITfContext* ctx, int at, RECT& rc) 
 }
 
 void TextService::place_ui(TfEditCookie ec, ITfContext* ctx) {
+    own_popups(ctx);
     RECT comp_rc{}, end_rc{};
     bool have_comp = false, have_end = false;
     if (composition_) {
@@ -1462,6 +1490,7 @@ void TextService::close_symbols() {
 }
 
 void TextService::show_menu(POINT pt) {
+    if (ComPtr<ITfContext> ctx = focused_context(thread_mgr_.Get())) own_popups(ctx.Get());
     if (!hint_win_) hint_win_ = std::make_unique<HintWindow>();
     HWND owner = hint_win_->hwnd();
     if (!owner) {  // (made on first use)
@@ -1508,6 +1537,7 @@ void TextService::show_mode(const std::wstring& text) {
         }
     }
     if (!found && !caret_rect(ctx.Get(), rc)) return;
+    if (ctx) own_popups(ctx.Get());  // (Shift before anything was typed in the search box)
     if (!mode_win_) mode_win_ = std::make_unique<HintWindow>();
     mode_win_->show(text, rc, 800);
 }
