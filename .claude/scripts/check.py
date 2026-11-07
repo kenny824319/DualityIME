@@ -96,6 +96,50 @@ def running_check() -> int | None:
     return pid if process_started(pid) == started else None
 
 
+def review_problem(tree: str) -> str | None:
+    """Why the check may not run yet: code changed since the last release tag without the reviews.
+
+    Reviews come before the full check (CLAUDE.md Workflow 3): the code-reviewer agent must have
+    reviewed this code (later changes outside source files, such as VERSION or docs, are fine),
+    and /code-review high must have run after the tag (its fixes are re-checked by code-reviewer,
+    never by a second /code-review). review_mark.py records both. 2026-11-07: the check ran first,
+    /code-review high found fixes, and the check had to run again.
+    """
+    import push_audit
+    import review_level
+    import review_mark
+
+    tag = review_mark.last_tag()
+    if not tag:
+        return None
+
+    def code_changed(old: str, new: str) -> list[str] | None:
+        try:
+            names = push_audit.git("diff", "--name-only", old, new).splitlines()
+        except RuntimeError:  # (a tree no longer in the object store: not reviewed)
+            return None
+        return [n for n in names if review_level.SOURCE.match(n)]
+
+    changed = code_changed(tag, tree)
+    if not changed:
+        return None
+    record = review_mark.read()
+    reviewed = (record.get("reviewer") or {}).get("tree")
+    if not reviewed or code_changed(reviewed, tree) != []:
+        return (f"review first: code changed since {tag} ({', '.join(changed[:3])}"
+                f"{', ...' if len(changed) > 3 else ''}) and the code-reviewer agent has not reviewed it as it is "
+                "now. Run the code-reviewer agent (it records the review), fix what it confirms, then the check.")
+    # made after the tag: the tag is in the history of the commit it was made on (a tag fetched
+    # only after the review, of a release made before it, still is)
+    high = (record.get("high") or {}).get("head")
+    if not high or subprocess.run(["git", "merge-base", "--is-ancestor", tag, high], cwd=ROOT,
+                                  capture_output=True).returncode != 0:
+        return (f"/code-review high has not run for the code changed since {tag}. Run it, then "
+                "`py -3 .claude/scripts/review_mark.py high`; fix the findings the user picks, have "
+                "code-reviewer re-check the fixes, and only then run the check.")
+    return None
+
+
 def changed_files(before: str, after: str) -> list[str]:
     """The files that differ between two trees (push_audit.working_tree)."""
     import push_audit
@@ -134,6 +178,11 @@ def run_steps() -> int:
     import push_audit
 
     tree_before = push_audit.working_tree()
+    problem = review_problem(tree_before)
+    if problem:
+        print(f"FAIL  {problem}")
+        print("      Nothing ran and nothing was recorded for push_audit.")
+        return 1
     failed, ran, skipped = [], 0, 0
     for name, command, cwd, required in STEPS:
         if required and not (ROOT / required).exists():

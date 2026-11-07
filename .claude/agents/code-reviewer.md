@@ -64,3 +64,8 @@ whether it held. If nothing survives verification, say "No correctness issues fo
 and list what you checked.
 
 When you find an issue that is likely to recur in this repo, record it in your memory.
+
+Last, after every review (findings or not, a re-check too): run
+`py -3 .claude/scripts/review_mark.py reviewer`. It records that you reviewed the code as it is
+now (outside the tree, in .git); check.py refuses to run until the code-reviewer has reviewed the
+current code. Run it only at the end of a review you did, never for anything else.
