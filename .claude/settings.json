@@ -32,6 +32,15 @@
             "command": "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_bash.py\""
           }
         ]
+      },
+      {
+        "matcher": "Agent|Task|Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_check.py\""
+          }
+        ]
       }
     ],
     "PostToolUse": [
