@@ -1,6 +1,7 @@
 #include "text_service.h"
 
 #include <InputScope.h>
+#include <imm.h>
 #include <shellapi.h>
 
 #include <algorithm>
@@ -1030,6 +1031,7 @@ bool TextService::start_composition(TfEditCookie ec, ITfContext* ctx, ITfRange* 
     comp_context_ = ctx;
     last_end_ok_ = last_tip_ok_ = false;
     watch_layout(ctx);
+    ask_position(ctx);
     return true;
 }
 
@@ -1158,14 +1160,63 @@ bool TextService::text_rect(TfEditCookie ec, ITfContext* ctx, ITfRange* range, R
     return rc.bottom > rc.top;
 }
 
+namespace {
+// Java (AWT / Swing) draws its own caret and tells TSF nothing about where the text is; it says
+// so through IMM32 only when told a candidate list opens (as Windows tells it for the Microsoft
+// IME), and from then on, as the text changes (measured 2026-11-07, Live2D Cubism 5.3, Java 17).
+bool java_window(HWND hwnd) {
+    wchar_t cls[64] = L"";
+    return hwnd && GetClassNameW(hwnd, cls, 64) && wcsncmp(cls, L"SunAwt", 6) == 0;
+}
+
+// Where an older app (through the IMM32 layer) said its candidate list or text goes, on screen
+bool imm_rect(RECT& rc) {
+    HWND hwnd = GetFocus();
+    if (!hwnd) return false;
+    HIMC himc = ImmGetContext(hwnd);
+    if (!himc) return false;
+    CANDIDATEFORM cand{};
+    COMPOSITIONFORM comp{};
+    int line = MulDiv(20, std::max<UINT>(GetDpiForWindow(hwnd), 96), 96);  // (no line height is told)
+    bool found = true;
+    if (ImmGetCandidateWindow(himc, 0, &cand) && cand.dwStyle != CFS_DEFAULT) {
+        if (cand.dwStyle == CFS_EXCLUDE && cand.rcArea.bottom > cand.rcArea.top) {
+            rc = cand.rcArea;  // the text, to keep clear of
+        } else {               // the list's top left: right under the text
+            rc = RECT{cand.ptCurrentPos.x, cand.ptCurrentPos.y - line, cand.ptCurrentPos.x + 1, cand.ptCurrentPos.y};
+        }
+    } else if (ImmGetCompositionWindow(himc, &comp) && comp.dwStyle != CFS_DEFAULT) {
+        // where the text starts: its top left
+        rc = RECT{comp.ptCurrentPos.x, comp.ptCurrentPos.y, comp.ptCurrentPos.x + 1, comp.ptCurrentPos.y + line};
+    } else {
+        found = false;
+    }
+    ImmReleaseContext(hwnd, himc);
+    if (found) MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&rc), 2);
+    return found;
+}
+}  // namespace
+
+void TextService::ask_position(ITfContext* ctx) {
+    // older apps that tell where the text is only when a candidate list opens (Java): told so
+    // once, as the text starts
+    TF_STATUS st{};
+    if (!ctx || FAILED(ctx->GetStatus(&st)) || !(st.dwStaticFlags & TF_SS_TRANSITORY)) return;
+    HWND hwnd = GetFocus();
+    // (Java answers on its own threads: measured 23-136 us here, once per text)
+    if (java_window(hwnd)) SendMessageW(hwnd, WM_IME_NOTIFY, IMN_OPENCANDIDATE, 1);
+}
+
 bool TextService::caret_rect(ITfContext*, RECT& rc) {
-    // apps that tell TSF nothing: the system caret, else the bottom of the window
+    // apps that tell TSF nothing: the system caret, else where it said through IMM32, else the
+    // bottom of the window
     GUITHREADINFO gti{sizeof gti};
     if (GetGUIThreadInfo(GetCurrentThreadId(), &gti) && gti.hwndCaret) {
         rc = gti.rcCaret;
         MapWindowPoints(gti.hwndCaret, nullptr, reinterpret_cast<POINT*>(&rc), 2);
         if (rc.bottom > rc.top) return true;
     }
+    if (imm_rect(rc)) return true;  // (0-5 us here)
     HWND fg = GetForegroundWindow();
     if (fg && GetWindowRect(fg, &rc)) {
         rc.left += 40;
