@@ -41,6 +41,9 @@ ALLOWED = [
 
 def relative(path: str) -> str | None:
     root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd()).resolve()
+    # A Git Bash path (/c/Users/...) has no drive for Python: it would join the root as
+    # C:\c\Users\... and look outside the project; the Write tool accepts it.
+    path = re.sub(r"^/([A-Za-z])(/|$)", r"\1:/", path)
     target = Path(path)
     target = (target if target.is_absolute() else root / target).resolve()
     try:
