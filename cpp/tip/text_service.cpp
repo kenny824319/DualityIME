@@ -1203,8 +1203,11 @@ void TextService::ask_position(ITfContext* ctx) {
     TF_STATUS st{};
     if (!ctx || FAILED(ctx->GetStatus(&st)) || !(st.dwStaticFlags & TF_SS_TRANSITORY)) return;
     HWND hwnd = GetFocus();
-    // (Java answers on its own threads: measured 23-136 us here, once per text)
-    if (java_window(hwnd)) SendMessageW(hwnd, WM_IME_NOTIFY, IMN_OPENCANDIDATE, 1);
+    // (a Java frame may keep the focus on a child of another class that passes IME messages on
+    // to the component: its top window says it is Java. Java answers on its own threads:
+    // measured 23-136 us here, once per text)
+    if (hwnd && (java_window(hwnd) || java_window(GetAncestor(hwnd, GA_ROOT))))
+        SendMessageW(hwnd, WM_IME_NOTIFY, IMN_OPENCANDIDATE, 1);
 }
 
 bool TextService::caret_rect(ITfContext*, RECT& rc) {
