@@ -148,6 +148,7 @@ private:
     void hide_ui();
     void reset_engine();
     bool caret_rect(ITfContext* ctx, RECT& rc);
+    void ask_position(ITfContext* ctx);  // an older app that says where the text is only when asked
 
     void set_compartment(REFGUID guid, DWORD value);
     DWORD get_compartment(REFGUID guid);

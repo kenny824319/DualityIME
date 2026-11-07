@@ -23,3 +23,4 @@
 - [Keyboard state phantom keys](project_keyboard_state_phantom_keys.md) — GetKeyboardState shows IME codes (0xF1) held for good; "other key held" scans must whitelist real keys
 - [Start-Process ExitCode null](project_ps_start_process_exitcode_null.md) — PS 5.1 -PassThru -Redirect: ExitCode $null, exit 0; e2e.ps1 passes FAILs; cache $p.Handle
 - [PS dot-source typed params](project_ps_dotsource_typed_params.md) — test dot-sourcing release.ps1: a $version fixture becomes [string]; grep new vars vs param names
+- [IMM forms async / stale](project_imm_forms_async_stale.md) — Java answers IMN_OPENCANDIDATE later; the first place_ui of a composition reads the previous field's IMM form
