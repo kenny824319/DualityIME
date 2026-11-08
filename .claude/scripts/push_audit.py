@@ -159,8 +159,8 @@ def main() -> int:
         recorded = None
     head_tree = git("rev-parse", "HEAD^{tree}").strip()
     if recorded != head_tree:
-        findings.append("the full check has not passed on what is pushed: run `py -3 .claude/scripts/check.py` "
-                        "with everything committed (it records the tree it checked), then push")
+        findings.append("the full check has not passed on what is pushed: run `tools\\release.ps1 -Channel develop "
+                        "-Phase prepare` (it runs the full check and records the tree it checked), then push")
     # 2. what the commits add
     start = base()
     diff = git("diff", "--no-color", "--no-ext-diff", "-U0", "--src-prefix=a/", "--dst-prefix=b/",
