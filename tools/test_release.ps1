@@ -41,7 +41,17 @@ Check "prepare other head" (Get-PrepareVersion -Current "3.0.1" -Channel develop
 Check "prepare older bump" (Get-PrepareVersion -Current "3.0.1" -Channel develop -TagExists $false -HeadSubject " * 版本 3.0.0") "3.0.2"
 
 # prepare steps: the check, then the release binaries, then the installer that packs them
-Check "prepare steps" ((Get-PrepareSteps) -join " | ") 'py -3 .claude/scripts/check.py | cmd /c cpp\publish.cmd | powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Release'
+Check "prepare steps" ((Get-PrepareSteps) -join " | ") 'py -3 .claude/scripts/check.py --release | cmd /c cpp\publish.cmd | powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Release'
+
+# check.py refuses to run on its own for a change that goes into the installer (prepare runs it with
+# --release): its rule must be this script's Test-PackagedChange
+$paths = @("docs/a.md", "README.md", "cpp/x.cpp", "VERSION", "engine/x.py", "installer/src/Setup.cs",
+           "settings/ui/app.js", "data/lexicon.bin", "cpptools/x", "VERSIONS", "tools/release.ps1",
+           ".claude/scripts/check.py", "cpp\engine\a.cpp")
+$scripts = Join-Path (Split-Path $PSScriptRoot -Parent) ".claude\scripts"
+$py = & py -3 -c "import sys; sys.path.insert(0, sys.argv[1]); import check; print('\n'.join(check.packaged(sys.argv[2:])))" $scripts @paths
+$ps = @($paths | Where-Object { Test-PackagedChange -Files @($_) })
+Check "check.py packaged = release.ps1" (@($py | Where-Object { $_ }) -join ",") ($ps -join ",")
 
 # develop's prepare stops while origin/main has commits develop lacks (main's X.(Y+1).0 bump)
 Check "develop: no origin/main" (Get-DevelopBehindMain -MainExists $false -MainIsAncestor $false) $null

@@ -3,6 +3,8 @@
 Run from the repo root with the project's Python (see CLAUDE.md "Commands").
 Prints one line per step and the tail of each failure; exits 1 if any step
 failed or if no step could run at all.
+A change to what goes into the installer is checked only by tools/release.ps1 -Phase prepare, which
+passes --release (release_problem); run on its own, the check refuses it.
 Standard library only.
 """
 
@@ -140,6 +142,48 @@ def review_problem(tree: str) -> str | None:
     return None
 
 
+# What ends up in the installer: the same rule as tools/release.ps1 Test-PackagedChange (VERSION, or a
+# path under one of these). tools/test_release.ps1 checks that the two agree.
+PACKAGED_DIRS = ("cpp/", "installer/", "settings/", "data/")
+
+
+def packaged(files: list[str]) -> list[str]:
+    """The files of the list that end up in the installer."""
+    out = []
+    for f in files:
+        p = f.replace("\\", "/").strip()
+        if p == "VERSION" or p.startswith(PACKAGED_DIRS):
+            out.append(f)
+    return out
+
+
+def release_problem(tree: str, tag: str | None = None) -> str | None:
+    """Why the check may not run on its own: what changed since the last release tag goes into the
+    installer, so it is checked once by tools/release.ps1 -Phase prepare (which passes --release),
+    after the version commit, and develop is pushed only in the release (CLAUDE.md Workflow 5).
+    2026-11-02, 11-03, 11-06, 11-07 and 11-08: the check ran on its own, then prepare ran it again
+    (16 minutes each time).
+    """
+    import push_audit
+    import review_mark
+
+    tag = tag or review_mark.last_tag()
+    if not tag:
+        return None
+    try:
+        names = push_audit.git("diff", "--name-only", tag, tree).splitlines()
+    except RuntimeError:
+        return None
+    hit = packaged(names)
+    if not hit:
+        return None
+    return (f"this change goes into a release ({', '.join(hit[:3])}{', ...' if len(hit) > 3 else ''} changed "
+            f"since {tag}): don't run the check yourself. Commit, then `powershell -ExecutionPolicy Bypass -File "
+            "tools\\release.ps1 -Channel develop -Phase prepare` runs it once, after the version commit; develop "
+            "is pushed only in the release (CLAUDE.md Workflow 5). (The newest release's tag is made on GitHub: "
+            "`git fetch --tags` first if it is not here yet.)")
+
+
 def changed_files(before: str, after: str) -> list[str]:
     """The files that differ between two trees (push_audit.working_tree)."""
     import push_audit
@@ -178,7 +222,8 @@ def run_steps() -> int:
     import push_audit
 
     tree_before = push_audit.working_tree()
-    problem = review_problem(tree_before)
+    problem = None if "--release" in sys.argv[1:] else release_problem(tree_before)
+    problem = problem or review_problem(tree_before)
     if problem:
         print(f"FAIL  {problem}")
         print("      Nothing ran and nothing was recorded for push_audit.")

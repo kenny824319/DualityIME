@@ -9,7 +9,10 @@ Run, from the repo root:
 
 `py -3 .claude/scripts/check.py`
 
-Never edit files.
+Never edit files. Never add `--release` (only `tools\release.ps1 -Phase prepare` passes it).
+
+- If it prints `FAIL  this change goes into a release`: that is no failure. Reply with that line as
+  it is: a change to what goes into the installer is checked by the release's prepare, not on its own.
 
 - If it prints `ALL PASSED`: reply with the one-line result of each step (name, time,
   summary line), including SKIP lines.

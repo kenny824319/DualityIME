@@ -72,7 +72,7 @@ function Get-PrepareVersion {
 # What -Phase prepare runs after the version commit, in this order: the full check (it records the tree
 # that is pushed), the release binaries into bin\, then the installer that packs them (spec 9.2 step 1).
 function Get-PrepareSteps {
-    return @("py -3 .claude/scripts/check.py",
+    return @("py -3 .claude/scripts/check.py --release",
              "cmd /c cpp\publish.cmd",
              "powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Release")
 }

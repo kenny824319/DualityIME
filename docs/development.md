@@ -47,7 +47,7 @@
 - C++：需要 Visual Studio Build Tools（C++ 桌面開發）\
   `cpp\build.cmd [Release|Debug] [x64|x86]` 建置，`cpp\publish.cmd` 建置 Release 版並放進 `bin\`
 - `powershell -ExecutionPolicy Bypass -File installer\build.ps1`：建置 `bin\settings.exe`、`bin\lookup.exe`（開發用）；加 `-Release`（先執行 `cpp\publish.cmd`）建置安裝檔 `out\DualityIME-<VERSION>-setup.exe`
-- `py -3 .claude/scripts/check.py`：完整檢查（Python 引擎測試、C++ 建置、兩套引擎逐鍵比對、設定工具、安裝檔邏輯、發版腳本）
+- `py -3 .claude/scripts/check.py`：完整檢查（Python 引擎測試、C++ 建置、兩套引擎逐鍵比對、設定工具、安裝檔邏輯、發版腳本）。改到會進安裝檔的檔案（`cpp/`、`installer/`、`settings/`、`data/`、`VERSION`）時，單獨執行會被拒絕：由發版的 `tools\release.ps1 -Phase prepare` 跑一次（`check.py --release`）
 - `py tools/compare.py [數量] [種子]`：同一批按鍵在 5 組設定下餵給 Python 和 C++ 引擎，每一步都必須相同
 - `py -3 -m unittest tests.test_engine`：引擎測試
 - `powershell -ExecutionPolicy Bypass -File tools\test_settings.ps1 [-Source]`：設定工具寫入的設定與詞庫、舊版資料轉換、更新流程（假的 Release 清單，不連 GitHub；暫存資料夾）、每一頁都畫得出來；`-Source` 從原始碼編譯來測，不檢查畫面
