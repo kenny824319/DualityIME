@@ -64,6 +64,16 @@ BLOCK: list[tuple[str, str]] = [
         "This push deletes or rewrites what is on GitHub (a branch, a tag, its history): write the "
         "command out for the user to run with `!` if it is really needed.",
     ),
+    # (project) The full check runs only inside a release: release.ps1 -Phase prepare starts check.py
+    # itself, where this hook does not see it. 2026-11-02, 11-03, 11-06, 11-07, 11-08: it ran on its own,
+    # then prepare ran it again (16 minutes each time); check.py's own --release gate can be typed.
+    (
+        r"(^|[\s;&|(`'\"\\/])(py|python[\d.]*)(\.exe)?[\"']?\s[^\n;&|]*\bcheck\.py\b",
+        "The full check runs only inside a release: `powershell -ExecutionPolicy Bypass -File "
+        "tools\\release.ps1 -Channel develop -Phase prepare` runs it once, with the end-to-end cases after "
+        "it (CLAUDE.md Workflow 2 and 5). Don't run check.py yourself, with or without --release; while "
+        "working, run the tests of what changed.",
+    ),
     # (
     #     r"\buv\s+(run|sync)\b",
     #     "Never use `uv run` here: it re-syncs .venv against a stale lock. "
