@@ -67,6 +67,7 @@ def english_words_in(text):
 COST_PARTIAL = 0.2
 COST_SPACE = 0.3
 SHORT_EN_WORD = -3.2  # a 1-2 letter word after English is zhuyin if it starts a word this common (up 因為)
+SHORT_EN_COMMON = 100  # ...for a letter (u 個) or one of the 100 most common words (up, no); a rarer 2-letter one, any word (co 黑色)
 COST_EN_CHAR = 1.0
 COST_PUNCT_KEY = 0.5    # "," as ， rather than the start of a zhuyin syllable
 COST_FORCED_TOKEN = -100.0  # the user picked "English/number" for these keys
@@ -384,9 +385,13 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
             word_after = after_word
             if after_word and j == end and sp >= 0 and j - i <= 2:
                 # (a 1-2 letter word after English that, read as zhuyin with its space, starts a
-                # word with the next syllable: B up jo6 is B 因為, not B up 為; look up 還是 stays)
+                # word with the next syllable: B up jo6 is B 因為, not B up 為; look up 還是 stays;
+                # a rare 2-letter one any word: Codex co nk4 is Codex 黑色, et al 的 stays; a letter
+                # never (see u 下次, chat English the measured texts lack)
                 zh = table.parse_syllable(raw[i:j + 1])
-                if zh and zh[1] and starts_phrase(j + 1, zh[0], SHORT_EN_WORD):
+                common = j - i == 1 or (english.get(piece.lower(), SHORT_EN_COMMON) < SHORT_EN_COMMON
+                                        if english else False)
+                if zh and zh[1] and starts_phrase(j + 1, zh[0], SHORT_EN_WORD if common else None):
                     word_after = False
             cost = english_piece_cost(piece, english, learned, word_after, mine, () if i in exact else codes) + \
                 bonus + crosses(i, j)
@@ -2617,7 +2622,9 @@ class Composer:
             shown = last.value if self.config.preview == "zhuyin" else last.raw
             text = text[:len(text) - len(shown)] + self._lit_text(zh_punct[last.raw], last.raw)
         self._remember(text)
-        self.after_english = bool(last) and last.kind in ("en", "partial") and last.raw.strip().isalpha()
+        # what is sent ends the sentence: the English at its end is not the next one's (Codex + Enter,
+        # then co nk4 is 黑色, not co 色; look up 還是 reads its look within the sentence)
+        self.after_english = False
         self.context_word = self.segments[-1][2] if last and last.kind == "zh" and self.segments else None
         corrected = self._learn_corrections(len(self.raw))
         self._clear_input()

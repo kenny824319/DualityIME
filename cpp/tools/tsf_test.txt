@@ -7,6 +7,19 @@ ji3m/4googlen. {ENTER} => 我用google搜
 # (before up is picked as English below: then it is English everywhere)
 cl3 B up jo6su3g4{ENTER} => 好 B 因為你是
 look up c96g4{ENTER} => look up 還是
+# English sent with Enter does not carry into the next sentence (reported: after Codex, 黑色 came out co 色)
+Codex{ENTER} => Codex
+co nk4{ENTER} => 黑色
+Codex{ENTER} => Codex
+el vu/4{ENTER} => 高興
+Codex{ENTER} => Codex
+jp 2j4{ENTER} => 溫度
+Codex{ENTER} => Codex
+u vu84h4{ENTER} => 一下次
+# in the sentence too: a rare short word (co, el; not up) after English starting any word is zhuyin; et al stays
+Codex co nk4{ENTER} => Codex 黑色
+ji3 Codex el vu/4{ENTER} => 我 Codex 高興
+et al 2k7vu4wj/3{ENTER} => et al 的系統
 # still being typed: the text is in the document already, underlined
 su3cl3 => 你好
 # candidates (like the ASUS IME): at the end the last character, before 你 the phrases from there

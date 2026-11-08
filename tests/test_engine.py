@@ -176,6 +176,39 @@ class MixedEnglishTest(Base):
             with self.subTest(raw=raw):
                 self.assertEqual(self.type(raw), expected)
 
+    def test_rare_short_word_after_english_that_starts_any_word_is_zhuyin(self):
+        # (reported 2026-11-08: Codex 黑色 came out Codex co 色. A short word ranked after the 100 most
+        # common English words (co, el, jp; not up, no) is zhuyin when it starts any dictionary word
+        # with the next syllable; real ones that start none stay English: et al, my fm, give up)
+        for raw, expected in (("Codex co nk4", "Codex 黑色"), ("ji3 Codex el vu/4", "我 Codex 高興"),
+                              ("Codex jp 2j4", "Codex 溫度"),
+                              ("et al " + keys("ㄉㄜ˙ ㄒㄧˋ ㄊㄨㄥˇ"), "et al 的系統"),
+                              ("my fm " + keys("ㄕㄣˋ ㄓˋ"), "my fm 甚至"),
+                              ("give up " + keys("ㄓㄢˋ ㄉㄨㄟˋ"), "give up 戰隊"),
+                              # (a letter keeps the rule above: see u 下次, not see 一下次 - review 2026-11-08)
+                              ("see u " + keys("ㄒㄧㄚˋ ㄘˋ"), "see u 下次"),
+                              ("thank u " + keys("ㄕˋ ㄨㄛˇ ㄉㄜ˙"), "thank u 是我的")):
+            with self.subTest(raw=raw):
+                self.assertEqual(self.type(raw), expected)
+
+    def test_english_sent_with_enter_does_not_carry_into_the_next_sentence(self):
+        # (reported 2026-11-08: after Codex + Enter, 黑色 came out co 色, 高興 el 性: the short
+        # word was read as English after the English sent before it, in another sentence)
+        # (the rare short words are zhuyin there in a sentence too, see below; u is not: u 下次 before)
+        for raw, expected in (("co nk4", "黑色"), ("el vu/4", "高興"), ("jp 2j4", "溫度"),
+                              ("u " + keys("ㄒㄧㄚˋ ㄘˋ"), "一下次")):
+            with self.subTest(raw=raw):
+                self.assertEqual(self.type("Codex"), "Codex")
+                self.assertEqual(self.type(raw), expected)
+        # (in one sentence the English before it still counts: look up 還是, look up in the test above)
+
+    def test_digits_with_a_tone_after_english_sent_start_a_new_sentence(self):
+        # (digits with a tone after English are a number in the sentence: you are 18; the next
+        # sentence reads them as at any start: 18 + space is 八)
+        self.assertEqual(self.type("you are"), "you are")
+        self.assertEqual(self.type("18 "), "八")
+        self.assertEqual(self.type("you are 18 "), "you are 18 ")
+
     def test_shifted_punctuation(self):
         self.assertEqual(self.type(keys("ㄏㄠˇ") + "!"), "好!")
         self.c.config.set(punctuation="full")
@@ -2188,15 +2221,16 @@ class BareZhuyinTest(Base):
 
     def test_bar_offers_the_bare_zhuyin_of_a_word(self):
         # like the ASUS IME: the caret before a (the word a, right after English), ↑: ㄇ
+        # (in one sentence: English sent before is not the next sentence's)
         c = self.c
-        self.type("hello ")
-        c.key("a")
+        self.type("hello a", enter=False)
+        self.assertEqual([(t.kind, t.raw) for t in c.tokens], [("en", "hello "), ("en", "a")])
         c.key(special="LEFT")
         self.assertEqual(c.replacements[0], "ㄇ")
         self.pick_bar("ㄇ")
-        self.assertEqual(c.composition, "ㄇ")
+        self.assertEqual(c.composition, "hello ㄇ")
         c.key(special="ENTER")
-        self.assertEqual(c.commit, "ㄇ")
+        self.assertEqual(c.commit, "hello ㄇ")
 
     def test_bar_offers_the_bare_zhuyin_of_unfinished_keys(self):
         c = self.c
@@ -2860,8 +2894,7 @@ class AutocorrectMemoryTest(unittest.TestCase):
         for _ in range(2):
             user.corrections.record("gpt4", "en")
         c = self.c
-        self.type("look ")
-        cands = self.down("gpt4 ")
+        cands = self.down("look gpt4 ")
         c._pick(cands.index("gp赤"))                                        # (back as before: noted)
         self.type("ji3" * 40, enter=False)                                  # (too long: the head goes out)
         self.assertEqual(user.corrections.count("gpt4", ""), 1)
@@ -2921,12 +2954,10 @@ class CodeMemoryTest(AutocorrectMemoryTest):
         self.assertEqual(self.type("ji3"), "我")
 
     def test_with_the_english_next_to_it(self):
-        for _ in range(2):
-            self.type("look ")                       # (English sent before: gpt4 reads gp赤)
-            self.assertEqual(self.bar_keys_back("gpt4 ", "t4", 2), "gpt4 ")
+        for _ in range(2):                           # (English before it in the sentence: gpt4 reads gp赤)
+            self.assertEqual(self.bar_keys_back("look gpt4 ", "t4", 7), "look gpt4 ")
         self.assertEqual(self.user.corrections.choice("gpt4"), "en")
-        self.type("look ")
-        self.assertEqual(self.type("gpt4 "), "gpt4 ")
+        self.assertEqual(self.type("look gpt4 "), "look gpt4 ")
         self.assertEqual(self.type("t4"), "赤")      # (t4 on its own is not learned)
 
     def test_kept_part_of_a_split(self):
@@ -2954,13 +2985,10 @@ class CodeMemoryTest(AutocorrectMemoryTest):
 
     def test_back_as_before_not_one_syllable(self):
         for _ in range(2):
-            self.type("look ")
-            self.bar_keys_back("gpt4 ", "t4", 2)
+            self.bar_keys_back("look gpt4 ", "t4", 7)
         for _ in range(2):
-            self.type("look ")
-            self.assertEqual(self.pick("gpt4 ", "gp赤"), "gp赤 ")
-        self.type("look ")
-        self.assertEqual(self.type("gpt4 "), "gp赤 ")
+            self.assertEqual(self.pick("look gpt4 ", "gp赤"), "look gp赤 ")
+        self.assertEqual(self.type("look gpt4 "), "look gp赤 ")
 
     def test_once_is_not_enough(self):
         self.bar_keys_back("ji3", "ji3", 0)

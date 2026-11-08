@@ -4,7 +4,7 @@ or 代碼是 from the list), each code on its own memory.
 
     py tools/code_memory_eval.py [--show] [--bigram FILE]
 
-Places: alone, after Chinese (ji3), with Chinese right after (g4 是), after an English sentence sent
+Places: alone, after Chinese (ji3), with Chinese right after (g4 是), after English in the sentence
 (look ). The design (docs/superpowers/specs/2026-10-27-code-memory-design.md) expects 10, 10, 60 and
 12 wrong now, and none once put right twice.
 """
@@ -27,7 +27,9 @@ CODES = ["gpt4", "gpt4o", "mp3", "mp4", "h264", "h265", "win10", "win11", "ps4",
          "s23", "a54", "tw1", "e3", "u4", "b4", "c4", "j2", "m1", "m3", "m4", "n95", "kn95", "r2", "t5", "z3"]
 # (name, English sent before, keys before, keys after, what goes out around the code)
 PLACES = [("alone", "", "", " ", ("", " ")), ("after Chinese", "", "ji3", " ", ("我", " ")),
-          ("Chinese right after", "", "", "g4", ("", "是")), ("after English", "look ", "", " ", ("", " "))]
+          ("Chinese right after", "", "", "g4", ("", "是")),
+          # (look in the sentence: English sent before is not the next sentence's, 2026-11-08)
+          ("after English", "", "look ", " ", ("look ", " "))]
 
 
 def typed(c, sent_before, keys, enter=True):

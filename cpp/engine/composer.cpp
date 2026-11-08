@@ -40,6 +40,7 @@ const ustr FULL_SPACE = U"　";
 constexpr double COST_PARTIAL = 0.2;
 constexpr double COST_SPACE = 0.3;
 constexpr double SHORT_EN_WORD = -3.2;  // a 1-2 letter word after English is zhuyin if it starts a word this common (up 因為)
+constexpr int SHORT_EN_COMMON = 100;  // ...for a letter (u 個) or one of the 100 most common words (up, no); a rarer 2-letter one, any word (co 黑色)
 constexpr double COST_EN_CHAR = 1.0;
 constexpr double COST_PUNCT_KEY = 0.5;
 constexpr double COST_FORCED_TOKEN = -100.0;
@@ -561,9 +562,15 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
             bool word_after = after_word;
             if (after_word && j == end && sp != std::string::npos && j - i <= 2) {
                 // (a 1-2 letter word after English that, read as zhuyin with its space, starts a
-                // word with the next syllable: B up jo6 is B 因為, not B up 為; look up 還是 stays)
+                // word with the next syllable: B up jo6 is B 因為, not B up 為; look up 還是 stays;
+                // a rare 2-letter one any word: Codex co nk4 is Codex 黑色, et al 的 stays; a letter
+                // never (see u 下次, chat English the measured texts lack)
                 auto zh = table.parse_syllable(rv0.substr(i, j + 1 - i));
-                if (zh && zh->second && starts_phrase(j + 1, zh->first, SHORT_EN_WORD)) word_after = false;
+                auto r = english.rank.find(lower(piece));
+                bool common = j - i == 1 || (r != english.rank.end() && r->second < SHORT_EN_COMMON);
+                if (zh && zh->second &&
+                    starts_phrase(j + 1, zh->first, common ? std::optional<double>(SHORT_EN_WORD) : std::nullopt))
+                    word_after = false;
             }
             double cost = english_piece_cost(piece, english, learned, word_after, mine,
                                              contains(exact, ii) ? none : codes) + bonus + crosses(i, j);
@@ -3535,7 +3542,9 @@ void Composer::do_commit() {
         text = text.substr(0, text.size() - shown) + lit_text(zp[last->raw[0]], last->raw);
     }
     remember(text);
-    after_english_ = last && (last->kind == Kind::En || last->kind == Kind::Partial) && all_alpha(strip(last->raw));
+    // what is sent ends the sentence: the English at its end is not the next one's (Codex + Enter,
+    // then co nk4 is 黑色, not co 色; look up 還是 reads its look within the sentence)
+    after_english_ = false;
     if (last && last->kind == Kind::Zh && !segments_.empty()) context_word_ = segments_.back().phrase;
     else context_word_.reset();
     undo.corrected = learn_corrections(static_cast<int>(raw.size()));
