@@ -16,3 +16,7 @@ ji3y4u.6{ENTER} => 我自由
 vu04vu;4{ENTER} => 現象
 gjp4fu6y4b06{ENTER} => 順其自然
 jp6cj84{ENTER} => 文化
+# a name of data/names.txt is written as listed, 像 picked for good or not (reported 2026-11-09: 日像雛田)
+b4vu;4tj6wu06{ENTER} => 日向雛田
+ji3vu3cj0 b4vu;4tj6wu06{ENTER} => 我喜歡日向雛田
+vu;4a8356gj4{ENTER} => 相馬直樹

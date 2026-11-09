@@ -1304,7 +1304,13 @@ static void repick(std::vector<Segment>& path, const std::vector<ustr>& readings
             ustr key = join(std::vector<ustr>(readings.begin() + i, readings.begin() + i + l), U'-');
             for (auto& [p, u] : o->second)
                 cands.emplace_back(p, static_cast<int>(p.size()) == l ? u + char_bonus(i, p) : u);
-            if (static_cast<int>(phrase.size()) == l) {
+            // (a name of data/names.txt is written as listed: 像 picked for good made 日向雛田 日像雛田,
+            // 相馬直樹 像馬直樹 - reported 2026-11-09)
+            bool name = false;
+            if (auto* v = lexicon.names_find(key))
+                for (auto& [p, _] : *v)
+                    if (p == phrase) name = true;
+            if (static_cast<int>(phrase.size()) == l && !name) {
                 ustr variant = phrase;
                 for (int j = 0; j < l; ++j) {
                     auto s = strong.find(readings[i + j]);

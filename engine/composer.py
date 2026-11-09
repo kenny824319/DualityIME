@@ -1283,7 +1283,11 @@ def repick(path, readings, lexicon, options, full, user, bigram, prev_word, over
         elif l > 1 and (i, l) in options:
             # (what the user prefers of each character: 謝謝妳 over 謝謝你; not 全不 for 全部)
             cands = [(p, u + char_bonus(i, l, p)) for p, u in options[(i, l)]]
-            if len(phrase) == l:
+            key = "-".join(readings[i:i + l])
+            # (a name of data/names.txt is written as listed: 像 picked for good made 日向雛田 日像雛田,
+            # 相馬直樹 像馬直樹 - reported 2026-11-09)
+            name = any(p == phrase for p, _ in lexicon.names.get(key, ()))
+            if len(phrase) == l and not name:
                 for j in range(l):
                     if readings[i + j] not in strong:
                         strong[readings[i + j]] = strong_homophone(readings[i + j], lexicon, user)
@@ -1296,7 +1300,6 @@ def repick(path, readings, lexicon, options, full, user, bigram, prev_word, over
             # (of two words the user picked, the one picked more, not the homophones' bonus:
             # 他說 and 她說 picked as often stay 他說; a word not picked competes as before, 我再
             # for a 我在 picked once in 我再來; one in the personal dictionary always)
-            key = "-".join(readings[i:i + l])
             own = user.bonus(key, phrase)
             mine = user.custom.get(key, ())
             cands = [(p, u) for p, u in cands if p == phrase or p in mine or not 0 < user.bonus(key, p) <= own]
