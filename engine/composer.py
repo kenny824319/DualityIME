@@ -809,10 +809,15 @@ def _digits_to_numbers(tokens, after_english=False, chinese=()):
 USER_PHRASE_SCORE = -6.0  # base score of phrases only the user has taught us
 
 
-def phrase_candidates(readings, lexicon, user=None):
-    """[(phrase, score)] for one reading sequence, best first, user bonus applied."""
+def phrase_candidates(readings, lexicon, user=None, names=False):
+    """[(phrase, score)] for one reading sequence, best first, user bonus applied. names: the names of
+    well-known people too (lexicon.names, below the dictionary's word of the same sound): for
+    converting and the candidate list only."""
     reading_key = "-".join(readings)
     scored = {p: s for p, s in lexicon.lookup(readings)}
+    if names:
+        for p, s in lexicon.names.get(reading_key, ()):
+            scored.setdefault(p, s)
     if user:
         for p in user.phrases.get(reading_key, ()):
             if user.phrase_count(reading_key, p) >= 1:  # not yet faded away
@@ -1110,7 +1115,7 @@ def _search(readings, lexicon, user, overrides, bigram, prev_word, alone=None):
             inside = {sp for sp in (locked[k] for k in range(i, i + l)) if sp is not None}
             if span not in overrides and any(a < i or a + b > i + l for a, b in inside):
                 continue
-            cands = phrase_candidates(readings[i:i + l], lexicon, user)
+            cands = phrase_candidates(readings[i:i + l], lexicon, user, names=True)
             if span in overrides:
                 cands = [(p, s + 1000.0) for p, s in cands if p == overrides[span]]
             elif inside:
@@ -1801,7 +1806,7 @@ class Composer:
         spans = [(t, l) for l in range(min(MAX_PHRASE_LEN, b - t) if c < n else 1, 0, -1)]
         labels, actions, seen = [], [], set()
         for s_, l in spans:
-            for p, _ in phrase_candidates(self.readings[s_:s_ + l], self.lexicon, self.user):
+            for p, _ in phrase_candidates(self.readings[s_:s_ + l], self.lexicon, self.user, names=True):
                 if p not in seen:
                     seen.add(p)
                     labels.append(p)

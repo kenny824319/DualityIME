@@ -1314,6 +1314,97 @@ class KnownHardTest(Base):
         self.assertEqual(self.type(keys("ㄨㄛˇ ㄗㄞˋ ㄧ ㄘˋ ㄕˋ ㄕˋ")), "我再一次試試")
 
 
+class NamesTest(Base):
+    """Names of well-known people and characters (data/names.txt, tools/build_names.py): candidates
+    for converting only, the dictionary's words first (2026-11-09 design)."""
+
+    def setUp(self):
+        super().setUp()
+        from engine import lm
+        self.assertIsNotNone(lm.shared(), "data/lm.bin or numpy missing")
+        self.c.config.set(long_sentence=True)  # (as typed for real: the model must not undo a name)
+        self.c.settings_changed()
+
+    def tearDown(self):
+        self.c.config.set(long_sentence=False)
+        self.c.settings_changed()
+
+    def test_examples(self):
+        # (the users' examples, reported 2026-11-09)
+        for reading, want in (("ㄊㄧㄢˊ ㄈㄨˋ ㄓㄣ", "田馥甄"), ("ㄑㄧㄡ ㄅㄣˇ ㄓˋ", "秋本治"), ("ㄨˇ ㄊㄧㄠˊ ㄨˋ", "五條悟"),
+                              ("ㄎㄨㄥ ㄊㄧㄠˊ ㄔㄥˊ ㄊㄞˋ ㄌㄤˊ", "空條承太郎"),
+                              ("ㄨㄛˇ ㄏㄣˇ ㄒㄧˇ ㄏㄨㄢ ㄊㄧㄢˊ ㄈㄨˋ ㄓㄣ ㄉㄜ˙ ㄍㄜ", "我很喜歡田馥甄的歌"),
+                              ("ㄨˇ ㄊㄧㄠˊ ㄨˋ ㄕˋ ㄗㄨㄟˋ ㄑㄧㄤˊ ㄉㄜ˙", "五條悟是最強的")):
+            with self.subTest(want=want):
+                self.c.reset()
+                self.assertEqual(self.type(keys(reading)), want)
+
+    def test_word_first_name_in_the_list(self):
+        # (王菲 sounds like 王妃: the dictionary's word comes out, the name is among the candidates)
+        c = self.c
+        self.assertEqual(self.type(keys("ㄨㄤˊ ㄈㄟ")), "王妃")
+        self.type(keys("ㄨㄤˊ ㄈㄟ"), enter=False)
+        c.key(special="HOME")
+        c.key(special="DOWN")
+        self.assertIn("王菲", c.candidates)
+        c.key(special="ESC")
+        c.key(special="ESC")
+
+    def test_picked_name_remembered(self):
+        # (a memory of its own: the class's composer must keep 王妃 for the other tests)
+        d = tempfile.mkdtemp()
+        c = create_composer(os.path.join(d, "user.json"))
+        c.config.set(long_sentence=True)
+        for ch in keys("ㄨㄤˊ ㄈㄟ"):
+            c.key(ch)
+        c.key(special="HOME")
+        c.key(special="DOWN")
+        c._pick(c.candidates.index("王菲"))
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "王菲")
+        for ch in keys("ㄨㄤˊ ㄈㄟ"):
+            c.key(ch)
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "王菲")
+
+    def test_names_not_in_the_dictionary(self):
+        # (bigram.bin numbers the dictionary's sorted words: names must not shift them)
+        from engine.bigram import vocabulary
+        lexicon = self.c.lexicon
+        self.assertIn("ㄊㄧㄢˊ-ㄈㄨˋ-ㄓㄣ", lexicon.names)
+        self.assertFalse(any(p == "田馥甄" for lst in lexicon.entries.values() for p, _ in lst))
+        self.assertNotIn("田馥甄", vocabulary(lexicon))
+
+    def test_english_judgment_unchanged(self):
+        # (卡卡 is a name only: after English the choice between English and zhuyin stays the dictionary's)
+        from engine.composer import tokenize
+        c = self.c
+        raw = "hello " + keys("ㄎㄚ ㄎㄚ")
+        kinds = [t.kind for t in tokenize(raw, c.table, c.user, c.english, lexicon=c.lexicon)]
+        saved, c.lexicon.names = c.lexicon.names, {}
+        try:
+            self.assertEqual([t.kind for t in tokenize(raw, c.table, c.user, c.english, lexicon=c.lexicon)], kinds)
+        finally:
+            c.lexicon.names = saved
+
+    def test_without_names_file(self):
+        import shutil
+        from engine.composer import convert
+        from engine.lexicon import DATA_DIR, Lexicon
+        d = tempfile.mkdtemp()
+        shutil.copy(os.path.join(DATA_DIR, "lexicon.txt"), d)
+        lexicon = Lexicon(os.path.join(d, "lexicon.txt"))
+        self.assertEqual(lexicon.names, {})
+        self.assertEqual("".join(p for _, _, p in convert(["ㄐㄧㄣ", "ㄊㄧㄢ"], lexicon)), "今天")
+        shutil.rmtree(d)
+
+    def test_names_not_predicted(self):
+        c = self.c
+        self.type(keys("ㄊㄧㄢˊ ㄈㄨˋ"), enter=False)
+        self.assertNotEqual(c.suggestions[:1], ["甄"])
+        c.key(special="ESC")
+
+
 class KnownHardWithLongSentenceTest(Base):
     """What 長句選字加強 gets right of KnownHardTest: keep it right (it needs data/lm.bin and numpy)."""
 
