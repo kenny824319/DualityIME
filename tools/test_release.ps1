@@ -76,6 +76,9 @@ Check "notes crlf" (Get-ReleaseNotes -Version "3.0.1" -Messages @(" * a`r`n * b`
 Check "notes no bump" (Get-ReleaseNotes -Version "3.0.2" -Messages @(" * 版本 3.0.2`n`nCo-Authored-By: x <y>", " * a")) " * a"
 Check "notes only bump" (Get-ReleaseNotes -Version "3.0.2" -Messages @(" * 版本 3.0.2")) "兩儀輸入法 3.0.2"
 Check "notes other format" (Get-ReleaseNotes -Version "3.0.1" -Messages @("fix the thing`n`nsome body text", "")) "fix the thing"
+# a merge commit's message is git's, not an item (3.2.2 shipped "Merge branch 'distilled-lm' into develop")
+Check "notes merge" (Get-ReleaseNotes -Version "3.2.2" -Messages @("Merge branch 'distilled-lm' into develop", " * a")) " * a"
+Check "notes merge only" (Get-ReleaseNotes -Version "3.2.2" -Messages @("Merge remote-tracking branch 'origin/main' into develop`n`n * b")) "兩儀輸入法 3.2.2"
 # the version commit: trailers as one "line|line" string (-File passes no arrays)
 Check "version msg no trailers" (Get-VersionMessage -Version "3.1.2" -Trailers "") " * 版本 3.1.2`n"
 Check "version msg trailers" (Get-VersionMessage -Version "3.1.2" -Trailers "Co-Authored-By: A <a@b> | Claude-Session: https://x/y") " * 版本 3.1.2`n`nCo-Authored-By: A <a@b>`nClaude-Session: https://x/y`n"
