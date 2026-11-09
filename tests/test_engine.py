@@ -1405,6 +1405,49 @@ class NamesTest(Base):
         c.key(special="ESC")
 
 
+class CustomPredictionTest(unittest.TestCase):
+    """個人詞庫's words in the next-character suggestion: once 2 of their characters are typed, before
+    the dictionary's guess (2026-11-09 design, the user's choice of 2)."""
+
+    WORDS = [["大谷翔平", "ㄉㄚˋ ㄍㄨˇ ㄒㄧㄤˊ ㄆㄧㄥˊ"], ["獎金國", "ㄐㄧㄤˇ ㄐㄧㄣ ㄍㄨㄛˊ"],
+             ["大谷翔子", "ㄉㄚˋ ㄍㄨˇ ㄒㄧㄤˊ ㄗˇ"], ["大谷一", "ㄉㄚˋ ㄍㄨˇ ㄧ"]]
+
+    def composer(self, words):
+        d = tempfile.mkdtemp()
+        if words:
+            with open(os.path.join(d, "dictionary.json"), "w", encoding="utf-8") as f:
+                json.dump({"words": words}, f, ensure_ascii=False)
+        return create_composer(os.path.join(d, "user.json"))
+
+    def suggestion(self, c, reading):
+        c.reset()
+        for ch in keys(reading):
+            c.key(ch)
+        return c.suggestions[0] if c.suggestions else ""
+
+    def setUp(self):
+        self.mine, self.plain = self.composer(self.WORDS), self.composer(None)
+
+    def test_predicted_after_two(self):
+        self.assertEqual(self.suggestion(self.mine, "ㄉㄚˋ ㄍㄨˇ"), "翔")
+
+    def test_not_after_one(self):
+        self.assertEqual(self.suggestion(self.mine, "ㄉㄚˋ"), self.suggestion(self.plain, "ㄉㄚˋ"))
+
+    def test_beats_the_dictionary(self):
+        self.assertEqual(self.suggestion(self.plain, "ㄐㄧㄤˇ ㄐㄧㄣ"), "融")  # (the dictionary's guess)
+        self.assertEqual(self.suggestion(self.mine, "ㄐㄧㄤˇ ㄐㄧㄣ"), "國")
+
+    def test_whole_word_typed(self):
+        whole = "ㄉㄚˋ ㄍㄨˇ ㄒㄧㄤˊ ㄆㄧㄥˊ"
+        self.assertEqual(self.suggestion(self.mine, whole), self.suggestion(self.plain, whole))
+
+    def test_longest_then_first(self):
+        # 大谷翔 typed: 大谷翔平 and 大谷翔子 match 3 characters (the first in dictionary.json wins);
+        # 大谷一 matches only 2
+        self.assertEqual(self.suggestion(self.mine, "ㄉㄚˋ ㄍㄨˇ ㄒㄧㄤˊ"), "平")
+
+
 class KnownHardWithLongSentenceTest(Base):
     """What 長句選字加強 gets right of KnownHardTest: keep it right (it needs data/lm.bin and numpy)."""
 

@@ -807,6 +807,7 @@ def _digits_to_numbers(tokens, after_english=False, chinese=()):
 
 
 USER_PHRASE_SCORE = -6.0  # base score of phrases only the user has taught us
+CUSTOM_NEXT_MIN = 2       # 個人詞庫's words are guessed as the next character once this many of theirs are typed
 
 
 def phrase_candidates(readings, lexicon, user=None, names=False):
@@ -1683,6 +1684,18 @@ class Composer:
         if not run or run[1] != len(self.readings):
             return []
         a, b = run
+        # 個人詞庫 first: a word of it 2 or more of whose characters (and their readings) end what is
+        # typed, the most characters first, then the first in dictionary.json (大谷 -> 翔 of 大谷翔平;
+        # one character, 大, is left to the dictionary: 我們家 would else follow every 我)
+        for k in range(min(MAX_PHRASE_LEN - 1, b - a), CUSTOM_NEXT_MIN - 1, -1):
+            s = b - k
+            typed = self.composition[self._syl_offset(s):self._syl_offset(s) + k]
+            for key, phrases in self.user.custom.items():
+                syls = key.split("-")
+                if len(syls) > k and syls[:k] == self.readings[s:b]:
+                    for p in phrases:
+                        if p[:k] == typed:
+                            return [("next", s, p[k], syls[k])]
         for k in range(min(4, b - a), 0, -1):
             s = b - k
             typed = self.composition[self._syl_offset(s):self._syl_offset(s) + k]
