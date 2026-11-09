@@ -816,15 +816,16 @@ def phrase_candidates(readings, lexicon, user=None, names=False):
     converting and the candidate list only."""
     reading_key = "-".join(readings)
     scored = {p: s for p, s in lexicon.lookup(readings)}
-    if names:
+    mine = []  # the user's words: learned ones not yet faded away, then 個人詞庫's
+    if user:
+        mine = [p for p in user.phrases.get(reading_key, ()) if user.phrase_count(reading_key, p) >= 1]
+        mine += user.custom.get(reading_key, ())
+    for p in mine:
+        scored.setdefault(p, USER_PHRASE_SCORE)
+    if names:  # (after the user's words: a name learned or in 個人詞庫 keeps USER_PHRASE_SCORE - review 2026-11-09)
         for p, s in lexicon.names.get(reading_key, ()):
             scored.setdefault(p, s)
     if user:
-        for p in user.phrases.get(reading_key, ()):
-            if user.phrase_count(reading_key, p) >= 1:  # not yet faded away
-                scored.setdefault(p, USER_PHRASE_SCORE)
-        for p in user.custom.get(reading_key, ()):
-            scored.setdefault(p, USER_PHRASE_SCORE)
         scored = {p: s + user.bonus(reading_key, p) for p, s in scored.items()}
     return sorted(scored.items(), key=lambda x: -x[1])
 
@@ -1694,7 +1695,9 @@ class Composer:
                 syls = key.split("-")
                 if len(syls) > k and syls[:k] == self.readings[s:b]:
                     for p in phrases:
-                        if p[:k] == typed:
+                        # (only a guess Tab can fix as shown, the test _pin itself uses: 國 under ㄍㄨㄛˋ
+                        # gave 獎金過, 脯 of 拍胸脯 is fixed as the word - review 2026-11-09)
+                        if p[:k] == typed and self._pin_way(syls[:k + 1], list(typed + p[k])):
                             return [("next", s, p[k], syls[k])]
         for k in range(min(4, b - a), 0, -1):
             s = b - k
@@ -1738,20 +1741,29 @@ class Composer:
         self.caret = None
         self._refresh()
 
+    def _pin_way(self, readings, chars):
+        """How _pin fixes chars over readings: "chars" (each is a character of the dictionary under its
+        syllable), "phrase" (the run is a dictionary word), or None (it cannot: nothing is fixed)."""
+        if all(self.lexicon.has([rd], ch) for rd, ch in zip(readings, chars)):
+            return "chars"
+        if self.lexicon.has(readings, "".join(chars)):
+            return "phrase"
+        return None
+
     def _pin(self, start, readings, chars):
         """Fix chars[i] for syllable start+i: one character at a time where the
         dictionary has it alone, else the whole run as one phrase."""
         def covered(i):
             return any(s <= i < s + l for (s, l), v in self.overrides.items() if len(v) == 2)
 
-        single = [any(p == ch for p, _ in self.lexicon.lookup([rd])) for rd, ch in zip(readings, chars)]
-        if all(single):
+        way = self._pin_way(readings, chars)
+        if way == "chars":
             for i, (rd, ch) in enumerate(zip(readings, chars)):
                 if not covered(start + i):
                     self.overrides[(start + i, 1)] = ((rd,), ch)
             return
         phrase = "".join(chars)
-        if any(p == phrase for p, _ in self.lexicon.lookup(readings)):
+        if way == "phrase":
             end = start + len(readings)
             # a phrase pin replaces every pin it overlaps
             self.overrides = {sp: v for sp, v in self.overrides.items()

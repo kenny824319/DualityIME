@@ -186,6 +186,8 @@ private:
     void suggest();
     std::vector<Action> next_char();
     void take_suggestion();
+    enum class PinWay { None, Chars, Phrase };
+    PinWay pin_way(const std::vector<ustr>& rds, const std::vector<ustr>& chars) const;
     void pin(int start, const std::vector<ustr>& rds, const std::vector<ustr>& chars);
     bool open_candidates();
     void shortcut_candidates(std::vector<ustr>& labels, std::vector<Action>& actions);

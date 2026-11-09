@@ -1329,6 +1329,15 @@ class NamesTest(Base):
         self.c.config.set(long_sentence=False)
         self.c.settings_changed()
 
+    def own_composer(self):
+        """A composer with a memory of its own (a pick must not reach the class's composer), typing as
+        for real: 長句選字加強 on (the tests' defaults have it off)."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        c = create_composer(os.path.join(tmp.name, "user.json"))
+        c.config.set(long_sentence=True)
+        return c
+
     def test_examples(self):
         # (the users' examples, reported 2026-11-09)
         for reading, want in (("ㄊㄧㄢˊ ㄈㄨˋ ㄓㄣ", "田馥甄"), ("ㄑㄧㄡ ㄅㄣˇ ㄓˋ", "秋本治"), ("ㄨˇ ㄊㄧㄠˊ ㄨˋ", "五條悟"),
@@ -1352,9 +1361,7 @@ class NamesTest(Base):
 
     def test_picked_name_remembered(self):
         # (a memory of its own: the class's composer must keep 王妃 for the other tests)
-        d = tempfile.mkdtemp()
-        c = create_composer(os.path.join(d, "user.json"))
-        c.config.set(long_sentence=True)
+        c = self.own_composer()
         for ch in keys("ㄨㄤˊ ㄈㄟ"):
             c.key(ch)
         c.key(special="HOME")
@@ -1391,33 +1398,66 @@ class NamesTest(Base):
         import shutil
         from engine.composer import convert
         from engine.lexicon import DATA_DIR, Lexicon
-        d = tempfile.mkdtemp()
-        shutil.copy(os.path.join(DATA_DIR, "lexicon.txt"), d)
-        lexicon = Lexicon(os.path.join(d, "lexicon.txt"))
+        with tempfile.TemporaryDirectory() as d:
+            shutil.copy(os.path.join(DATA_DIR, "lexicon.txt"), d)
+            lexicon = Lexicon(os.path.join(d, "lexicon.txt"))
         self.assertEqual(lexicon.names, {})
         self.assertEqual("".join(p for _, _, p in convert(["ㄐㄧㄣ", "ㄊㄧㄢ"], lexicon)), "今天")
-        shutil.rmtree(d)
+
+    def test_picked_name_beats_a_strong_word(self):
+        # (review 2026-11-09: names went into the candidates before the user's learned words, so a learned
+        # name kept the name's -7, not -6, and lost to a strong word: 鄭氏 picked, then 正式 again)
+        c = self.own_composer()
+        for ch in keys("ㄓㄥˋ ㄕˋ"):
+            c.key(ch)
+        c.key(special="HOME")
+        c.key(special="DOWN")
+        c._pick(c.candidates.index("鄭氏"))
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "鄭氏")
+        for ch in keys("ㄓㄥˋ ㄕˋ"):
+            c.key(ch)
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "鄭氏")
 
     def test_names_not_predicted(self):
+        # (大谷翔平 is a name; 大谷 shows as typed with 長句選字加強 off: 翔 is not guessed from the names)
         c = self.c
-        self.type(keys("ㄊㄧㄢˊ ㄈㄨˋ"), enter=False)
-        self.assertNotEqual(c.suggestions[:1], ["甄"])
+        self.assertIn("ㄉㄚˋ-ㄍㄨˇ-ㄒㄧㄤˊ-ㄆㄧㄥˊ", c.lexicon.names)
+        c.config.set(long_sentence=False)
+        c.settings_changed()
+        self.type(keys("ㄉㄚˋ ㄍㄨˇ"), enter=False)
+        self.assertEqual(c.composition, "大谷")
+        self.assertNotEqual(c.suggestions[:1], ["翔"])
         c.key(special="ESC")
 
 
 class CustomPredictionTest(unittest.TestCase):
     """個人詞庫's words in the next-character suggestion: once 2 of their characters are typed, before
-    the dictionary's guess (2026-11-09 design, the user's choice of 2)."""
+    the dictionary's guess (2026-11-09 design, the user's choice of 2); only a guess Tab gives as shown."""
 
     WORDS = [["大谷翔平", "ㄉㄚˋ ㄍㄨˇ ㄒㄧㄤˊ ㄆㄧㄥˊ"], ["獎金國", "ㄐㄧㄤˇ ㄐㄧㄣ ㄍㄨㄛˊ"],
-             ["大谷翔子", "ㄉㄚˋ ㄍㄨˇ ㄒㄧㄤˊ ㄗˇ"], ["大谷一", "ㄉㄚˋ ㄍㄨˇ ㄧ"]]
+             ["大谷翔子", "ㄉㄚˋ ㄍㄨˇ ㄒㄧㄤˊ ㄗˇ"], ["大谷一", "ㄉㄚˋ ㄍㄨˇ ㄧ"], ["拍胸脯保證", "ㄆㄞ ㄒㄩㄥ ㄆㄨˇ ㄅㄠˇ ㄓㄥˋ"]]
+    ODD = [["獎金國王", "ㄐㄧㄤˇ ㄐㄧㄣ ㄍㄨㄛˋ ㄨㄤˊ"]]  # (國 under ㄍㄨㄛˋ: no character of the dictionary)
 
-    def composer(self, words):
-        d = tempfile.mkdtemp()
-        if words:
-            with open(os.path.join(d, "dictionary.json"), "w", encoding="utf-8") as f:
-                json.dump({"words": words}, f, ensure_ascii=False)
-        return create_composer(os.path.join(d, "user.json"))
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+
+        def composer(name, words):
+            d = os.path.join(cls.tmp.name, name)
+            os.makedirs(d)
+            if words:
+                with open(os.path.join(d, "dictionary.json"), "w", encoding="utf-8") as f:
+                    json.dump({"words": words}, f, ensure_ascii=False)
+            return create_composer(os.path.join(d, "user.json"))
+        cls.mine = composer("mine", cls.WORDS)
+        cls.plain = composer("plain", None)
+        cls.odd = composer("odd", cls.ODD)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
 
     def suggestion(self, c, reading):
         c.reset()
@@ -1425,8 +1465,12 @@ class CustomPredictionTest(unittest.TestCase):
             c.key(ch)
         return c.suggestions[0] if c.suggestions else ""
 
-    def setUp(self):
-        self.mine, self.plain = self.composer(self.WORDS), self.composer(None)
+    def tab(self, c, reading):
+        """(what is shown before Tab, the guess, what Tab shows)"""
+        guess = self.suggestion(c, reading)
+        shown = c.composition
+        c.key(special="TAB")
+        return shown, guess, c.composition
 
     def test_predicted_after_two(self):
         self.assertEqual(self.suggestion(self.mine, "ㄉㄚˋ ㄍㄨˇ"), "翔")
@@ -1436,11 +1480,20 @@ class CustomPredictionTest(unittest.TestCase):
 
     def test_beats_the_dictionary(self):
         self.assertEqual(self.suggestion(self.plain, "ㄐㄧㄤˇ ㄐㄧㄣ"), "融")  # (the dictionary's guess)
-        self.assertEqual(self.suggestion(self.mine, "ㄐㄧㄤˇ ㄐㄧㄣ"), "國")
+        self.assertEqual(self.tab(self.mine, "ㄐㄧㄤˇ ㄐㄧㄣ"), ("獎金", "國", "獎金國"))
 
     def test_whole_word_typed(self):
         whole = "ㄉㄚˋ ㄍㄨˇ ㄒㄧㄤˊ ㄆㄧㄥˊ"
         self.assertEqual(self.suggestion(self.mine, whole), self.suggestion(self.plain, whole))
+
+    def test_a_character_only_in_a_word(self):
+        # (review 2026-11-09: 脯 is no character of its own under ㄆㄨˇ, but 拍胸脯 is a word: Tab pins it whole,
+        # so it is guessed; a check of single characters alone gave the dictionary's guess instead)
+        self.assertEqual(self.tab(self.mine, "ㄆㄞ ㄒㄩㄥ"), ("拍胸", "脯", "拍胸脯"))
+
+    def test_not_a_character_tab_cannot_give(self):
+        # (review 2026-11-09: 國 under ㄍㄨㄛˋ, Tab gave 獎金過: the dictionary's guess instead, which Tab gives)
+        self.assertEqual(self.tab(self.odd, "ㄐㄧㄤˇ ㄐㄧㄣ"), self.tab(self.plain, "ㄐㄧㄤˇ ㄐㄧㄣ"))
 
     def test_longest_then_first(self):
         # 大谷翔 typed: 大谷翔平 and 大谷翔子 match 3 characters (the first in dictionary.json wins);

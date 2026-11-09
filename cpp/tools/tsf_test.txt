@@ -24,6 +24,9 @@ et al 2k7vu4wj/3{ENTER} => et al 的系統
 wu06zj45p {ENTER} => 田馥甄
 j3wul6j4{ENTER} => 五條悟
 ji3cp3vu3cj0 wu06zj45p 2k7ek {ENTER} => 我很喜歡田馥甄的歌
+# a name picked once comes out next time, over a common word of the same sound (鄭氏 / 正式)
+5/4g4{LEFT}{LEFT}{DOWN}6{ENTER} => 鄭氏
+5/4g4{ENTER} => 鄭氏
 # 長句選字加強 (the model distilled from a larger one, 2026-11-09): sentences it now gets right
 5j4su3rup wu0 cl3vup fu/6{ENTER} => 祝你今天好心情
 ji3t;6ql3u vu, t;3nji3{ENTER} => 我常跑一些場所
