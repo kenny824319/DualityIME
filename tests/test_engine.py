@@ -1676,6 +1676,30 @@ class LearnedSinglesTest(Base):
         self.assertEqual(self.type(keys("ㄋㄧˇ ㄏㄠˇ")), "妳好")
         self.assertEqual(self.type(keys("ㄋㄧˇ ㄕㄨㄛ")), "妳說")  # (the dictionary has only 你說)
 
+    def test_names_keep_their_characters(self):
+        # (reported 2026-11-09: 像 picked 8 times made 日向雛田 日像雛田, 相馬直樹 像馬直樹: a name of
+        # data/names.txt is written as listed; words still take the homophone, 妳說)
+        self.learn("ㄒㄧㄤˋ", "像", 5)
+        self.learn("ㄋㄧˇ", "妳", 5)
+        try:
+            for long_sentence in (False, True):
+                with self.subTest(long_sentence=long_sentence):
+                    self.c.config.set(long_sentence=long_sentence)
+                    self.c.settings_changed()
+                    self.assertEqual(self.type(keys("ㄖˋ ㄒㄧㄤˋ ㄔㄨˊ ㄊㄧㄢˊ")), "日向雛田")
+                    self.assertEqual(self.type(keys("ㄨㄛˇ ㄒㄧˇ ㄏㄨㄢ ㄖˋ ㄒㄧㄤˋ ㄔㄨˊ ㄊㄧㄢˊ")), "我喜歡日向雛田")
+                    self.assertEqual(self.type(keys("ㄒㄧㄤˋ ㄇㄚˇ ㄓˊ ㄕㄨˋ")), "相馬直樹")
+                    self.assertEqual(self.type(keys("ㄋㄧˇ ㄕㄨㄛ")), "妳說")
+        finally:
+            self.c.config.set(long_sentence=False)
+            self.c.settings_changed()
+
+    def test_a_name_written_otherwise_by_the_user(self):
+        # (a way of writing it the user picked from the list stays theirs)
+        self.learn("ㄒㄧㄤˋ", "像", 5)
+        self.learn("ㄖˋ-ㄒㄧㄤˋ-ㄔㄨˊ-ㄊㄧㄢˊ", "日像雛田")
+        self.assertEqual(self.type(keys("ㄖˋ ㄒㄧㄤˋ ㄔㄨˊ ㄊㄧㄢˊ")), "日像雛田")
+
     def test_a_character_picked_once_or_twice_does_not_take_its_syllable_everywhere(self):
         # 輸 picked once for ㄕㄨ, 話 twice for ㄏㄨㄚˋ: the words around still decide (這本書, 畫出;
         # a user's single-character picks had made 73% of sentences right 48%: decisions.md)
