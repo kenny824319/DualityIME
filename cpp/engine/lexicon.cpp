@@ -43,7 +43,31 @@ Lexicon::Lexicon(const std::wstring& path) {
         for (auto& [p, s] : lst) mass[p] += std::pow(10.0, s);
     }
     for (auto& [p, m] : mass) reading_mass_[p] = std::log10(m);
+    // Names of well-known people and characters (names.txt next to the dictionary, made by
+    // tools/build_names.py): kept apart from entries_, candidates for converting only
+    // (phrase_candidates(..., names = true)); bigram.bin numbers the dictionary's words alone.
+    std::wstring names_path = path.substr(0, path.find_last_of(L"\\/") + 1) + L"names.txt";
+    std::string names_text;
+    if (read_file(names_path, names_text)) {
+        size_t at = 0;
+        while (at < names_text.size()) {
+            size_t nl = names_text.find('\n', at);
+            if (nl == std::string::npos) nl = names_text.size();
+            std::string_view line(names_text.data() + at, nl - at);
+            at = nl + 1;
+            size_t t1 = line.find('\t');
+            size_t t2 = t1 == std::string_view::npos ? t1 : line.find('\t', t1 + 1);
+            if (t2 == std::string_view::npos) continue;
+            names_[from_utf8(line.substr(0, t1))].emplace_back(
+                from_utf8(line.substr(t1 + 1, t2 - t1 - 1)), std::strtod(std::string(line.substr(t2 + 1)).c_str(), nullptr));
+        }
+    }
     ok_ = true;
+}
+
+const std::vector<Scored>* Lexicon::names_find(const ustr& key) const {
+    auto it = names_.find(key);
+    return it == names_.end() ? nullptr : &it->second;
 }
 
 const std::vector<Scored>* Lexicon::find(const ustr& key) const {
@@ -547,6 +571,7 @@ bool UserModel::reload_custom() {
     std::vector<std::string> cw;
     std::unordered_set<std::string> ce;
     std::unordered_set<ustr> cz;
+    std::vector<ustr> order;
     std::string text;
     if (exists && read_file(custom_path_, text)) {
         bool ok = false;
@@ -569,8 +594,10 @@ bool UserModel::reload_custom() {
                     }
                     ustr key = reading_key(from_utf8(row.items()[1].as_string()));
                     size_t syls = std::count(key.begin(), key.end(), U'-') + 1;
-                    if (!phrase.empty() && !key.empty() && phrase.size() == syls && syls <= MAX_PHRASE_LEN)
+                    if (!phrase.empty() && !key.empty() && phrase.size() == syls && syls <= MAX_PHRASE_LEN) {
+                        if (!c.count(key)) order.push_back(key);
                         c[key].push_back(phrase);
+                    }
                 }
             }
             if (auto* s = data.get("shortcuts"); s && s->is_array()) {
@@ -594,6 +621,7 @@ bool UserModel::reload_custom() {
         }
     }
     custom = std::move(c);
+    custom_order = std::move(order);
     custom_words = std::move(cw);
     custom_english = std::move(ce);
     ++words_version_;

@@ -56,7 +56,8 @@ struct Pin {
 };
 using Overrides = std::map<std::pair<int, int>, Pin>;  // span -> pin
 
-std::vector<Scored> phrase_candidates(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user);
+std::vector<Scored> phrase_candidates(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user,
+                                      bool names = false);
 std::vector<Segment> convert(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user,
                              const std::map<std::pair<int, int>, ustr>& overrides, const BigramModel* bigram,
                              const std::optional<ustr>& prev_word, const LmScorer* lm = nullptr,  // lm: 長句選字加強

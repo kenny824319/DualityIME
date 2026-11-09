@@ -62,6 +62,7 @@ constexpr double RARE_SCORE = -6.0;
 constexpr int MAX_SYL_KEYS = 5;
 constexpr size_t MAX_RAW = 100;  // keys in the buffer before the oldest phrase is sent (the ASUS IME: about 100)
 constexpr double USER_PHRASE_SCORE = -6.0;
+constexpr int CUSTOM_NEXT_MIN = 2;  // 個人詞庫's words are guessed as the next character once this many of theirs are typed
 constexpr double BIGRAM_WEIGHT = 0.6;
 const double UNSEEN_PAIR = std::log10(1 - BIGRAM_WEIGHT);
 const double LOG_BIGRAM_WEIGHT = std::log10(BIGRAM_WEIGHT);
@@ -1086,10 +1087,14 @@ std::vector<Token> tokenize(const std::string& raw, const SyllableTable& table, 
     return checked(std::move(tokens));
 }
 
-std::vector<Scored> phrase_candidates(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user) {
+std::vector<Scored> phrase_candidates(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user,
+                                      bool names) {
     ustr key = join(readings, U'-');
     OrderedMap<ustr, double> scored;
     for (auto& [p, s] : lexicon.lookup(readings)) scored.set(p, s);
+    if (names)  // (well-known people's names, below the dictionary's word of the same sound)
+        if (auto* v = lexicon.names_find(key))
+            for (auto& [p, s] : *v) scored.setdefault(p, s);
     if (user) {
         if (auto* bucket = user->phrases.find(key))
             for (auto& [p, _] : *bucket)
@@ -1484,7 +1489,8 @@ static Search search(const std::vector<ustr>& readings, const Lexicon& lexicon, 
                     if (a < i || a + b > i + l) cut = true;
                 if (cut) continue;
             }
-            auto cands = phrase_candidates(std::vector<ustr>(readings.begin() + i, readings.begin() + i + l), lexicon, user);
+            auto cands = phrase_candidates(std::vector<ustr>(readings.begin() + i, readings.begin() + i + l), lexicon, user,
+                                           true);
             if (ov != overrides.end()) {
                 std::vector<Scored> kept;
                 for (auto& [p, s] : cands)
@@ -2137,6 +2143,29 @@ std::vector<Composer::Action> Composer::next_char() {
     // that start with what was just typed (longest context first)
     if (runs_.empty() || runs_.back().second != static_cast<int>(readings.size())) return {};
     auto [a, b] = runs_.back();
+    // 個人詞庫 first: a word of it 2 or more of whose characters (and their readings) end what is typed,
+    // the most characters first, then the first in dictionary.json (大谷 -> 翔 of 大谷翔平; one character, 大,
+    // is left to the dictionary: 我們家 would else follow every 我)
+    for (int k = std::min(MAX_PHRASE_LEN - 1, b - a); k >= CUSTOM_NEXT_MIN; --k) {
+        int s = b - k;
+        ustr typed = composition.substr(syl_offset(s), k);
+        for (const auto& key : user.custom_order) {
+            std::vector<ustr> syls = split(key, U'-');
+            if (static_cast<int>(syls.size()) <= k ||
+                !std::equal(syls.begin(), syls.begin() + k, readings.begin() + s, readings.begin() + b))
+                continue;
+            for (const auto& p : user.custom.at(key)) {
+                if (p.compare(0, k, typed) == 0) {
+                    Action act;
+                    act.type = "next";
+                    act.s = s;
+                    act.text = ustr(1, p[k]);
+                    act.reading = syls[k];
+                    return {act};
+                }
+            }
+        }
+    }
     for (int k = std::min(4, b - a); k > 0; --k) {
         int s = b - k;
         int off = syl_offset(s);
@@ -2355,7 +2384,7 @@ bool Composer::open_candidates() {
     std::unordered_set<ustr> seen;
     for (auto [s0, l] : spans) {
         std::vector<ustr> part(readings.begin() + s0, readings.begin() + s0 + l);
-        for (auto& [p, _] : phrase_candidates(part, lexicon_, &user)) {
+        for (auto& [p, _] : phrase_candidates(part, lexicon_, &user, true)) {
             if (seen.insert(p).second) {
                 labels.push_back(p);
                 Action act;
