@@ -159,6 +159,8 @@ function Get-ReleaseNotes {
     foreach ($m in $Messages) {
         $all = @(($m -split "\r?\n") | Where-Object { $_.Trim() })
         if ($all.Count -eq 0) { continue }
+        # a merge commit: git's message, its items are the merged commits' (3.2.2 shipped "Merge branch ...")
+        if ($all[0] -match "^Merge (branch|remote-tracking branch|pull request|tag) ") { continue }
         $items = @($all | Where-Object { $_ -match '^\s*[*+] ' })
         if ($items.Count -eq 0) { $lines += $all[0]; continue }
         $lines += @($items | Where-Object { $_ -notmatch '^\s*\* 版本 \d+\.\d+\.\d+\s*$' -and $_ -notmatch $InternalItem })
