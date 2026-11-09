@@ -48,10 +48,14 @@ public:
     // (reading key, word) read as these syllables with one tone other (ㄆㄧˇ-ㄆㄟˋ 匹配 for ㄆㄧ ㄆㄟˋ)
     std::vector<std::pair<const ustr*, ustr>> other_tones_words(const std::vector<ustr>& readings) const;
     bool has_other_tones_word(const std::vector<ustr>& readings, size_t at) const;  // 匹配 for ㄆㄧ ㄆㄟˋ at 1
+    // Names of well-known people (names.txt beside the dictionary) for a reading key, or nullptr:
+    // not in entries(), for converting only
+    const std::vector<Scored>* names_find(const ustr& key) const;
 
 private:
     bool ok_ = false;
     std::unordered_map<ustr, std::vector<Scored>> entries_;
+    std::unordered_map<ustr, std::vector<Scored>> names_;
     std::vector<ustr> order_;
     std::unordered_map<ustr, double> reading_mass_;
     mutable bool by_start_built_ = false;
@@ -186,6 +190,7 @@ public:
     int forgot_emails = 0;  // last Config forget_emails handled
     int imported = 0;  // last Config import_memory handled (not kept: the file is gone once merged)
     std::unordered_map<ustr, std::vector<ustr>> custom;  // 個人詞庫: reading key -> phrases
+    std::vector<ustr> custom_order;                      // ...its reading keys in dictionary.json's order
     std::vector<std::string> custom_words;               // 個人詞庫's English words, as written (Kazuma)
     std::unordered_set<std::string> custom_english;      // ...the same, lower case
     std::unordered_set<ustr> custom_zhuyin;  // 注音文 in 個人詞庫 (ㄅㄨㄚ): offered where its keys are typed

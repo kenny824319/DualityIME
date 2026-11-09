@@ -1314,6 +1314,193 @@ class KnownHardTest(Base):
         self.assertEqual(self.type(keys("ㄨㄛˇ ㄗㄞˋ ㄧ ㄘˋ ㄕˋ ㄕˋ")), "我再一次試試")
 
 
+class NamesTest(Base):
+    """Names of well-known people and characters (data/names.txt, tools/build_names.py): candidates
+    for converting only, the dictionary's words first (2026-11-09 design)."""
+
+    def setUp(self):
+        super().setUp()
+        from engine import lm
+        self.assertIsNotNone(lm.shared(), "data/lm.bin or numpy missing")
+        self.c.config.set(long_sentence=True)  # (as typed for real: the model must not undo a name)
+        self.c.settings_changed()
+
+    def tearDown(self):
+        self.c.config.set(long_sentence=False)
+        self.c.settings_changed()
+
+    def own_composer(self):
+        """A composer with a memory of its own (a pick must not reach the class's composer), typing as
+        for real: 長句選字加強 on (the tests' defaults have it off)."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        c = create_composer(os.path.join(tmp.name, "user.json"))
+        c.config.set(long_sentence=True)
+        return c
+
+    def test_examples(self):
+        # (the users' examples, reported 2026-11-09)
+        for reading, want in (("ㄊㄧㄢˊ ㄈㄨˋ ㄓㄣ", "田馥甄"), ("ㄑㄧㄡ ㄅㄣˇ ㄓˋ", "秋本治"), ("ㄨˇ ㄊㄧㄠˊ ㄨˋ", "五條悟"),
+                              ("ㄎㄨㄥ ㄊㄧㄠˊ ㄔㄥˊ ㄊㄞˋ ㄌㄤˊ", "空條承太郎"),
+                              ("ㄨㄛˇ ㄏㄣˇ ㄒㄧˇ ㄏㄨㄢ ㄊㄧㄢˊ ㄈㄨˋ ㄓㄣ ㄉㄜ˙ ㄍㄜ", "我很喜歡田馥甄的歌"),
+                              ("ㄨˇ ㄊㄧㄠˊ ㄨˋ ㄕˋ ㄗㄨㄟˋ ㄑㄧㄤˊ ㄉㄜ˙", "五條悟是最強的")):
+            with self.subTest(want=want):
+                self.c.reset()
+                self.assertEqual(self.type(keys(reading)), want)
+
+    def test_word_first_name_in_the_list(self):
+        # (王菲 sounds like 王妃: the dictionary's word comes out, the name is among the candidates)
+        c = self.c
+        self.assertEqual(self.type(keys("ㄨㄤˊ ㄈㄟ")), "王妃")
+        self.type(keys("ㄨㄤˊ ㄈㄟ"), enter=False)
+        c.key(special="HOME")
+        c.key(special="DOWN")
+        self.assertIn("王菲", c.candidates)
+        c.key(special="ESC")
+        c.key(special="ESC")
+
+    def test_picked_name_remembered(self):
+        # (a memory of its own: the class's composer must keep 王妃 for the other tests)
+        c = self.own_composer()
+        for ch in keys("ㄨㄤˊ ㄈㄟ"):
+            c.key(ch)
+        c.key(special="HOME")
+        c.key(special="DOWN")
+        c._pick(c.candidates.index("王菲"))
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "王菲")
+        for ch in keys("ㄨㄤˊ ㄈㄟ"):
+            c.key(ch)
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "王菲")
+
+    def test_names_not_in_the_dictionary(self):
+        # (bigram.bin numbers the dictionary's sorted words: names must not shift them)
+        from engine.bigram import vocabulary
+        lexicon = self.c.lexicon
+        self.assertIn("ㄊㄧㄢˊ-ㄈㄨˋ-ㄓㄣ", lexicon.names)
+        self.assertFalse(any(p == "田馥甄" for lst in lexicon.entries.values() for p, _ in lst))
+        self.assertNotIn("田馥甄", vocabulary(lexicon))
+
+    def test_english_judgment_unchanged(self):
+        # (卡卡 is a name only: after English the choice between English and zhuyin stays the dictionary's)
+        from engine.composer import tokenize
+        c = self.c
+        raw = "hello " + keys("ㄎㄚ ㄎㄚ")
+        kinds = [t.kind for t in tokenize(raw, c.table, c.user, c.english, lexicon=c.lexicon)]
+        saved, c.lexicon.names = c.lexicon.names, {}
+        try:
+            self.assertEqual([t.kind for t in tokenize(raw, c.table, c.user, c.english, lexicon=c.lexicon)], kinds)
+        finally:
+            c.lexicon.names = saved
+
+    def test_without_names_file(self):
+        import shutil
+        from engine.composer import convert
+        from engine.lexicon import DATA_DIR, Lexicon
+        with tempfile.TemporaryDirectory() as d:
+            shutil.copy(os.path.join(DATA_DIR, "lexicon.txt"), d)
+            lexicon = Lexicon(os.path.join(d, "lexicon.txt"))
+        self.assertEqual(lexicon.names, {})
+        self.assertEqual("".join(p for _, _, p in convert(["ㄐㄧㄣ", "ㄊㄧㄢ"], lexicon)), "今天")
+
+    def test_picked_name_beats_a_strong_word(self):
+        # (review 2026-11-09: names went into the candidates before the user's learned words, so a learned
+        # name kept the name's -7, not -6, and lost to a strong word: 鄭氏 picked, then 正式 again)
+        c = self.own_composer()
+        for ch in keys("ㄓㄥˋ ㄕˋ"):
+            c.key(ch)
+        c.key(special="HOME")
+        c.key(special="DOWN")
+        c._pick(c.candidates.index("鄭氏"))
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "鄭氏")
+        for ch in keys("ㄓㄥˋ ㄕˋ"):
+            c.key(ch)
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "鄭氏")
+
+    def test_names_not_predicted(self):
+        # (大谷翔平 is a name; 大谷 shows as typed with 長句選字加強 off: 翔 is not guessed from the names)
+        c = self.c
+        self.assertIn("ㄉㄚˋ-ㄍㄨˇ-ㄒㄧㄤˊ-ㄆㄧㄥˊ", c.lexicon.names)
+        c.config.set(long_sentence=False)
+        c.settings_changed()
+        self.type(keys("ㄉㄚˋ ㄍㄨˇ"), enter=False)
+        self.assertEqual(c.composition, "大谷")
+        self.assertNotEqual(c.suggestions[:1], ["翔"])
+        c.key(special="ESC")
+
+
+class CustomPredictionTest(unittest.TestCase):
+    """個人詞庫's words in the next-character suggestion: once 2 of their characters are typed, before
+    the dictionary's guess (2026-11-09 design, the user's choice of 2); only a guess Tab gives as shown."""
+
+    WORDS = [["大谷翔平", "ㄉㄚˋ ㄍㄨˇ ㄒㄧㄤˊ ㄆㄧㄥˊ"], ["獎金國", "ㄐㄧㄤˇ ㄐㄧㄣ ㄍㄨㄛˊ"],
+             ["大谷翔子", "ㄉㄚˋ ㄍㄨˇ ㄒㄧㄤˊ ㄗˇ"], ["大谷一", "ㄉㄚˋ ㄍㄨˇ ㄧ"], ["拍胸脯保證", "ㄆㄞ ㄒㄩㄥ ㄆㄨˇ ㄅㄠˇ ㄓㄥˋ"]]
+    ODD = [["獎金國王", "ㄐㄧㄤˇ ㄐㄧㄣ ㄍㄨㄛˋ ㄨㄤˊ"]]  # (國 under ㄍㄨㄛˋ: no character of the dictionary)
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+
+        def composer(name, words):
+            d = os.path.join(cls.tmp.name, name)
+            os.makedirs(d)
+            if words:
+                with open(os.path.join(d, "dictionary.json"), "w", encoding="utf-8") as f:
+                    json.dump({"words": words}, f, ensure_ascii=False)
+            return create_composer(os.path.join(d, "user.json"))
+        cls.mine = composer("mine", cls.WORDS)
+        cls.plain = composer("plain", None)
+        cls.odd = composer("odd", cls.ODD)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def suggestion(self, c, reading):
+        c.reset()
+        for ch in keys(reading):
+            c.key(ch)
+        return c.suggestions[0] if c.suggestions else ""
+
+    def tab(self, c, reading):
+        """(what is shown before Tab, the guess, what Tab shows)"""
+        guess = self.suggestion(c, reading)
+        shown = c.composition
+        c.key(special="TAB")
+        return shown, guess, c.composition
+
+    def test_predicted_after_two(self):
+        self.assertEqual(self.suggestion(self.mine, "ㄉㄚˋ ㄍㄨˇ"), "翔")
+
+    def test_not_after_one(self):
+        self.assertEqual(self.suggestion(self.mine, "ㄉㄚˋ"), self.suggestion(self.plain, "ㄉㄚˋ"))
+
+    def test_beats_the_dictionary(self):
+        self.assertEqual(self.suggestion(self.plain, "ㄐㄧㄤˇ ㄐㄧㄣ"), "融")  # (the dictionary's guess)
+        self.assertEqual(self.tab(self.mine, "ㄐㄧㄤˇ ㄐㄧㄣ"), ("獎金", "國", "獎金國"))
+
+    def test_whole_word_typed(self):
+        whole = "ㄉㄚˋ ㄍㄨˇ ㄒㄧㄤˊ ㄆㄧㄥˊ"
+        self.assertEqual(self.suggestion(self.mine, whole), self.suggestion(self.plain, whole))
+
+    def test_a_character_only_in_a_word(self):
+        # (review 2026-11-09: 脯 is no character of its own under ㄆㄨˇ, but 拍胸脯 is a word: Tab pins it whole,
+        # so it is guessed; a check of single characters alone gave the dictionary's guess instead)
+        self.assertEqual(self.tab(self.mine, "ㄆㄞ ㄒㄩㄥ"), ("拍胸", "脯", "拍胸脯"))
+
+    def test_not_a_character_tab_cannot_give(self):
+        # (review 2026-11-09: 國 under ㄍㄨㄛˋ, Tab gave 獎金過: the dictionary's guess instead, which Tab gives)
+        self.assertEqual(self.tab(self.odd, "ㄐㄧㄤˇ ㄐㄧㄣ"), self.tab(self.plain, "ㄐㄧㄤˇ ㄐㄧㄣ"))
+
+    def test_longest_then_first(self):
+        # 大谷翔 typed: 大谷翔平 and 大谷翔子 match 3 characters (the first in dictionary.json wins);
+        # 大谷一 matches only 2
+        self.assertEqual(self.suggestion(self.mine, "ㄉㄚˋ ㄍㄨˇ ㄒㄧㄤˊ"), "平")
+
+
 class KnownHardWithLongSentenceTest(Base):
     """What 長句選字加強 gets right of KnownHardTest: keep it right (it needs data/lm.bin and numpy)."""
 
@@ -3913,8 +4100,9 @@ class SyllableMassTest(unittest.TestCase):
         self.assertIsNotNone(self.scorer, "data/lm.bin or numpy missing")
 
     def test_mass_matches_the_experiment(self):
-        # (scratchpad 2026-11-04: P(ㄅㄚ˙ | 算了) = 0.2266, P(吧 | 房間號碼是) = 0.00009)
-        self.assertAlmostEqual(self.scorer.syllable_mass_q16("算了", "ㄅㄚ˙") / 65536, 0.2266, delta=0.01)
+        # (P(ㄅㄚ˙ | 算了) = 0.2065 with the model distilled 2026-11-09, 0.2266 with the one before (scratchpad
+        # 2026-11-04); P(吧 | 房間號碼是) = 0.00009)
+        self.assertAlmostEqual(self.scorer.syllable_mass_q16("算了", "ㄅㄚ˙") / 65536, 0.2065, delta=0.01)
         self.assertLess(self.scorer.syllable_mass_q16("房間號碼是", "ㄅㄚ˙"), int(0.002 * 65536))
 
     def test_whole_vocabulary_is_one(self):
@@ -3952,7 +4140,9 @@ class OrderDigitsWithModelTest(Base):
         super().tearDown()
 
     def test_end_of_sentence_reads_as_chinese(self):
-        self.assertEqual(self.type(self.WE_GO + "817"), "我們走吧")  # (P 0.026 >= 0.0246)
+        # (P 1601 >= the threshold 1544, Q16: 0.0244 against 0.0236 with the model of 2026-11-09, a margin of
+        # only 3.7%: a retrained model may tip it, re-run tools/lm/order_thresholds.py)
+        self.assertEqual(self.type(self.WE_GO + "817"), "我們走吧")
         self.assertEqual(self.type(self.WE_GO + "817 ok"), "我們走吧 ok")
         self.assertEqual(self.type(keys("ㄙㄨㄢˋ ㄌㄜ˙") + "817"), "算了吧")
 
@@ -3980,7 +4170,8 @@ class OrderDigitsWithModelTest(Base):
 
     def test_only_the_end_of_the_run(self):
         # the first 817 has Chinese after it: a number; the model judges the second after what is
-        # shown before it, 個 / 了 alone (P 38 and 1249 < 1614), not 我們走吧個 (2467: 巴) - review 2026-11-04
+        # shown before it, 個 / 了 alone (P 35 and 1319 < 1544, the model of 2026-11-09), not 我們走吧個
+        # (3892: 巴) - review 2026-11-04
         self.assertEqual(self.type(self.WE_GO + "817ek7817"), "我們走817個817")
         self.assertEqual(self.type(self.WE_GO + "817xk7817"), "我們走817了817")
 
@@ -4000,7 +4191,7 @@ class OrderDigitsWithModelTest(Base):
         self.assertEqual(self.type(self.WE_GO + "817"), "我們走817")
 
     def test_threshold_tables_agree(self):
-        # (the C++ engine's copy: each entry on a line of its own, {U"ㄅㄚ˙", 1612},)
+        # (the C++ engine's copy: each entry on a line of its own, {U"ㄅㄚ˙", 1544},)
         import re
         path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cpp", "engine", "composer.cpp")
         src = open(path, encoding="utf-8").read()

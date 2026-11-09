@@ -199,5 +199,5 @@
 
 - 詞庫：[McBopomofo 小麥注音](https://github.com/openvanilla/McBopomofo)（MIT，見 `data/LICENSE-McBopomofo.txt`）
 - 前後文統計：[wikipedia-zhtw](https://huggingface.co/datasets/erhwenkuo/wikipedia-zhtw)（CC BY-SA 3.0）與 [CC-100 zh-Hant](https://huggingface.co/datasets/zetavg/CC-100-zh-Hant)
-- 長句選字加強的語言模型（`data/lm.bin`）：本專案自己用上面兩份語料訓練
+- 長句選字加強的語言模型（`data/lm.bin`）：本專案自己用上面兩份語料訓練，並以 [Qwen3-1.7B](https://huggingface.co/Qwen/Qwen3-1.7B)（Apache-2.0）為老師蒸餾
 - 英文字表：[google-10000-english](https://github.com/first20hours/google-10000-english)（僅供個人、教育用途），另外補上一般字表沒有的電腦用語（cmd、git、json…）

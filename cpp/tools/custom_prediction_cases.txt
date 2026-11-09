@@ -1,0 +1,5 @@
+# e2e-args: -Dictionary cpp\tools\custom_prediction_dictionary.json
+# 個人詞庫's words in the next-character suggestion (reported 2026-11-09): once 2 of their characters are
+# typed, Tab takes the next one, before the dictionary's guess (獎金 -> 融 without the word). Only where
+# what is shown is the word's start: ㄉㄚˋ ㄍㄨˇ shows 大鼓 with 長句選字加強 on, so 大谷翔平 is not guessed
+ru;3rup {TAB}{ENTER} => 獎金國

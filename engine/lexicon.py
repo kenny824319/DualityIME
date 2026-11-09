@@ -36,6 +36,17 @@ class Lexicon:
         self.reading_mass = {p: math.log10(m) for p, m in mass.items()}
         self._by_start = None  # first reading -> phrases of 2+ syllables, see completions()
         self._by_toneless = None  # readings without tones -> reading keys, see reads_with_other_tones()
+        # Names of well-known people and characters (names.txt next to the dictionary, made by
+        # tools/build_names.py): reading -> [(name, score)]. Kept apart from entries: they are candidates
+        # for converting only (phrase_candidates(..., names=True)), not words for the English / zhuyin
+        # judgment, 注音自動校正 or completions, and bigram.bin numbers the dictionary's words alone.
+        self.names = {}
+        names_path = os.path.join(os.path.dirname(path), "names.txt")
+        if os.path.isfile(names_path):
+            with open(names_path, encoding="utf-8") as f:
+                for line in f:
+                    reading, name, score = line.rstrip("\n").split("\t")
+                    self.names.setdefault(reading, []).append((name, float(score)))
 
     def lookup(self, readings):
         return self.entries.get("-".join(readings), [])

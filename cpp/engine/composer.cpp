@@ -62,13 +62,14 @@ constexpr double RARE_SCORE = -6.0;
 constexpr int MAX_SYL_KEYS = 5;
 constexpr size_t MAX_RAW = 100;  // keys in the buffer before the oldest phrase is sent (the ASUS IME: about 100)
 constexpr double USER_PHRASE_SCORE = -6.0;
+constexpr int CUSTOM_NEXT_MIN = 2;  // 個人詞庫's words are guessed as the next character once this many of theirs are typed
 constexpr double BIGRAM_WEIGHT = 0.6;
 const double UNSEEN_PAIR = std::log10(1 - BIGRAM_WEIGHT);
 const double LOG_BIGRAM_WEIGHT = std::log10(BIGRAM_WEIGHT);
 constexpr size_t BEAM = 12;
 constexpr size_t PER_SPAN = 8;
 constexpr double DICT_FLOOR = 0.4;
-constexpr double LM_WEIGHT = 0.5;   // 長句選字加強: log10 of the model's probability counts this much against the engine's score
+constexpr double LM_WEIGHT = 0.555;  // 長句選字加強: log10 of the model's probability counts this much against the engine's score
 constexpr double WORD_BONUS = 0.4;  // ...and each character inside a cohesive word this much (engine/composer.py)
 constexpr double WORD_COHESION = 1.0;  // cohesive: log10 count(word) - the sum of its characters' (engine/composer.py)
 constexpr double LN10 = 2.302585092994046;  // (written out: engine/composer.py uses the same digits)
@@ -766,28 +767,28 @@ std::unordered_map<ustr, double>& run_scores() {
 // model's probability that the next character is one of the syllable's (Q16) is at least this
 // (engine/composer.py ORDER_LM_THRESHOLDS_Q16; a test compares the two tables)
 const std::unordered_map<ustr, int64_t> ORDER_LM_THRESHOLDS_Q16 = {
-    {U"ㄅㄢˇ", 1825},
-    {U"ㄅㄢˋ", 3994},
+    {U"ㄅㄢˇ", 1764},
+    {U"ㄅㄢˋ", 4285},
     {U"ㄉㄢˇ", 1311},
-    {U"ㄉㄢˋ", 1609},
+    {U"ㄉㄢˋ", 1708},
     {U"ㄓㄢˇ", 1311},
-    {U"ㄓㄢˋ", 7239},
+    {U"ㄓㄢˋ", 7236},
     {U"ㄅㄚˇ", 1311},
     {U"ㄅㄚˋ", 1311},
     {U"ㄅㄚˊ", 1311},
-    {U"ㄅㄚ˙", 1614},
+    {U"ㄅㄚ˙", 1544},
     {U"ㄉㄚˇ", 1311},
-    {U"ㄉㄚˋ", 6134},
-    {U"ㄉㄚˊ", 12815},
+    {U"ㄉㄚˋ", 6541},
+    {U"ㄉㄚˊ", 12856},
     {U"ㄉㄚ˙", 1311},
     {U"ㄓㄚˇ", 1311},
     {U"ㄓㄚˋ", 1311},
     {U"ㄓㄚˊ", 1311},
-    {U"ㄅㄞˇ", 9752},
+    {U"ㄅㄞˇ", 10054},
     {U"ㄅㄞˋ", 1311},
-    {U"ㄅㄞˊ", 9753},
+    {U"ㄅㄞˊ", 10057},
     {U"ㄉㄞˇ", 1311},
-    {U"ㄉㄞˋ", 6770},
+    {U"ㄉㄞˋ", 7071},
     {U"ㄓㄞˇ", 1311},
     {U"ㄓㄞˋ", 1311},
     {U"ㄓㄞˊ", 1311},
@@ -1086,7 +1087,8 @@ std::vector<Token> tokenize(const std::string& raw, const SyllableTable& table, 
     return checked(std::move(tokens));
 }
 
-std::vector<Scored> phrase_candidates(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user) {
+std::vector<Scored> phrase_candidates(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user,
+                                      bool names) {
     ustr key = join(readings, U'-');
     OrderedMap<ustr, double> scored;
     for (auto& [p, s] : lexicon.lookup(readings)) scored.set(p, s);
@@ -1096,8 +1098,14 @@ std::vector<Scored> phrase_candidates(const std::vector<ustr>& readings, const L
                 if (user->phrase_count(key, p) >= 1) scored.setdefault(p, USER_PHRASE_SCORE);
         if (auto it = user->custom.find(key); it != user->custom.end())
             for (auto& p : it->second) scored.setdefault(p, USER_PHRASE_SCORE);
-        for (auto& [p, s] : scored) s = s + user->bonus(key, p);
     }
+    // well-known people's names, below the dictionary's word of the same sound; after the user's words:
+    // a name learned or in 個人詞庫 keeps USER_PHRASE_SCORE (review 2026-11-09)
+    if (names)
+        if (auto* v = lexicon.names_find(key))
+            for (auto& [p, s] : *v) scored.setdefault(p, s);
+    if (user)
+        for (auto& [p, s] : scored) s = s + user->bonus(key, p);
     std::vector<Scored> out(scored.begin(), scored.end());
     std::stable_sort(out.begin(), out.end(), [](const Scored& a, const Scored& b) { return -a.second < -b.second; });
     return out;
@@ -1484,7 +1492,8 @@ static Search search(const std::vector<ustr>& readings, const Lexicon& lexicon, 
                     if (a < i || a + b > i + l) cut = true;
                 if (cut) continue;
             }
-            auto cands = phrase_candidates(std::vector<ustr>(readings.begin() + i, readings.begin() + i + l), lexicon, user);
+            auto cands = phrase_candidates(std::vector<ustr>(readings.begin() + i, readings.begin() + i + l), lexicon, user,
+                                           true);
             if (ov != overrides.end()) {
                 std::vector<Scored> kept;
                 for (auto& [p, s] : cands)
@@ -2137,6 +2146,34 @@ std::vector<Composer::Action> Composer::next_char() {
     // that start with what was just typed (longest context first)
     if (runs_.empty() || runs_.back().second != static_cast<int>(readings.size())) return {};
     auto [a, b] = runs_.back();
+    // 個人詞庫 first: a word of it 2 or more of whose characters (and their readings) end what is typed,
+    // the most characters first, then the first in dictionary.json (大谷 -> 翔 of 大谷翔平; one character, 大,
+    // is left to the dictionary: 我們家 would else follow every 我)
+    for (int k = std::min(MAX_PHRASE_LEN - 1, b - a); k >= CUSTOM_NEXT_MIN; --k) {
+        int s = b - k;
+        ustr typed = composition.substr(syl_offset(s), k);
+        for (const auto& key : user.custom_order) {
+            std::vector<ustr> syls = split(key, U'-');
+            if (static_cast<int>(syls.size()) <= k ||
+                !std::equal(syls.begin(), syls.begin() + k, readings.begin() + s, readings.begin() + b))
+                continue;
+            for (const auto& p : user.custom.at(key)) {
+                // (only a guess Tab can fix as shown, the test pin itself uses: 國 under ㄍㄨㄛˋ gave 獎金過,
+                // 脯 of 拍胸脯 is fixed as the word - review 2026-11-09)
+                if (p.compare(0, k, typed) != 0) continue;
+                std::vector<ustr> chars;
+                for (int i = 0; i <= k; ++i) chars.push_back(ustr(1, p[i]));
+                if (pin_way({syls.begin(), syls.begin() + k + 1}, chars) != PinWay::None) {
+                    Action act;
+                    act.type = "next";
+                    act.s = s;
+                    act.text = ustr(1, p[k]);
+                    act.reading = syls[k];
+                    return {act};
+                }
+            }
+        }
+    }
     for (int k = std::min(4, b - a); k > 0; --k) {
         int s = b - k;
         int off = syl_offset(s);
@@ -2219,6 +2256,18 @@ void Composer::take_suggestion() {
     refresh();
 }
 
+Composer::PinWay Composer::pin_way(const std::vector<ustr>& rds, const std::vector<ustr>& chars) const {
+    // how pin fixes chars over rds: each a character of the dictionary under its syllable, the run a
+    // dictionary word, or not at all
+    bool all_single = true;
+    for (size_t i = 0; i < rds.size(); ++i)
+        if (!lexicon_.has({rds[i]}, chars[i])) all_single = false;
+    if (all_single) return PinWay::Chars;
+    ustr phrase;
+    for (auto& c : chars) phrase += c;
+    return lexicon_.has(rds, phrase) ? PinWay::Phrase : PinWay::None;
+}
+
 void Composer::pin(int start, const std::vector<ustr>& rds, const std::vector<ustr>& chars) {
     // fix chars[i] for syllable start+i: one character at a time where the
     // dictionary has it alone, else the whole run as one phrase
@@ -2227,14 +2276,8 @@ void Composer::pin(int start, const std::vector<ustr>& rds, const std::vector<us
             if (!v.kept && span.first <= i && i < span.first + span.second) return true;
         return false;
     };
-    bool all_single = true;
-    for (size_t i = 0; i < rds.size(); ++i) {
-        bool single = false;
-        for (auto& [p, _] : lexicon_.lookup({rds[i]}))
-            if (p == chars[i]) single = true;
-        if (!single) all_single = false;
-    }
-    if (all_single) {
+    PinWay way = pin_way(rds, chars);
+    if (way == PinWay::Chars) {
         for (size_t i = 0; i < rds.size(); ++i) {
             int at = start + static_cast<int>(i);
             if (!covered(at)) overrides_[{at, 1}] = {{rds[i]}, chars[i]};
@@ -2243,10 +2286,7 @@ void Composer::pin(int start, const std::vector<ustr>& rds, const std::vector<us
     }
     ustr phrase;
     for (auto& c : chars) phrase += c;
-    bool known = false;
-    for (auto& [p, _] : lexicon_.lookup(rds))
-        if (p == phrase) known = true;
-    if (known) {
+    if (way == PinWay::Phrase) {
         int end = start + static_cast<int>(rds.size());
         Overrides kept;
         for (auto& [sp, v] : overrides_)
@@ -2355,7 +2395,7 @@ bool Composer::open_candidates() {
     std::unordered_set<ustr> seen;
     for (auto [s0, l] : spans) {
         std::vector<ustr> part(readings.begin() + s0, readings.begin() + s0 + l);
-        for (auto& [p, _] : phrase_candidates(part, lexicon_, &user)) {
+        for (auto& [p, _] : phrase_candidates(part, lexicon_, &user, true)) {
             if (seen.insert(p).second) {
                 labels.push_back(p);
                 Action act;

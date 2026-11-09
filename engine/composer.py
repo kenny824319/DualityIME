@@ -90,28 +90,28 @@ ORDER_DIGITS_GAIN = 1.0    # ...and for digits out of order to stay zhuyin (好�
 # time (held-out web text, tools/lm/order_thresholds.py; 2026-11-04 design). The C++ engine has the
 # same table (a test compares them).
 ORDER_LM_THRESHOLDS_Q16 = {
-    "ㄅㄢˇ": 1825,   # 0.0278 版板
-    "ㄅㄢˋ": 3994,   # 0.0609 辦半
+    "ㄅㄢˇ": 1764,   # 0.0269 版板
+    "ㄅㄢˋ": 4285,   # 0.0654 辦半
     "ㄉㄢˇ": 1311,   # 0.0200 膽
-    "ㄉㄢˋ": 1609,   # 0.0246 但蛋
+    "ㄉㄢˋ": 1708,   # 0.0261 但蛋
     "ㄓㄢˇ": 1311,   # 0.0200 展
-    "ㄓㄢˋ": 7239,   # 0.1105 站戰
+    "ㄓㄢˋ": 7236,   # 0.1104 站戰
     "ㄅㄚˇ": 1311,   # 0.0200 把
     "ㄅㄚˋ": 1311,   # 0.0200 爸罷
     "ㄅㄚˊ": 1311,   # 0.0200 拔
-    "ㄅㄚ˙": 1614,   # 0.0246 吧
+    "ㄅㄚ˙": 1544,   # 0.0236 吧
     "ㄉㄚˇ": 1311,   # 0.0200 打
-    "ㄉㄚˋ": 6134,   # 0.0936 大
-    "ㄉㄚˊ": 12815,  # 0.1955 達答
+    "ㄉㄚˋ": 6541,   # 0.0998 大
+    "ㄉㄚˊ": 12856,  # 0.1962 達答
     "ㄉㄚ˙": 1311,   # 0.0200
     "ㄓㄚˇ": 1311,   # 0.0200 眨
     "ㄓㄚˋ": 1311,   # 0.0200 炸
     "ㄓㄚˊ": 1311,   # 0.0200 札
-    "ㄅㄞˇ": 9752,   # 0.1488 百
+    "ㄅㄞˇ": 10054,   # 0.1534 百
     "ㄅㄞˋ": 1311,   # 0.0200 拜敗
-    "ㄅㄞˊ": 9753,   # 0.1488 白
+    "ㄅㄞˊ": 10057,   # 0.1535 白
     "ㄉㄞˇ": 1311,   # 0.0200 歹
-    "ㄉㄞˋ": 6770,   # 0.1033 帶代
+    "ㄉㄞˋ": 7071,   # 0.1079 帶代
     "ㄓㄞˇ": 1311,   # 0.0200 窄
     "ㄓㄞˋ": 1311,   # 0.0200 債
     "ㄓㄞˊ": 1311,   # 0.0200 宅
@@ -807,18 +807,25 @@ def _digits_to_numbers(tokens, after_english=False, chinese=()):
 
 
 USER_PHRASE_SCORE = -6.0  # base score of phrases only the user has taught us
+CUSTOM_NEXT_MIN = 2       # 個人詞庫's words are guessed as the next character once this many of theirs are typed
 
 
-def phrase_candidates(readings, lexicon, user=None):
-    """[(phrase, score)] for one reading sequence, best first, user bonus applied."""
+def phrase_candidates(readings, lexicon, user=None, names=False):
+    """[(phrase, score)] for one reading sequence, best first, user bonus applied. names: the names of
+    well-known people too (lexicon.names, below the dictionary's word of the same sound): for
+    converting and the candidate list only."""
     reading_key = "-".join(readings)
     scored = {p: s for p, s in lexicon.lookup(readings)}
+    mine = []  # the user's words: learned ones not yet faded away, then 個人詞庫's
     if user:
-        for p in user.phrases.get(reading_key, ()):
-            if user.phrase_count(reading_key, p) >= 1:  # not yet faded away
-                scored.setdefault(p, USER_PHRASE_SCORE)
-        for p in user.custom.get(reading_key, ()):
-            scored.setdefault(p, USER_PHRASE_SCORE)
+        mine = [p for p in user.phrases.get(reading_key, ()) if user.phrase_count(reading_key, p) >= 1]
+        mine += user.custom.get(reading_key, ())
+    for p in mine:
+        scored.setdefault(p, USER_PHRASE_SCORE)
+    if names:  # (after the user's words: a name learned or in 個人詞庫 keeps USER_PHRASE_SCORE - review 2026-11-09)
+        for p, s in lexicon.names.get(reading_key, ()):
+            scored.setdefault(p, s)
+    if user:
         scored = {p: s + user.bonus(reading_key, p) for p, s in scored.items()}
     return sorted(scored.items(), key=lambda x: -x[1])
 
@@ -933,7 +940,7 @@ def single_scores(reading, scored, lexicon, user, bigram):
     return [(p, u - shift) for p, u in scored]
 
 
-LM_WEIGHT = 0.5    # 長句選字加強: log10 of the model's probability counts this much against the engine's score
+LM_WEIGHT = 0.555  # 長句選字加強: log10 of the model's probability counts this much against the engine's score
 WORD_BONUS = 0.4   # ...and each character inside a cohesive word this much: the model reads characters,
                    # and split 新舊 into 心就 (decisions.md, 2026-11-03)
 WORD_COHESION = 1.0  # cohesive: log10 count(word) - the sum of its characters' (新舊 1.74, 選字 1.13; not
@@ -1110,7 +1117,7 @@ def _search(readings, lexicon, user, overrides, bigram, prev_word, alone=None):
             inside = {sp for sp in (locked[k] for k in range(i, i + l)) if sp is not None}
             if span not in overrides and any(a < i or a + b > i + l for a, b in inside):
                 continue
-            cands = phrase_candidates(readings[i:i + l], lexicon, user)
+            cands = phrase_candidates(readings[i:i + l], lexicon, user, names=True)
             if span in overrides:
                 cands = [(p, s + 1000.0) for p, s in cands if p == overrides[span]]
             elif inside:
@@ -1678,6 +1685,20 @@ class Composer:
         if not run or run[1] != len(self.readings):
             return []
         a, b = run
+        # 個人詞庫 first: a word of it 2 or more of whose characters (and their readings) end what is
+        # typed, the most characters first, then the first in dictionary.json (大谷 -> 翔 of 大谷翔平;
+        # one character, 大, is left to the dictionary: 我們家 would else follow every 我)
+        for k in range(min(MAX_PHRASE_LEN - 1, b - a), CUSTOM_NEXT_MIN - 1, -1):
+            s = b - k
+            typed = self.composition[self._syl_offset(s):self._syl_offset(s) + k]
+            for key, phrases in self.user.custom.items():
+                syls = key.split("-")
+                if len(syls) > k and syls[:k] == self.readings[s:b]:
+                    for p in phrases:
+                        # (only a guess Tab can fix as shown, the test _pin itself uses: 國 under ㄍㄨㄛˋ
+                        # gave 獎金過, 脯 of 拍胸脯 is fixed as the word - review 2026-11-09)
+                        if p[:k] == typed and self._pin_way(syls[:k + 1], list(typed + p[k])):
+                            return [("next", s, p[k], syls[k])]
         for k in range(min(4, b - a), 0, -1):
             s = b - k
             typed = self.composition[self._syl_offset(s):self._syl_offset(s) + k]
@@ -1720,20 +1741,29 @@ class Composer:
         self.caret = None
         self._refresh()
 
+    def _pin_way(self, readings, chars):
+        """How _pin fixes chars over readings: "chars" (each is a character of the dictionary under its
+        syllable), "phrase" (the run is a dictionary word), or None (it cannot: nothing is fixed)."""
+        if all(self.lexicon.has([rd], ch) for rd, ch in zip(readings, chars)):
+            return "chars"
+        if self.lexicon.has(readings, "".join(chars)):
+            return "phrase"
+        return None
+
     def _pin(self, start, readings, chars):
         """Fix chars[i] for syllable start+i: one character at a time where the
         dictionary has it alone, else the whole run as one phrase."""
         def covered(i):
             return any(s <= i < s + l for (s, l), v in self.overrides.items() if len(v) == 2)
 
-        single = [any(p == ch for p, _ in self.lexicon.lookup([rd])) for rd, ch in zip(readings, chars)]
-        if all(single):
+        way = self._pin_way(readings, chars)
+        if way == "chars":
             for i, (rd, ch) in enumerate(zip(readings, chars)):
                 if not covered(start + i):
                     self.overrides[(start + i, 1)] = ((rd,), ch)
             return
         phrase = "".join(chars)
-        if any(p == phrase for p, _ in self.lexicon.lookup(readings)):
+        if way == "phrase":
             end = start + len(readings)
             # a phrase pin replaces every pin it overlaps
             self.overrides = {sp: v for sp, v in self.overrides.items()
@@ -1801,7 +1831,7 @@ class Composer:
         spans = [(t, l) for l in range(min(MAX_PHRASE_LEN, b - t) if c < n else 1, 0, -1)]
         labels, actions, seen = [], [], set()
         for s_, l in spans:
-            for p, _ in phrase_candidates(self.readings[s_:s_ + l], self.lexicon, self.user):
+            for p, _ in phrase_candidates(self.readings[s_:s_ + l], self.lexicon, self.user, names=True):
                 if p not in seen:
                     seen.add(p)
                     labels.append(p)
