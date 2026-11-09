@@ -14,7 +14,9 @@ collect: held-out web text (common.EVAL["web"], never trained on). For each syll
 table: per syllable, the lowest threshold (Q16, at least 0.02) at which at most --cap of the numbers
     turn into the syllable; how many real end-of-run characters it keeps; the same threshold taken
     from one half of the numbers and checked on the other. Prints both engines' tables.
-Run collect again after data/lm.bin is retrained, then paste the tables into both engines.
+Run collect again after data/lm.bin is retrained, then paste the tables into both engines. (Since
+2026-11-09 data/lm.bin is distilled, not tools/lm/train.py's output: see docs/architecture/decisions.md
+2026-11-09 and docs/status.md before retraining.)
 """
 import multiprocessing
 import os

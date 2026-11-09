@@ -90,28 +90,28 @@ ORDER_DIGITS_GAIN = 1.0    # ...and for digits out of order to stay zhuyin (好�
 # time (held-out web text, tools/lm/order_thresholds.py; 2026-11-04 design). The C++ engine has the
 # same table (a test compares them).
 ORDER_LM_THRESHOLDS_Q16 = {
-    "ㄅㄢˇ": 1825,   # 0.0278 版板
-    "ㄅㄢˋ": 3994,   # 0.0609 辦半
+    "ㄅㄢˇ": 1764,   # 0.0269 版板
+    "ㄅㄢˋ": 4285,   # 0.0654 辦半
     "ㄉㄢˇ": 1311,   # 0.0200 膽
-    "ㄉㄢˋ": 1609,   # 0.0246 但蛋
+    "ㄉㄢˋ": 1708,   # 0.0261 但蛋
     "ㄓㄢˇ": 1311,   # 0.0200 展
-    "ㄓㄢˋ": 7239,   # 0.1105 站戰
+    "ㄓㄢˋ": 7236,   # 0.1104 站戰
     "ㄅㄚˇ": 1311,   # 0.0200 把
     "ㄅㄚˋ": 1311,   # 0.0200 爸罷
     "ㄅㄚˊ": 1311,   # 0.0200 拔
-    "ㄅㄚ˙": 1614,   # 0.0246 吧
+    "ㄅㄚ˙": 1544,   # 0.0236 吧
     "ㄉㄚˇ": 1311,   # 0.0200 打
-    "ㄉㄚˋ": 6134,   # 0.0936 大
-    "ㄉㄚˊ": 12815,  # 0.1955 達答
+    "ㄉㄚˋ": 6541,   # 0.0998 大
+    "ㄉㄚˊ": 12856,  # 0.1962 達答
     "ㄉㄚ˙": 1311,   # 0.0200
     "ㄓㄚˇ": 1311,   # 0.0200 眨
     "ㄓㄚˋ": 1311,   # 0.0200 炸
     "ㄓㄚˊ": 1311,   # 0.0200 札
-    "ㄅㄞˇ": 9752,   # 0.1488 百
+    "ㄅㄞˇ": 10054,   # 0.1534 百
     "ㄅㄞˋ": 1311,   # 0.0200 拜敗
-    "ㄅㄞˊ": 9753,   # 0.1488 白
+    "ㄅㄞˊ": 10057,   # 0.1535 白
     "ㄉㄞˇ": 1311,   # 0.0200 歹
-    "ㄉㄞˋ": 6770,   # 0.1033 帶代
+    "ㄉㄞˋ": 7071,   # 0.1079 帶代
     "ㄓㄞˇ": 1311,   # 0.0200 窄
     "ㄓㄞˋ": 1311,   # 0.0200 債
     "ㄓㄞˊ": 1311,   # 0.0200 宅
@@ -933,7 +933,7 @@ def single_scores(reading, scored, lexicon, user, bigram):
     return [(p, u - shift) for p, u in scored]
 
 
-LM_WEIGHT = 0.5    # 長句選字加強: log10 of the model's probability counts this much against the engine's score
+LM_WEIGHT = 0.555  # 長句選字加強: log10 of the model's probability counts this much against the engine's score
 WORD_BONUS = 0.4   # ...and each character inside a cohesive word this much: the model reads characters,
                    # and split 新舊 into 心就 (decisions.md, 2026-11-03)
 WORD_COHESION = 1.0  # cohesive: log10 count(word) - the sum of its characters' (新舊 1.74, 選字 1.13; not

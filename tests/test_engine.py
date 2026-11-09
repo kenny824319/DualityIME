@@ -3913,8 +3913,9 @@ class SyllableMassTest(unittest.TestCase):
         self.assertIsNotNone(self.scorer, "data/lm.bin or numpy missing")
 
     def test_mass_matches_the_experiment(self):
-        # (scratchpad 2026-11-04: P(ㄅㄚ˙ | 算了) = 0.2266, P(吧 | 房間號碼是) = 0.00009)
-        self.assertAlmostEqual(self.scorer.syllable_mass_q16("算了", "ㄅㄚ˙") / 65536, 0.2266, delta=0.01)
+        # (P(ㄅㄚ˙ | 算了) = 0.2065 with the model distilled 2026-11-09, 0.2266 with the one before (scratchpad
+        # 2026-11-04); P(吧 | 房間號碼是) = 0.00009)
+        self.assertAlmostEqual(self.scorer.syllable_mass_q16("算了", "ㄅㄚ˙") / 65536, 0.2065, delta=0.01)
         self.assertLess(self.scorer.syllable_mass_q16("房間號碼是", "ㄅㄚ˙"), int(0.002 * 65536))
 
     def test_whole_vocabulary_is_one(self):
@@ -3952,7 +3953,9 @@ class OrderDigitsWithModelTest(Base):
         super().tearDown()
 
     def test_end_of_sentence_reads_as_chinese(self):
-        self.assertEqual(self.type(self.WE_GO + "817"), "我們走吧")  # (P 0.026 >= 0.0246)
+        # (P 1601 >= the threshold 1544, Q16: 0.0244 against 0.0236 with the model of 2026-11-09, a margin of
+        # only 3.7%: a retrained model may tip it, re-run tools/lm/order_thresholds.py)
+        self.assertEqual(self.type(self.WE_GO + "817"), "我們走吧")
         self.assertEqual(self.type(self.WE_GO + "817 ok"), "我們走吧 ok")
         self.assertEqual(self.type(keys("ㄙㄨㄢˋ ㄌㄜ˙") + "817"), "算了吧")
 
@@ -3980,7 +3983,8 @@ class OrderDigitsWithModelTest(Base):
 
     def test_only_the_end_of_the_run(self):
         # the first 817 has Chinese after it: a number; the model judges the second after what is
-        # shown before it, 個 / 了 alone (P 38 and 1249 < 1614), not 我們走吧個 (2467: 巴) - review 2026-11-04
+        # shown before it, 個 / 了 alone (P 35 and 1319 < 1544, the model of 2026-11-09), not 我們走吧個
+        # (3892: 巴) - review 2026-11-04
         self.assertEqual(self.type(self.WE_GO + "817ek7817"), "我們走817個817")
         self.assertEqual(self.type(self.WE_GO + "817xk7817"), "我們走817了817")
 
@@ -4000,7 +4004,7 @@ class OrderDigitsWithModelTest(Base):
         self.assertEqual(self.type(self.WE_GO + "817"), "我們走817")
 
     def test_threshold_tables_agree(self):
-        # (the C++ engine's copy: each entry on a line of its own, {U"ㄅㄚ˙", 1612},)
+        # (the C++ engine's copy: each entry on a line of its own, {U"ㄅㄚ˙", 1544},)
         import re
         path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cpp", "engine", "composer.cpp")
         src = open(path, encoding="utf-8").read()

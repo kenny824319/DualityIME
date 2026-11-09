@@ -68,7 +68,7 @@ const double LOG_BIGRAM_WEIGHT = std::log10(BIGRAM_WEIGHT);
 constexpr size_t BEAM = 12;
 constexpr size_t PER_SPAN = 8;
 constexpr double DICT_FLOOR = 0.4;
-constexpr double LM_WEIGHT = 0.5;   // 長句選字加強: log10 of the model's probability counts this much against the engine's score
+constexpr double LM_WEIGHT = 0.555;  // 長句選字加強: log10 of the model's probability counts this much against the engine's score
 constexpr double WORD_BONUS = 0.4;  // ...and each character inside a cohesive word this much (engine/composer.py)
 constexpr double WORD_COHESION = 1.0;  // cohesive: log10 count(word) - the sum of its characters' (engine/composer.py)
 constexpr double LN10 = 2.302585092994046;  // (written out: engine/composer.py uses the same digits)
@@ -766,28 +766,28 @@ std::unordered_map<ustr, double>& run_scores() {
 // model's probability that the next character is one of the syllable's (Q16) is at least this
 // (engine/composer.py ORDER_LM_THRESHOLDS_Q16; a test compares the two tables)
 const std::unordered_map<ustr, int64_t> ORDER_LM_THRESHOLDS_Q16 = {
-    {U"ㄅㄢˇ", 1825},
-    {U"ㄅㄢˋ", 3994},
+    {U"ㄅㄢˇ", 1764},
+    {U"ㄅㄢˋ", 4285},
     {U"ㄉㄢˇ", 1311},
-    {U"ㄉㄢˋ", 1609},
+    {U"ㄉㄢˋ", 1708},
     {U"ㄓㄢˇ", 1311},
-    {U"ㄓㄢˋ", 7239},
+    {U"ㄓㄢˋ", 7236},
     {U"ㄅㄚˇ", 1311},
     {U"ㄅㄚˋ", 1311},
     {U"ㄅㄚˊ", 1311},
-    {U"ㄅㄚ˙", 1614},
+    {U"ㄅㄚ˙", 1544},
     {U"ㄉㄚˇ", 1311},
-    {U"ㄉㄚˋ", 6134},
-    {U"ㄉㄚˊ", 12815},
+    {U"ㄉㄚˋ", 6541},
+    {U"ㄉㄚˊ", 12856},
     {U"ㄉㄚ˙", 1311},
     {U"ㄓㄚˇ", 1311},
     {U"ㄓㄚˋ", 1311},
     {U"ㄓㄚˊ", 1311},
-    {U"ㄅㄞˇ", 9752},
+    {U"ㄅㄞˇ", 10054},
     {U"ㄅㄞˋ", 1311},
-    {U"ㄅㄞˊ", 9753},
+    {U"ㄅㄞˊ", 10057},
     {U"ㄉㄞˇ", 1311},
-    {U"ㄉㄞˋ", 6770},
+    {U"ㄉㄞˋ", 7071},
     {U"ㄓㄞˇ", 1311},
     {U"ㄓㄞˋ", 1311},
     {U"ㄓㄞˊ", 1311},

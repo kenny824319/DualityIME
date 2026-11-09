@@ -20,6 +20,10 @@ u vu84h4{ENTER} => 一下次
 Codex co nk4{ENTER} => Codex 黑色
 ji3 Codex el vu/4{ENTER} => 我 Codex 高興
 et al 2k7vu4wj/3{ENTER} => et al 的系統
+# 長句選字加強 (the model distilled from a larger one, 2026-11-09): sentences it now gets right
+5j4su3rup wu0 cl3vup fu/6{ENTER} => 祝你今天好心情
+ji3t;6ql3u vu, t;3nji3{ENTER} => 我常跑一些場所
+y942jo4so420 bp42jo45;3{ENTER} => 在隊內擔任隊長
 # still being typed: the text is in the document already, underlined
 su3cl3 => 你好
 # candidates (like the ASUS IME): at the end the last character, before 你 the phrases from there
