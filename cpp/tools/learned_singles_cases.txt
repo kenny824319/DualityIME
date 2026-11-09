@@ -20,3 +20,8 @@ jp6cj84{ENTER} => 文化
 b4vu;4tj6wu06{ENTER} => 日向雛田
 ji3vu3cj0 b4vu;4tj6wu06{ENTER} => 我喜歡日向雛田
 vu;4a8356gj4{ENTER} => 相馬直樹
+# nor into a word the corpus never counted, beside a neighbour it meets only across words (review 2026-11-09)
+su4vu;4ej/ tk {ENTER} => 逆向公車
+u/4vu;4qu6{ENTER} => 硬橡皮
+zj3ej/ y4jp4{ENTER} => 撫躬自問
+wl6b06y42k6{ENTER} => 陶然自得

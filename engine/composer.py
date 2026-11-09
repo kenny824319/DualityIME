@@ -1240,7 +1240,9 @@ def variant_is_written(rds, phrase, variant, user, bigram):
             return False
         if best < VARIANT_PAIR:
             if word is None:
-                word = _cohesive(bigram, phrase)
+                # (a word the corpus never counted is held to it too: one pair across words let
+                # 像 into 逆向公車, 字 into 撫躬自問 - review 2026-11-09)
+                word = bigram.unigram(phrase) is None or _cohesive(bigram, phrase)
             if word:
                 return False
     return True

@@ -1284,6 +1284,10 @@ class ContextTest(Base):
                 self.assertEqual(self.type(keys(z)), expected)
 
     def test_previous_commit_is_context(self):
+        # (長句選字加強 off whatever DUALITYIME_TEST_LONG_SENTENCE says: the model writes 試試 alone too,
+        # so there would be no change for the previous commit to make)
+        self.c.config.set(long_sentence=False)
+        self.c.settings_changed()
         self.assertEqual(self.type(keys("ㄕˋ ㄕˋ")), "逝世")
         self.type(keys("ㄋㄧˇ ㄎㄜˇ ㄧˇ"))
         self.assertEqual(self.type(keys("ㄕˋ ㄕˋ")), "試試")
@@ -1450,7 +1454,12 @@ class CustomPredictionTest(unittest.TestCase):
             if words:
                 with open(os.path.join(d, "dictionary.json"), "w", encoding="utf-8") as f:
                     json.dump({"words": words}, f, ensure_ascii=False)
-            return create_composer(os.path.join(d, "user.json"))
+            c = create_composer(os.path.join(d, "user.json"))
+            # (長句選字加強 off whatever DUALITYIME_TEST_LONG_SENTENCE says: with it on ㄉㄚˋ ㄍㄨˇ shows
+            # 大鼓 and 大谷翔平 is not guessed - the limitation in decisions.md 2026-11-09)
+            c.config.set(long_sentence=False)
+            c.settings_changed()
+            return c
         cls.mine = composer("mine", cls.WORDS)
         cls.plain = composer("plain", None)
         cls.odd = composer("odd", cls.ODD)
@@ -1694,6 +1703,21 @@ class LearnedSinglesTest(Base):
             self.c.config.set(long_sentence=False)
             self.c.settings_changed()
 
+    def test_a_strong_homophone_stays_out_of_words_the_corpus_never_counted(self):
+        # (review 2026-11-09: such a word could not be called cohesive, so one corpus pair across words
+        # let the homophone in: 逆像公車, 硬像皮, 撫躬字問; now it needs VARIANT_PAIR like a cohesive word)
+        self.learn("ㄒㄧㄤˋ", "像", 5)
+        self.learn("ㄗˋ", "字", 6)
+        self.learn("ㄗˋ", "自")
+        self.learn("ㄋㄧˇ", "妳", 5)
+        for zhuyin, expected in (("ㄋㄧˋ ㄒㄧㄤˋ ㄍㄨㄥ ㄔㄜ", "逆向公車"), ("ㄧㄥˋ ㄒㄧㄤˋ ㄆㄧˊ", "硬橡皮"),
+                                 ("ㄒㄩㄥ ㄌㄨㄛˊ ㄨㄢˋ ㄒㄧㄤˋ", "胸羅萬象"), ("ㄈㄨˇ ㄍㄨㄥ ㄗˋ ㄨㄣˋ", "撫躬自問"),
+                                 ("ㄊㄠˊ ㄖㄢˊ ㄗˋ ㄉㄜˊ", "陶然自得"),
+                                 # (a word the corpus counted still takes it: 妳說, 謝謝妳)
+                                 ("ㄋㄧˇ ㄕㄨㄛ", "妳說"), ("ㄒㄧㄝˋ ㄒㄧㄝ˙ ㄋㄧˇ", "謝謝妳")):
+            with self.subTest(expected=expected):
+                self.assertEqual(self.type(keys(zhuyin)), expected)
+
     def test_a_name_written_otherwise_by_the_user(self):
         # (a way of writing it the user picked from the list stays theirs)
         self.learn("ㄒㄧㄤˋ", "像", 5)
@@ -1733,7 +1757,10 @@ class LearnedSinglesTest(Base):
     def test_a_homophone_picked_for_good_stays_out_of_cohesive_words(self):
         # the user's case: 字 picked 7 times, 像 8: 字 before 由 and 現 before 像 are in the corpus
         # (文字由, 出現像), which had made 字由 of 自由 and 現像 of 現象; 她 and 妳 picked for good:
-        # not into 其他, 維他命, 迷你 either, while 她要, 妳來 (no cohesive words) still take them
+        # not into 其他, 維他命, 迷你 either; 妳來 is the word 你來, which the corpus never counted, so it needs
+        # VARIANT_PAIR too now (review 2026-11-09, the user's call: 逆像公車, 撫躬字問 fixed; the cost, two
+        # syllables typed alone: 他要, 你來 - in a sentence 她要去學校 as before). (她要 is not checked here: with
+        # 長句選字加強 off it is two single places, 她 + 要, which never meet this rule, with it on 他要)
         self.learn("ㄗˋ", "字", 7)
         self.learn("ㄗˋ", "自")
         self.learn("ㄒㄧㄤˋ", "像", 8)
@@ -1745,9 +1772,10 @@ class LearnedSinglesTest(Base):
                 self.assertEqual(self.type(keys(zhuyin)), expected)
         self.learn("ㄊㄚ", "她", 5)
         self.learn("ㄋㄧˇ", "妳", 5)
-        # (妳來 first: after 她要 the words before make it 你來, with or without this rule)
-        for zhuyin, expected in (("ㄋㄧˇ ㄌㄞˊ", "妳來"), ("ㄊㄚ ㄧㄠˋ", "她要"), ("ㄑㄧˊ ㄊㄚ", "其他"),
-                                 ("ㄨㄟˊ ㄊㄚ ㄇㄧㄥˋ", "維他命"), ("ㄇㄧˊ ㄋㄧˇ", "迷你")):
+        # (她, 妳 alone last: they are learned - without them the cases above would pass anyway - and a 妳
+        # sent just before makes ㄋㄧˇ ㄌㄞˊ 妳來, the previous commit being context)
+        for zhuyin, expected in (("ㄋㄧˇ ㄌㄞˊ", "你來"), ("ㄑㄧˊ ㄊㄚ", "其他"),
+                                 ("ㄨㄟˊ ㄊㄚ ㄇㄧㄥˋ", "維他命"), ("ㄇㄧˊ ㄋㄧˇ", "迷你"), ("ㄊㄚ", "她"), ("ㄋㄧˇ", "妳")):
             with self.subTest(expected=expected):
                 self.assertEqual(self.type(keys(zhuyin)), expected)
 
@@ -2004,7 +2032,11 @@ class LearnedSinglesTest(Base):
         self.assertEqual(c.user.phrase_count("ㄅㄚ-ㄒㄧ˙", "八西"), 0.5)
 
     def test_a_learned_word_corrected_back_is_forgotten(self):
-        # 巴西 learned for ㄅㄚ ㄒㄧ˙ (ㄅㄚ ㄒㄧ there); 八 picked back: 八西 again, though 八西 is no word
+        # 巴西 learned for ㄅㄚ ㄒㄧ˙ (ㄅㄚ ㄒㄧ there); 八 picked back: 八西 again, though 八西 is no word.
+        # (長句選字加強 off whatever DUALITYIME_TEST_LONG_SENTENCE says: with it on 巴西 comes out at once,
+        # so picking 巴 changes nothing and there is no correction to learn)
+        self.c.config.set(long_sentence=False)
+        self.c.settings_changed()
         self.assertEqual(self.pick_at("ㄅㄚ ㄒㄧ˙", 0, "巴"), "巴西")
         self.assertEqual(self.c.user.phrase_count("ㄅㄚ-ㄒㄧ˙", "巴西"), 1)
         self.assertEqual(self.pick_at("ㄅㄚ ㄒㄧ˙", 0, "八"), "八西")
@@ -2089,6 +2121,10 @@ class PairPickTest(Base):
 
     def setUp(self):
         super().setUp()
+        # (長句選字加強 off whatever DUALITYIME_TEST_LONG_SENTENCE says: the report's 重會 is the one
+        # without the model; with it 自訂重繪 comes at once and there is no pick to make)
+        self.c.config.set(long_sentence=False)
+        self.c.settings_changed()
         self.c.user.phrases.clear()
         self.c.user.phrase_used.clear()
         self.learn("ㄏㄨㄟˋ", "繪", 36)
@@ -2761,8 +2797,9 @@ class AutocorrectTest(Base):
         self.assertEqual(c._cand_actions[-1][0], "raw")
 
     def test_a_word_typed_is_swapped_too_when_the_sentence_reads_better(self):
-        # 你老 is a word, but 你好嘛 reads better than 你老嗎 by more than SWAP_GAIN_WORD (x is next to c)
-        self.assertEqual(self.type("su3xl3a87"), "你好嘛")
+        # 你老 is a word, but 你好嘛 reads better than 你老嗎 by more than SWAP_GAIN_WORD (x is next to c).
+        # (The swap is what is tested: the last character is the context's, 嘛 with 長句選字加強 off, 嗎 on)
+        self.assertEqual(self.type("su3xl3a87")[:2], "你好")
 
     def test_a_personal_word_typed_is_never_swapped(self):
         saved = self.c.user.custom

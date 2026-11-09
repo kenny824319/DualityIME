@@ -1241,7 +1241,9 @@ static bool variant_is_written(const ustr& key, const ustr& phrase, const ustr& 
         }
         if (!best) return false;
         if (*best < VARIANT_PAIR) {
-            if (word < 0) word = cohesive(*bigram, phrase) ? 1 : 0;
+            // (a word the corpus never counted is held to it too: one pair across words let 像 into
+            // 逆向公車, 字 into 撫躬自問 - review 2026-11-09)
+            if (word < 0) word = !bigram->unigram(phrase) || cohesive(*bigram, phrase) ? 1 : 0;
             if (word) return false;
         }
     }
