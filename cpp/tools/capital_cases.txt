@@ -1,0 +1,25 @@
+# End-to-end checks of capitals typed with Shift and zhuyin right after them, no space between:
+#   powershell -ExecutionPolicy Bypass -File cpp\tools\e2e.ps1 cpp\tools\capital_cases.txt
+# the lower-case keys after the capitals are zhuyin (they came out PQCej/ 能, UIg;4)
+PQCej/ s/6{ENTER} => PQC功能
+AIej/ s/6{ENTER} => AI功能
+UIg;4{ENTER} => UI上
+ji3ap7UIg;4{ENTER} => 我們UI上
+PDFsu3{ENTER} => PDF你
+OKcl3{ENTER} => OK好
+# an English word that goes on in lower case stays English
+PDFs{ENTER} => PDFs
+GitHub{ENTER} => GitHub
+IDs{ENTER} => IDs
+NVMe{ENTER} => NVMe
+# a syllable people type is zhuyin, not its keys (GitHub issue 1: ㄏㄞ + space came out c9)
+c9 {ENTER} => 嗨
+c9 su3cl3{ENTER} => 嗨你好
+# the particles of everyday talk in the neutral tone (好囉 came out 好xji7)
+cl3xji7{ENTER} => 好囉
+2jo4u,7{ENTER} => 對耶
+97{ENTER} => 97
+i7{ENTER} => i7
+core i7{ENTER} => core i7
+o7{ENTER} => o7
+i5{ENTER} => i5

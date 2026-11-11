@@ -289,6 +289,7 @@ private:
     std::vector<Action> cand_actions_, sugg_actions_, repl_actions_;
     Fixed fixed_;
     std::vector<Segment> segments_;
+    std::map<int, int> wide_;  // token start -> characters shown, where a syllable is not one (width)
     std::vector<std::pair<int, int>> runs_;
 };
 

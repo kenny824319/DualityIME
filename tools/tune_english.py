@@ -48,6 +48,22 @@ MIXED = [
     ("a; ", "a; "), ("ji3, su3", "我, 你"),
     ("sugatau,4au04", "sugata頁面"), ("googleu,4au04", "google頁面"), ("hellou,4", "hello業"),
     ("1,000", "1,000"), ("ji3,4", "我,4"),
+    # capitals typed with Shift, then zhuyin in lower case with no space (PQCej was one English run:
+    # 2026-11-11 user); UI書 (UIgj) is still wrong, ㄕㄨ alone being rare
+    ("PQCej/ s/6", "PQC功能"), ("PQC2k7ej/ s/6", "PQC的功能"), ("APIej/ s/6", "API功能"),
+    ("AIej/ s/6", "AI功能"), ("UIg;4", "UI上"), ("UIg;4au04", "UI上面"), ("ji3ap7UIg;4", "我們UI上"),
+    ("APPg;4", "APP上"), ("UXg;4", "UX上"), ("UIek7", "UI個"), ("UIji3", "UI我"), ("IoTg4", "IoT是"),
+    ("OKcl3", "OK好"), ("PMg4", "PM是"), ("GPUek7", "GPU個"), ("CPUcl3", "CPU好"), ("TSMCek7", "TSMC個"),
+    ("PQCji3", "PQC我"), ("PQCsu3", "PQC你"), ("NASAej/ s/6", "NASA功能"), ("USBg4", "USB是"),
+    ("HTMLji3", "HTML我"), ("CEOg4", "CEO是"), ("PDFsu3", "PDF你"), ("ASUSji3", "ASUS我"),
+    # ...and what goes on in lower case as English stays English
+    ("SQLite ", "SQLite "), ("PDFs ", "PDFs "), ("IDs ", "IDs "), ("GitHub ", "GitHub "), ("macOS ", "macOS "),
+    ("OpenAI ", "OpenAI "), ("XMLHttpRequest ", "XMLHttpRequest "), ("JSONify ", "JSONify "), ("PCIe ", "PCIe "),
+    ("LoRA ", "LoRA "), ("NVMe ", "NVMe "), ("URLs ", "URLs "), ("APIs ", "APIs "), ("CPUs ", "CPUs "),
+    ("GPUs ", "GPUs "), ("WiFi ", "WiFi "), ("iPhone ", "iPhone "), ("DDoS ", "DDoS "), ("PhD ", "PhD "),
+    ("SaaS ", "SaaS "), ("YouTube ", "YouTube "), ("JavaScript ", "JavaScript "), ("TypeScript ", "TypeScript "),
+    ("PowerShell ", "PowerShell "), ("McDonald ", "McDonald "), ("NTUST ", "NTUST "), ("ASUSTeK ", "ASUSTeK "),
+    ("IEEEj ", "IEEEj "), ("HDMIs ", "HDMIs "), ("RAMs ", "RAMs "), ("PRs ", "PRs "), ("OSes ", "OSes "),
 ]
 
 

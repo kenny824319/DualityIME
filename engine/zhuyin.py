@@ -88,6 +88,27 @@ def keys_to_symbols(keys, keymap=KEYMAP):
     return "".join(s for s in slots if s), in_order
 
 
+CUSTOM_SYLLABLE = -5.0  # the score of a syllable only the user's own words have (SyllableTable.set_custom)
+
+
+def _body(syl):
+    return syl[:-1] if syl and syl[-1] in TONE_MARKS else syl
+
+
+def _parts(syl):
+    """Every subset of the parts of a syllable, in their usual order: they may be typed in any order."""
+    body = _body(syl)
+    return {"".join(c for b, c in enumerate(body) if mask >> b & 1) for mask in range(1, 1 << len(body))}
+
+
+def _well_formed(syl):
+    """An initial, a medial, a final - each at most once, in that order, at least one - and a tone
+    mark or none: what the keys of a syllable can spell."""
+    body = _body(syl)
+    ranks = [0 if c in INITIALS else 1 if c in MEDIALS else 2 if c in FINALS else None for c in body]
+    return bool(body) and None not in ranks and all(a < b for a, b in zip(ranks, ranks[1:]))
+
+
 class SyllableTable:
     """Knows which syllables (with tone) exist, and how common each one is,
     built from the lexicon."""
@@ -107,10 +128,30 @@ class SyllableTable:
                 if top > self.toned.get(syl, -100.0):
                     self.toned[syl] = top
         for syl in self.toned:
-            body = syl[:-1] if syl and syl[-1] in TONE_MARKS else syl
-            # any subset of the parts, since they may come in any order
-            for mask in range(1, 1 << len(body)):
-                self.prefixes.add("".join(c for b, c in enumerate(body) if mask >> b & 1))
+            self.prefixes.update(_parts(syl))
+        self._dictionary = (self.toned, self.prefixes)  # (set_custom adds to copies of these)
+
+    def set_custom(self, readings):
+        """The syllables of the user's own words (個人詞庫) are syllables too. readings: its reading
+        keys. Only the dictionary said what a syllable is, so a word added under a reading no word
+        of it has was typed as English keys still (囉 ㄌㄨㄛ˙ added: xji7 - 2026-11-03 user). They
+        count CUSTOM_SYLLABLE, no obscure syllable: the user added them to type them. What the
+        dictionary has keeps its score; what is no zhuyin syllable (two finals, a tone in the
+        middle) is left out; a word taken out of 個人詞庫 takes its syllables along. Only the reading
+        of a word of one character: a syllable only a longer word has (掰掰 ㄅㄞ ㄅㄞ˙) has no
+        character of its own, and came up wherever its keys were typed (197 is ㄅㄞ˙: 有197個)."""
+        toned, prefixes = self._dictionary
+        more = {key for key in readings if "-" not in key and key not in toned and _well_formed(key)}
+        if more:
+            toned, prefixes = dict(toned), set(prefixes)
+            for syl in more:
+                toned[syl] = CUSTOM_SYLLABLE
+                prefixes.update(_parts(syl))
+        self.toned, self.prefixes = toned, prefixes
+
+    def custom_only(self, reading):
+        """The syllable is one only 個人詞庫 has (set_custom), none of the dictionary."""
+        return reading in self.toned and reading not in self._dictionary[0]
 
     def reading_to_keys(self, reading):
         return reading_to_keys(reading)

@@ -204,7 +204,9 @@ static class Lookup {
     public static string AddWord(string word, string zhuyin) {
         var d = ReadDictionary();
         var words = Pairs(d, "words");
-        if (words.Any(p => p[0] == word)) return "「" + word + "」已經在自訂詞彙裡了";
+        // (an English word is the same word whatever its case: the engine reads it so)
+        if (words.Any(p => p[0] == word || IsEnglishWord(word) && p[0].Equals(word, StringComparison.OrdinalIgnoreCase)))
+            return "「" + word + "」已經在自訂詞彙裡了";
         words.Add(new[] { word, zhuyin });
         WriteDictionary(words, Pairs(d, "shortcuts"));
         return "已加入自訂詞彙";
@@ -218,7 +220,15 @@ static class Lookup {
         WriteDictionary(Pairs(d, "words"), shortcuts);
         return "已加入映射詞彙";
     }
-    public static bool CanBeWord(string s) { return s.Length > 0 && s.Length <= MaxWord && s.All(IsHan); }
+    // A word for 自訂詞彙: Chinese (with its 注音), or an English word (no 注音), as the settings page
+    // takes them (settings/ui/app.js checkRow)
+    public static bool CanBeWord(string s) { return s.Length > 0 && s.Length <= MaxWord && s.All(IsHan) || IsEnglishWord(s); }
+    // letters, - or ' inside (Kazuma, e-sports, rock'n'roll), 2 to 32
+    public static bool IsEnglishWord(string s) {
+        Func<char, bool> letter = c => c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z';
+        return s.Length >= 2 && s.Length <= 32 && letter(s[0]) && letter(s[s.Length - 1]) &&
+               s.All(c => letter(c) || c == '-' || c == '\'');
+    }
     public static bool CanBeShortcutText(string s) { return s.Length > 0 && s.Length <= MaxText; }
     public static bool IsShortcutKeys(string s) {
         // English letters and digits (typed keys), or Chinese (the characters shown): not both

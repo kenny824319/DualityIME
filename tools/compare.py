@@ -25,13 +25,20 @@ from engine.zhuyin import reading_to_keys  # noqa: E402
 EXE = os.path.join(ROOT, "cpp", "build", "x64-Release", "sz_trace.exe")
 
 CASES = [
+    # (before any pick of 試: with one, 試試 comes without the model too)
+    "ji3y94u h4g4g4{ENTER}",  # 我再一次試試: 試試 only with 長句選字加強 (逝世 without)
+    # (first: the presses counted are those of a list nothing has reordered yet)
+    # a pick inside a word of the dictionary that leaves none (去世 -> 去試): a word the second time
+    # (試 is the 11th of the list, the 2nd once picked); 世 picked back (the 9th, then the 3rd) forgets
+    # it, and it is learned again as the first time
+    "".join("fm4g4u vu84{LEFT}{LEFT}{LEFT}" + "{DOWN}" * n + "{ENTER}{ENTER}fm4g4u vu84{ENTER}" for n in (11, 2, 9, 2, 2, 3))
+    + "yj3zj4fm4g4xk7{ENTER}",
     # 注音自動校正 with the sentence around it: a tone left out (5k邊: 這邊), a punctuation key out of
     # order (;e: 剛), a key next to the right one spelling a word (現役 -> 信義, 你老 -> 你好), and 現 picked
     # back twice (31st in the list): as typed from then on
     "5k1u0 {ENTER}e;e; {ENTER}e; ;e {ENTER},u3{ENTER}su3xl3a87{ENTER}w961o3g4vu04u4fm {ENTER}",
     ("w961o3g4vu04u4fm {HOME}{RIGHT}{RIGHT}{RIGHT}" + "{DOWN}" * 31 + "{ENTER}{ENTER}") * 2 + "w961o3g4vu04u4fm {ENTER}",
     "ok hi go su ios 5k ", "5ke; {HOME}{DOWN}3{END}e; 1u0 {ENTER}",  # (浙 picked for 5k: kept as more comes)
-    "ji3y94u h4g4g4{ENTER}",  # 我再一次試試: 試試 only with 長句選字加強 (逝世 without)
     # a word across the phrase sent last (怎麼 sent, then 辦: not 半), and 長句選字加強 keeping cohesive
     # words whole (新舊, 選字, 有件事倒是) but not two common characters (我在 for 我再看看)
     "yk3ai7{ENTER}104{ENTER}1j4xu3vu;3yk3ai7{ENTER}104{ENTER}",
@@ -126,6 +133,16 @@ CASES = [
     "gjie{DOWN}{ESC}{ESC}gjie {ENTER}gjie {ENTER}gjie{DOWN}{ESC}{UP}{ESC}{ESC}",
     # ...sent the second time in the head of a long sentence: the picks after it stay on their keys
     "mochi {ENTER}mochi rup wu0 ji3cl3 mochi5p 2k7a06cl3t {LEFT}{LEFT}{DOWN}2" + "ji3cl3 " * 16 + "{ENTER}",
+    # capitals, then zhuyin in lower case (PQC功能, UI上), a word going on in lower case (PDFs)
+    "PQCej/ s/6{ENTER}UIg;4{ENTER}PDFs{ENTER}PDFsu3{ENTER}ji3ap7UIg;4{ENTER}",
+    # a syllable only the personal dictionary has: of a word of one character (蹦 ㄅㄧㄤˋ, 掰 ㄅㄞ˙ = 197)
+    # it is typed, and 注音自動校正 knows it (1i;4); of a longer word only (the ㄅㄧㄤˇ of 電餅) it is
+    # none, its keys stay as typed
+    "ji31u;4{ENTER}g41u;4xk7{ENTER}ji31i;4{ENTER}197{ENTER}u.3197ek7{ENTER}room 197{ENTER}",
+    "2u041u;3{ENTER}ji3ap71u;3cl3{ENTER}1u;3{DOWN}{ESC}{ENTER}1i;3cl3{ENTER}"
+    "ji3ap71u;3cl3{LEFT}{LEFT}{LEFT}{RIGHT}{UP}{ESC}{RIGHT}{BACK}{END}{ENTER}ji31u;3" + "ji3cl3 " * 22 + "{ENTER}",
+    # the particles of everyday talk, and the keys next to them
+    "cl3xji7{ENTER}2jo4u,7{ENTER}c9 su3cl3{ENTER}i7 97 o7 core i7 {ENTER}",
 ]
 
 PUNCT = list(",.;?!:\"'[]()<>-_=+/\\|@#$%^&*")
@@ -189,7 +206,7 @@ CONFIGS = [
 ]
 DICTIONARY = {
     "words": [["華碩", "ㄏㄨㄚˊ ㄕㄨㄛˋ"], ["史芸", "ㄕˇㄩㄣˊ"], ["好", "ㄏㄠˇ"], ["ㄎㄎ", ""], ["Kazuma", ""],
-              ["哲宇", "ㄓㄜˊ ㄩˇ"]],
+              ["哲宇", "ㄓㄜˊ ㄩˇ"], ["蹦", "ㄅㄧㄤˋ"], ["電餅", "ㄉㄧㄢˋ ㄅㄧㄤˇ"], ["掰", "ㄅㄞ˙"]],
     "shortcuts": [["addr", "台北市信義區"], ["sig", "祝 順心"], ["cl3", "你好嗎"], ["台灣", "Taiwan"], ["KFC", "肯德基"]],
 }
 

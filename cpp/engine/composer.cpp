@@ -68,6 +68,7 @@ const double UNSEEN_PAIR = std::log10(1 - BIGRAM_WEIGHT);
 const double LOG_BIGRAM_WEIGHT = std::log10(BIGRAM_WEIGHT);
 constexpr size_t BEAM = 12;
 constexpr size_t PER_SPAN = 8;
+constexpr double NO_CHAR_SCORE = -8.0;  // a syllable written as zhuyin: no character has it (convert)
 constexpr double DICT_FLOOR = 0.4;
 constexpr double LM_WEIGHT = 0.555;  // 長句選字加強: log10 of the model's probability counts this much against the engine's score
 constexpr double WORD_BONUS = 0.4;  // ...and each character inside a cohesive word this much (engine/composer.py)
@@ -235,6 +236,7 @@ constexpr double EN_DIGIT = 1.4;        // each digit (python3, h264)
 constexpr double EN_SYMBOL = 1.0;       // each other key inside (setup.exe, abc@example.com)
 constexpr double EN_LEARNED = -1.0;     // the user picked these keys as English before
 constexpr double EN_SWITCH = 2.8;       // zhuyin right after English with no space (python是)
+constexpr double EN_CASE_SWITCH = 1.5;  // ...less after a capital, when the zhuyin starts with a lower-case key (PQC功能)
 constexpr double EN_RARITY = 0.7;       // ...times how rare its syllable is
 constexpr double EN_PHRASE = 1.0;       // ...less if it starts a word with the next syllable (sugata頁面)
 constexpr double EN_DIGIT_SYMBOL = 2.0; // a symbol next to digits (the 2; of youtube2; is 當, the ,4 of sugatau,4 頁)
@@ -397,6 +399,8 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
                 // common the syllable the likelier (python是, not pytho + 裸 for pythoxji3)
             {
                 cost += EN_SWITCH + EN_RARITY * std::max(0.0, -table.score(tok.value) - 2.0);
+                char last = best[i].tok.raw.back(), first = tok.raw[0];
+                if (last >= 'A' && last <= 'Z' && first >= 'a' && first <= 'z') cost -= EN_CASE_SWITCH;
                 if (tok.kind == Kind::Zh && starts_phrase(j, tok.value)) cost -= EN_PHRASE;
             } else if (tok.kind == Kind::Lit && tok.raw.size() == 1 && zh_punct.count(tok.raw[0]) &&
                      is_digit(best[i].tok.raw.back()))
@@ -966,8 +970,9 @@ std::vector<Token> check_corrections(std::vector<Token> tokens, const SyllableTa
                 continue;
             }
             // the keys typed make a word the user taught (a name in the personal dictionary, a
-            // learned word): left alone, whatever else is likelier
-            if (makes_user_word(rds, k, user)) {
+            // learned word), or a syllable only the personal dictionary has (蹦 ㄅㄧㄤˋ, typed so on
+            // purpose: 是蹦了 came out 是病了): left alone, whatever else is likelier
+            if (table.custom_only(t.value) || makes_user_word(rds, k, user)) {
                 swapped = false;
                 continue;
             }
@@ -1475,9 +1480,10 @@ static double inherited_bonus(const std::vector<ustr>& rds, const ustr& phrase, 
 
 static Search search(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user,
                      const std::map<std::pair<int, int>, ustr>& overrides, const BigramModel* bigram,
-                     const std::optional<ustr>& prev_word, std::optional<bool> alone_ = std::nullopt) {
+                     const std::optional<ustr>& prev_word, std::optional<bool> alone_ = std::nullopt, bool bare = false) {
     // beam search over (position, previous phrase) so that context counts; alone: the syllable is
-    // all that is typed (none: a run of one syllable)
+    // all that is typed (none: a run of one syllable). bare: a syllable with no character is
+    // written as its zhuyin (NO_CHAR_SCORE) instead of ending every path there
     const int n = static_cast<int>(readings.size());
     const bool alone = alone_ ? *alone_ : n == 1;
     std::vector<std::optional<std::pair<int, int>>> locked(n);
@@ -1541,6 +1547,8 @@ static Search search(const std::vector<ustr>& readings, const Lexicon& lexicon, 
                 auto& opt = options[span];
                 for (size_t k = 0; k < cands.size() && k < PER_SPAN; ++k)
                     opt.emplace_back(cands[k].first, corpus_unigram(bigram, lexicon, cands[k].first, cands[k].second));
+            } else if (bare && l == 1 && ov == overrides.end() && inside.empty()) {
+                options[span].emplace_back(readings[i], NO_CHAR_SCORE);
             }
         }
     }
@@ -1697,9 +1705,12 @@ std::vector<Segment> convert(const std::vector<ustr>& readings, const Lexicon& l
                              const std::map<std::pair<int, int>, ustr>& overrides, const BigramModel* bigram,
                              const std::optional<ustr>& prev_word, const LmScorer* lm, std::optional<bool> alone) {
     Search found = search(readings, lexicon, user, overrides, bigram, prev_word, alone);
+    // a syllable no character has, only a word of the personal dictionary (ㄅㄧㄤˇ of 電餅), typed
+    // outside that word: it stays zhuyin and the rest is written around it
+    if (found.ends.empty()) found = search(readings, lexicon, user, overrides, bigram, prev_word, alone, true);
     const int n = static_cast<int>(readings.size());
     std::vector<Segment> out;
-    if (found.ends.empty()) {  // should not happen: every valid syllable has a char
+    if (found.ends.empty()) {  // (a pick that no longer reads so)
         for (int i = 0; i < n; ++i) out.push_back(Segment{i, 1, readings[i]});
         return out;
     }
@@ -1729,6 +1740,7 @@ Composer::Composer(SyllableTable& table, const Lexicon& lexicon, const English& 
                    const BigramModel* bigram, Config& config_, const LanguageModel* lm)
     : user(user_), config(config_), table_(table), lexicon_(lexicon), english_(english), bigram_(bigram), lm_(lm) {
     table_.autocorrect = config.flag("autocorrect");
+    table_.set_custom(user.custom_order);  // (the readings of 個人詞庫 are syllables too)
     user.corrections.enable(true);  // (代碼記憶 counts with the setting off too)
     user.import_memory(config.number("import_memory"));  // a backup restored while the engine was off
     reset();
@@ -1915,10 +1927,13 @@ void Composer::render() {
     ustr text;
     int idx = 0;
     bool zhuyin_preview = config.text("preview") == "zhuyin";
+    wide_.clear();
     for (auto& t : tokens) {
         if (t.kind == Kind::Zh) {
             auto it = chars.find(idx);
-            text += it == chars.end() ? U"?" : it->second;
+            const ustr shown = it == chars.end() ? ustr(U"?") : it->second;
+            text += shown;
+            if (shown.size() != 1) wide_[t.start] = static_cast<int>(shown.size());
             ++idx;
         } else if (t.kind == Kind::Fix) {
             text += t.value;
@@ -1996,8 +2011,12 @@ const Token* Composer::caret_token() const {
 }
 
 int Composer::width(const Token& t) const {
-    // characters the token takes in the composition (as render() shows it)
-    if (t.kind == Kind::Zh) return 1;
+    // characters the token takes in the composition (as render() shows it). A syllable is one
+    // character, but for one no character has, shown as its zhuyin (convert: ㄅㄧㄤˇ is four)
+    if (t.kind == Kind::Zh) {
+        auto it = wide_.find(t.start);
+        return it == wide_.end() ? 1 : it->second;
+    }
     if (t.kind == Kind::Partial && config.text("preview") != "zhuyin") return static_cast<int>(t.raw.size());
     if (t.kind == Kind::Lit) return static_cast<int>(lit_text(t.value, t.raw).size());  // (_ is —— or _)
     return static_cast<int>(t.value.size());
@@ -2074,10 +2093,8 @@ int Composer::syl_offset(int c) const {
         if (t.kind == Kind::Zh) {
             if (idx == c) return pos;
             ++idx;
-            ++pos;
-        } else {
-            pos += width(t);
         }
+        pos += width(t);
     }
     return pos;
 }
@@ -3643,11 +3660,12 @@ void Composer::learn_broken_words(const std::vector<Segment>& before) {
     // time the dictionary's wins again (picking 不 or 覺, each the usual character of its syllable,
     // teaches nothing else) - if it is a word the dictionary has (發覺, 不行; also with other tones:
     // 下載 is ㄗㄞˇ there, typed ㄗㄞˋ it reads 下在), or the rest of it
-    // followed the pick by itself (隊 became 對: 不對). Not 你郝 for 郝 picked in 你好 (a name,
-    // once), nor anything for a pick reaching out of the word (天天 in 今天天氣). If the user had
-    // picked the old word before (部隊), that no longer counts: the latest correction wins; a word
-    // only the user taught (巴西 for ㄅㄚ ㄒㄧ˙) is forgotten, and what it now reads (八西) is half
-    // learned: a word the second time. before: what it would be without the picks.
+    // followed the pick by itself (隊 became 對: 不對). What is no word of the dictionary (你郝 for
+    // 郝 picked in 你好, a name; 去試 for 試 picked in 去世一下) is half learned: a word the second
+    // time it is sent so, forgotten when the old character is picked back. Nothing for a pick
+    // reaching out of the word (天天 in 今天天氣). If the user had picked the old word before
+    // (部隊), that no longer counts: the latest correction wins; a word only the user taught (巴西
+    // for ㄅㄚ ㄒㄧ˙) is forgotten. before: what it would be without the picks.
     auto now = chars_of(segments_);
     std::set<std::pair<ustr, ustr>> halved;  // (once a sentence: a word the second time it is sent so)
     for (auto& seg : before) {
@@ -3680,12 +3698,15 @@ void Composer::learn_broken_words(const std::vector<Segment>& before) {
         for (int k = s; k < s + l; ++k)
             if (!picked.count(k) && text[k - s] != seg.phrase[k - s]) followed = true;
         if (!followed && !lexicon_.has(rd, text) && !lexicon_.reads_with_other_tones(rd, text)) {
-            if (!lexicon_.has(rd, seg.phrase)) {
-                // (a word only the user taught, corrected: what it now reads is half learned, a
-                // word the second time - as a pair, learn_pairs)
-                user.forget_phrase(key, seg.phrase);
-                if (user.phrase_count(key, text) < 1 && halved.insert({key, text}).second) user.learn_half(key, text);
-            }
+            // (what it now reads is half learned, a word the second time - as a pair, learn_pairs -
+            // whether the old word was the user's or the dictionary's: 試 picked in 去世一下 taught
+            // only the character, and 去世 came again however often)
+            if (user.phrase_count(key, text) < 1 && halved.insert({key, text}).second) user.learn_half(key, text);
+            // the old word as the user taught it no longer counts: one only the user taught at once,
+            // one of the dictionary when the new one is a word (去世 picked back once kept its bonus,
+            // and 去試 never came again however often 試 was picked) - not for a pick made once (霧 in
+            // 事物, picked whole before: 事物 stays, not 事務 again)
+            if (!lexicon_.has(rd, seg.phrase) || user.phrase_count(key, text) >= 1) user.forget_phrase(key, seg.phrase);
             continue;
         }
         user.learn_phrase(key, text);
@@ -4227,7 +4248,10 @@ void Composer::commit_head() {
 bool Composer::key(std::optional<char32_t> ch, const std::string& special, bool caps) {
     commit.clear();
     last_commit_.reset();
-    if (user.reload_custom()) refresh();
+    if (user.reload_custom()) {
+        table_.set_custom(user.custom_order);
+        refresh();
+    }
     if (ch) caps_lock_ = caps;  // (special keys carry no Caps Lock state)
     if (symbol_page) return key_symbols(ch, special);
     if (!candidates.empty()) return key_candidates(ch, special);

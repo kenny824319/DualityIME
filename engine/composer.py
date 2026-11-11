@@ -258,6 +258,8 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
                 # zhuyin right after English, no space between: the switch, and the more
                 # common the syllable the likelier (python是, not pytho + 裸 for pythoxji3)
                 cost += EN["switch"] + EN["rarity"] * max(0.0, -table.score(tok.value) - 2.0)
+                if prev[1][-1].raw[-1].isupper() and tok.raw[0].islower():
+                    cost -= EN["case_switch"]
                 if tok.kind == "zh" and starts_phrase(j, tok.value):
                     cost -= EN["phrase"]
             elif tok.kind == "lit" and tok.raw in zh_punct and prev[1][-1].raw[-1].isdigit():
@@ -415,6 +417,8 @@ EN = {
     "symbol": 1.0,        # each other key inside (setup.exe, abc@example.com)
     "learned": -1.0,      # the user picked these keys as English before
     "switch": 2.8,        # zhuyin right after English with no space (python是)
+    "case_switch": 1.5,   # ...less after a capital, when the zhuyin starts with a lower-case key (PQC功能:
+                          # going on in lower case after capitals is the sign; PQCej was one English run)
     "rarity": 0.7,        # ...times how rare its syllable is
     "phrase": 1.0,        # ...less if it starts a word with the next syllable (sugata頁面)
     "digit_symbol": 2.0,  # a symbol next to digits (the 2; of youtube2; is 當, the ,4 of sugatau,4 頁)
@@ -682,8 +686,9 @@ def _check_corrections(tokens, table, lexicon, user=None, exact=(), bigram=None,
                 swapped = False
                 continue
             # the keys typed make a word the user taught (a name in the personal dictionary, a
-            # learned word): left alone, whatever else is likelier
-            if _makes_user_word(readings, k, user):
+            # learned word), or a syllable only the personal dictionary has (蹦 ㄅㄧㄤˋ, typed so on
+            # purpose: 是蹦了 came out 是病了): left alone, whatever else is likelier
+            if table.custom_only(t.value) or _makes_user_word(readings, k, user):
                 swapped = False
                 continue
             if _apart_score(readings, k, lexicon) is None:
@@ -959,6 +964,9 @@ NBEST_K = 5        # n-best: paths kept per (position, last phrase)
 NBEST_N = 10       # ...and distinct texts the model scores
 
 
+NO_CHAR_SCORE = -8.0  # a syllable written as zhuyin: no character has it (convert)
+
+
 def convert(readings, lexicon, user=None, overrides=None, bigram=None, prev_word=None, lm=None, alone=None):
     """Best phrase sequence for a syllable run.
 
@@ -973,7 +981,11 @@ def convert(readings, lexicon, user=None, overrides=None, bigram=None, prev_word
     """
     overrides = overrides or {}
     ends, options, full = _search(readings, lexicon, user, overrides, bigram, prev_word, alone)
-    if not ends:  # should not happen: every valid syllable has a char
+    if not ends:
+        # a syllable no character has, only a word of the personal dictionary (ㄅㄧㄤˇ of 電餅), typed
+        # outside that word: it stays zhuyin and the rest is written around it
+        ends, options, full = _search(readings, lexicon, user, overrides, bigram, prev_word, alone, True)
+    if not ends:  # (a pick that no longer reads so)
         return [(i, 1, readings[i]) for i in range(len(readings))]
     score, path = max(ends.values(), key=lambda v: v[0])
     path = repick(path, readings, lexicon, options, full, user, bigram, prev_word, overrides)
@@ -1104,9 +1116,10 @@ def inherited_bonus(rds, phrase, user):
     return max(0.0, best[n] - user.bonus("-".join(rds), phrase))
 
 
-def _search(readings, lexicon, user, overrides, bigram, prev_word, alone=None):
+def _search(readings, lexicon, user, overrides, bigram, prev_word, alone=None, bare=False):
     """convert's beam search: ({last phrase: (score, path)} at the end, options, full). alone: the
-    syllable is all that is typed (None: a run of one syllable)."""
+    syllable is all that is typed (None: a run of one syllable). bare: a syllable with no character
+    is written as its zhuyin (NO_CHAR_SCORE) instead of ending every path there."""
     n = len(readings)
     alone = n == 1 if alone is None else alone
     overrides = overrides or {}
@@ -1146,6 +1159,8 @@ def _search(readings, lexicon, user, overrides, bigram, prev_word, alone=None):
                 options[span] = single_scores(r, options[span], lexicon, user, bigram)
             elif cands:
                 options[span] = [(p, corpus_unigram(bigram, lexicon, p, s)) for p, s in cands[:PER_SPAN]]
+            elif bare and l == 1 and span not in overrides and not inside:
+                options[span] = [(readings[i], NO_CHAR_SCORE)]
 
     # states[i]: {last phrase: (score, path)}
     states = [dict() for _ in range(n + 1)]
@@ -1361,6 +1376,7 @@ class Composer:
         self.config = config or Config()
         self._english_sorted = sorted(english, key=english.get)  # most common first
         self.table.autocorrect = self.config.autocorrect
+        self.table.set_custom(self.user.custom)  # (the readings of 個人詞庫 are syllables too)
         self.user.corrections.enable(True)  # (代碼記憶 counts with the setting off too)
         self.user.import_memory(self.config.import_memory)  # a backup restored while the engine was off
         self.reset()
@@ -1501,9 +1517,12 @@ class Composer:
             for k in range(l):
                 chars[s + k] = p[k] if len(p) == l else (p if k == 0 else "")
         text, idx = [], 0
+        self._wide = {}  # token start -> characters shown, where a syllable is not one (_width)
         for t in self.tokens:
             if t.kind == "zh":
                 text.append(chars.get(idx, "?"))
+                if len(text[-1]) != 1:
+                    self._wide[t.start] = len(text[-1])
                 idx += 1
             elif t.kind == "partial":
                 # unfinished syllable: the keys typed (su), or ㄋㄧ if preferred
@@ -1567,9 +1586,10 @@ class Composer:
         return next((t for t in self.tokens if t.start <= self.caret < t.start + len(t.raw)), None)
 
     def _width(self, t):
-        """Characters the token takes in the composition (as _render shows it)."""
+        """Characters the token takes in the composition (as _render shows it). A syllable is one
+        character, but for one no character has, shown as its zhuyin (convert: ㄅㄧㄤˇ is four)."""
         if t.kind == "zh":
-            return 1
+            return getattr(self, "_wide", {}).get(t.start, 1)
         if t.kind == "partial" and self.config.preview != "zhuyin":
             return len(t.raw)
         if t.kind == "lit":
@@ -1637,9 +1657,7 @@ class Composer:
                 if idx == c:
                     return pos
                 idx += 1
-                pos += 1
-            else:
-                pos += self._width(t)
+            pos += self._width(t)
         return pos
 
     # ---- Tab completion ------------------------------------------------------
@@ -2578,11 +2596,13 @@ class Composer:
         next time the dictionary's wins again (picking 不 or 覺, each the usual character of its
         syllable, teaches nothing else) - if it is a word the dictionary has (發覺, 不行; also with
         other tones: 下載 is ㄗㄞˇ there, typed ㄗㄞˋ it reads 下在), or the
-        rest of it followed the pick by itself (隊 became 對: 不對). Not 你郝 for 郝 picked in 你好
-        (a name, once), nor anything for a pick reaching out of the word (天天 in 今天天氣). If the
-        user had picked the old word before (部隊), that no longer counts: the latest correction
-        wins; a word only the user taught (巴西 for ㄅㄚ ㄒㄧ˙) is forgotten, and what it now reads
-        (八西) is half learned: a word the second time. before: what it would be without the picks."""
+        rest of it followed the pick by itself (隊 became 對: 不對). What is no word of the
+        dictionary (你郝 for 郝 picked in 你好, a name; 去試 for 試 picked in 去世一下) is half
+        learned: a word the second time it is sent so, forgotten when the old character is picked
+        back. Nothing for a pick reaching out of the word (天天 in 今天天氣). If the user had
+        picked the old word before (部隊), that no longer counts: the latest correction wins; a
+        word only the user taught (巴西 for ㄅㄚ ㄒㄧ˙) is forgotten. before: what it would be
+        without the picks."""
         halved = set()  # (once a sentence: a word the second time it is sent so, not twice in one)
         now = _chars(self.segments)
         for s, l, p in before:
@@ -2605,13 +2625,18 @@ class Composer:
                 continue
             followed = any(k not in picked and text[k - s] != p[k - s] for k in range(s, s + l))
             if not followed and not self.lexicon.has(rd, text) and not self.lexicon.reads_with_other_tones(rd, text):
-                if not self.lexicon.has(rd, p):
-                    # (a word only the user taught, corrected: what it now reads is half learned,
-                    # a word the second time - as a pair, _learn_pairs)
+                # (what it now reads is half learned, a word the second time - as a pair,
+                # _learn_pairs - whether the old word was the user's or the dictionary's: 試 picked
+                # in 去世一下 taught only the character, and 去世 came again however often)
+                if self.user.phrase_count(key, text) < 1 and (key, text) not in halved:
+                    halved.add((key, text))
+                    self.user.learn_half(key, text)
+                # the old word as the user taught it no longer counts: one only the user taught at
+                # once, one of the dictionary when the new one is a word (去世 picked back once
+                # kept its bonus, and 去試 never came again however often 試 was picked) - not for
+                # a pick made once (霧 in 事物, picked whole before: 事物 stays, not 事務 again)
+                if not self.lexicon.has(rd, p) or self.user.phrase_count(key, text) >= 1:
                     self.user.forget_phrase(key, p)
-                    if self.user.phrase_count(key, text) < 1 and (key, text) not in halved:
-                        halved.add((key, text))
-                        self.user.learn_half(key, text)
                 continue
             self.user.learn_phrase(key, text)
             self.user.forget_phrase(key, p)
@@ -3095,6 +3120,7 @@ class Composer:
         self.commit = ""
         self.last_commit = None
         if self.user.reload_custom():
+            self.table.set_custom(self.user.custom)
             self._refresh()
         if ch is not None:  # (special keys carry no Caps Lock state)
             self.caps_lock = caps

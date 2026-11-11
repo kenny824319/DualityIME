@@ -10,3 +10,10 @@ y42u/4tj/6cjo4{DOWN}2{ENTER} => 自訂重繪
 y42u/4tj/6cjo4{ENTER} => 自訂重繪
 # on its own 會 stays
 cjo4{ENTER} => 會
+# 試 picked for the 世 of 去世 in 去世一下 (去世 is a word of the dictionary, 去試 is none): half of 去試,
+# so 去世 comes once more; the second time 去試 is a word. 去世 where the sentence means it stays.
+fm4g4u vu84{LEFT}{LEFT}{LEFT}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER} => 去試一下
+fm4g4u vu84{ENTER} => 去世一下
+fm4g4u vu84{LEFT}{LEFT}{LEFT}{DOWN}{DOWN}{ENTER}{ENTER} => 去試一下
+fm4g4u vu84{ENTER} => 去試一下
+yj3zj4fm4g4xk7{ENTER} => 祖父去世了

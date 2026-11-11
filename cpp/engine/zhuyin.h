@@ -62,6 +62,12 @@ public:
     // (5k: ㄓㄜ ㄓㄜˊ ㄓㄜˇ ㄓㄜˋ ㄓㄜ˙ as far as they exist); sorted. Empty if they spell none
     std::vector<ustr> toned_forms(std::string_view keys) const;
     double score(const ustr& reading) const;
+    // the syllables of the user's own words (個人詞庫) are syllables too (see engine/zhuyin.py):
+    // its reading keys; what the dictionary has keeps its score, what is no zhuyin syllable is
+    // left out, a word taken out takes its syllables along
+    void set_custom(const std::vector<ustr>& reading_keys);
+    // the syllable is one only 個人詞庫 has, none of the dictionary
+    bool custom_only(const ustr& reading) const { return toned_.count(reading) && !dictionary_toned_.count(reading); }
 
 private:
     std::unordered_map<char, char32_t> keymap_;
@@ -70,6 +76,9 @@ private:
     std::string tone_digits_;
     std::unordered_map<ustr, double> toned_;
     std::unordered_set<ustr> prefixes_;
+    std::unordered_map<ustr, double> dictionary_toned_;  // toned_ and prefixes_ of the dictionary alone
+    std::unordered_set<ustr> dictionary_prefixes_;
+    bool custom_ = false;  // toned_ has syllables of 個人詞庫 in it
 };
 
 }  // namespace sz

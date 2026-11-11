@@ -88,6 +88,43 @@ Parsed keys_to_symbols(std::string_view keys, const std::unordered_map<char, cha
     return std::make_pair(s, in_order);
 }
 
+namespace {
+
+constexpr double CUSTOM_SYLLABLE = -5.0;  // the score of a syllable only the user's own words have
+
+ustr body_of(const ustr& syl) {
+    return (!syl.empty() && is_tone_mark(syl.back())) ? syl.substr(0, syl.size() - 1) : syl;
+}
+
+// every subset of the parts of a syllable, in their usual order: they may be typed in any order
+void add_parts(const ustr& syl, std::unordered_set<ustr>& prefixes) {
+    ustr body = body_of(syl);
+    for (unsigned mask = 1; mask < (1u << body.size()); ++mask) {
+        ustr sub;
+        for (size_t b = 0; b < body.size(); ++b)
+            if (mask >> b & 1) sub.push_back(body[b]);
+        prefixes.insert(sub);
+    }
+}
+
+// an initial, a medial, a final - each at most once, in that order, at least one - and a tone mark
+// or none: what the keys of a syllable can spell
+bool well_formed(const ustr& syl) {
+    static const ustr finals = U"ㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦ";
+    ustr body = body_of(syl);
+    if (body.empty() || body.size() > 3) return false;
+    int last = -1;
+    for (char32_t c : body) {
+        int r = rank(c);
+        if (r == 2 && finals.find(c) == ustr::npos) return false;
+        if (r <= last) return false;
+        last = r;
+    }
+    return true;
+}
+
+}  // namespace
+
 SyllableTable::SyllableTable(const Lexicon& lexicon) {
     for (auto& [k, v] : standard_layout().keymap) {
         keymap_[k] = v;
@@ -107,16 +144,25 @@ SyllableTable::SyllableTable(const Lexicon& lexicon) {
             if (top > (it == toned_.end() ? -100.0 : it->second)) toned_[syl] = top;
         }
     }
-    for (const auto& [syl, _] : toned_) {
-        ustr body = (!syl.empty() && is_tone_mark(syl.back())) ? syl.substr(0, syl.size() - 1) : syl;
-        // any subset of the parts, since they may come in any order
-        for (unsigned mask = 1; mask < (1u << body.size()); ++mask) {
-            ustr sub;
-            for (size_t b = 0; b < body.size(); ++b)
-                if (mask >> b & 1) sub.push_back(body[b]);
-            prefixes_.insert(sub);
-        }
+    for (const auto& [syl, _] : toned_) add_parts(syl, prefixes_);
+    dictionary_toned_ = toned_;
+    dictionary_prefixes_ = prefixes_;
+}
+
+void SyllableTable::set_custom(const std::vector<ustr>& reading_keys) {
+    std::vector<ustr> more;
+    // only the reading of a word of one character: a syllable only a longer word has (掰掰 ㄅㄞ ㄅㄞ˙)
+    // has no character of its own, and came up wherever its keys were typed (197 is ㄅㄞ˙: 有197個)
+    for (const auto& key : reading_keys)
+        if (key.find(U'-') == ustr::npos && !dictionary_toned_.count(key) && well_formed(key)) more.push_back(key);
+    if (more.empty() && !custom_) return;  // (as the dictionary's already)
+    toned_ = dictionary_toned_;
+    prefixes_ = dictionary_prefixes_;
+    for (const auto& syl : more) {
+        toned_[syl] = CUSTOM_SYLLABLE;
+        add_parts(syl, prefixes_);
     }
+    custom_ = !more.empty();
 }
 
 std::string SyllableTable::reading_to_keys(const ustr& reading) const {
