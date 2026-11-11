@@ -13,6 +13,11 @@
       "Read(cpp/build/**)"
     ]
   },
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -57,11 +62,12 @@
     ],
     "SessionStart": [
       {
-        "matcher": "compact",
+        "matcher": "startup|resume|clear|compact",
         "hooks": [
           {
             "type": "command",
-            "command": "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_context.py\""
+            "command": "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_context.py\"",
+            "timeout": 90
           }
         ]
       }

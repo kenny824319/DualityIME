@@ -29,6 +29,8 @@ PROTECTED = {
                                     "found and why it should ship.",
     ".claude/last-check.json": "check.py writes it when the full check passed: run the check instead.",
     ".claude/scripts/push_audit.py": "The push audit holds the user's rules for pushing: only the user changes it.",
+    ".claude/settings": "The settings turn off commit attribution and start the hooks: only the user changes them.",
+    ".git/": "git's own configuration holds the privacy hooks and the identity: only the user changes it.",
     ".claude/hooks/": "The hooks hold the user's rules (protected files, commands to ask, git): only the user "
                       "changes them; propose the change.",
 }

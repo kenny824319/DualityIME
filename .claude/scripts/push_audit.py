@@ -166,6 +166,13 @@ def main() -> int:
     diff = git("diff", "--no-color", "--no-ext-diff", "-U0", "--src-prefix=a/", "--dst-prefix=b/",
                f"{start}..HEAD" if start else "HEAD")
     findings += scan(diff, allowed())
+    # 2b. nothing personal in the commits (the same check as the pre-push hook)
+    sys.path.insert(0, str(ROOT / ".claude" / "hooks"))
+    try:
+        import privacy_audit
+        findings += privacy_audit.scan_range(start, "HEAD") + privacy_audit.private_sync_findings()
+    except Exception as error:  # noqa: BLE001 - fail closed
+        findings.append(f"the privacy audit could not run ({error}): run `git priv pull` to get it")
     # 3. the debug log on this computer
     log = Path(os.environ.get("TEMP") or tempfile.gettempdir()) / "dualityime_debug.log"
     if log.exists():

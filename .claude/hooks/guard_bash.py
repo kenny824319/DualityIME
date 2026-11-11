@@ -46,6 +46,10 @@ from pathlib import Path
 
 INSTALL_REASON = "This installs software; the user confirms installs."
 
+# (project) Files only the user changes, as a shell command would name them.
+# (the same files guard_paths protects from the editing tools)
+GUARDED = (r"(?<![\w.-])(\.git(?![\w.-])|\.claude/(hooks|scripts)(?![\w.-])|\.claude/settings"
+           r"|\.claude/(push-audit-allow\.txt|last-check\.json)(?![\w.-])|\.claude(?!/?[\w.-]))")
 # (regex, reason). Commands that must never run in this repo; the reason should
 # say what to do instead.
 BLOCK: list[tuple[str, str]] = [
@@ -73,6 +77,15 @@ BLOCK: list[tuple[str, str]] = [
         "tools\\release.ps1 -Channel develop -Phase prepare` runs it once, with the end-to-end cases after "
         "it (CLAUDE.md Workflow 2 and 5). Don't run check.py yourself, with or without --release; while "
         "working, run the tests of what changed.",
+    ),
+    # (project) Nothing personal reaches the public repo (2026-11-11): the checks can't be switched off.
+    (
+        r"\bGIT_CONFIG_(COUNT|PARAMETERS)\b",
+        "Setting git options through the environment can turn the privacy checks off: never.",
+    ),
+    (
+        r"\brelease\.ps1\b[^\n;&|]*-Trailers\b",
+        "A release commit carries no attribution lines: run release.ps1 without -Trailers.",
     ),
     # (
     #     r"\buv\s+(run|sync)\b",
@@ -257,11 +270,22 @@ def read_only(sub: str, args: list[str]) -> bool:
     return False
 
 
+# (project) What `git priv add` may take: the internal files.
+PRIVATE_FOLDERS = ("docs/superpowers/", "docs/architecture/", ".claude/agent-memory/", ".claude/hooks/git/")
+PRIVATE_PATHS = {"CLAUDE.md", "docs/status.md", "docs/review-backlog.md", ".claude/hooks/privacy_audit.py",
+                 ".claude/hooks/private-patterns.txt", *(f.rstrip("/") for f in PRIVATE_FOLDERS)}
+
+
+def amends(flags: set[str]) -> bool:
+    """--amend, or an abbreviation git accepts."""
+    return any(len(flag) >= 4 and "--amend".startswith(flag) for flag in flags)
+
+
 def allowed_by_commit_policy(sub: str, args: list[str]) -> bool:
     flags = {a.split("=", 1)[0] for a in args if a.startswith("-")}
     first = args[0] if args else ""
     if sub in ("add", "commit", "fetch"):
-        return "--amend" not in flags and not flags & {"-f", "--force"}
+        return not amends(flags) and not flags & {"-f", "--force"}
     if sub == "stash":
         return first not in ("drop", "clear", "pop")
     if sub == "switch":
@@ -272,6 +296,18 @@ def allowed_by_commit_policy(sub: str, args: list[str]) -> bool:
         return flags in ({"-b"},) and len(args) == 2
     if sub == "branch":
         return not flags & BRANCH_WRITE  # Creating a branch.
+    if sub == "priv":  # (project) the alias for the private repo of internal files: it talks only to that repo
+        if first == "push":
+            return args[1:] in ([], ["-q"], ["origin", "main"])
+        if first == "pull":
+            return args[1:] in ([], ["-q"], ["--ff-only"])
+        if first == "add":
+            if args[1:] == ["-u"]:
+                return True
+            paths = [a.replace("\\", "/") for a in args[1:] if a not in ("-A", "--all", "--")]
+            return bool(paths) and all(".." not in p.split("/") and (p.rstrip("/") in PRIVATE_PATHS
+                                       or p.startswith(PRIVATE_FOLDERS)) for p in paths)
+        return first in ("status", "diff", "log", "commit") and not amends(flags) and "--force" not in flags
     return False
 
 
@@ -280,6 +316,8 @@ def tokens(command: str) -> tuple[list[str], bool]:
     # Newlines separate commands like ";". Inside quotes they become part of
     # the quoted token, which is harmless.
     text = command.replace("\r", "").replace("\n", " ; ")
+    # (`2>&1`: the `&` would split it into a program named 1. Only as a word of its own: `main2>&1` pushes main2)
+    text = re.sub(r"(?<![^\s;&|()])\d*>&\d+(?![\w.\\/-])", " ", text)
     lexer = shlex.shlex(text, posix=True, punctuation_chars=";&|()`{}")
     lexer.whitespace_split = True
     lexer.escape = ""  # Backslash is a Windows path separator, not an escape.
@@ -726,6 +764,175 @@ def installs(command: str) -> bool:
     return False
 
 
+# (project) The only programs that may name git's configuration or the project's guards: they don't write.
+# A list of writers can't be complete (curl -o, tar -C, mv of a source, a folder as destination).
+READERS = {"cat", "type", "gc", "get-content", "head", "tail", "wc", "ls", "dir", "gci", "get-childitem", "stat", "test",
+           "test-path", "get-item", "gi", "grep", "egrep", "fgrep", "select-string", "sls", "findstr", "diff", "cmp",
+           "sha256sum", "md5sum", "get-filehash", "echo", "printf", "write-host", "write-output", "basename", "dirname",
+           "realpath", "readlink", "git"}
+CHANGE_FOLDER = {"cd", "set-location", "sl", "pushd"}  # (fine, unless into a guarded folder)
+GH_API_VALUES = {"-q", "--jq", "-t", "--template", "-H", "--header", "-p", "--preview", "--hostname", "--input", "--cache",
+                 "-f", "-F", "--field", "--raw-field"}
+INTERPRETERS = {"py", "python", "python3", "pythonw"}
+FIND_ACTIONS = {"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"}
+GH_READ = {"release": {"list", "view", "download"}, "repo": {"view", "list"}, "issue": {"list", "view", "status"},
+           "pr": {"list", "view", "status", "diff", "checks"}, "auth": {"status"}, "run": {"list", "view"},
+           "workflow": {"list", "view"}}
+
+
+def guarded(word: str) -> bool:
+    """`word` names git's configuration, the project's guards or a folder holding them, however the path is spelled."""
+    path = re.sub(r"/+(\./+)*", "/", word.replace("\\", "/") + "/")  # (+ "/": .git/. and a/.. end like folders)
+    while (shorter := re.sub(r"""(?<![^/\s'"=:(,])(?!\.\./)[^/\s'"=:(,]+/\.\./""", "", path, count=1)) != path:
+        path = shorter
+    return bool(re.search(GUARDED, path, re.IGNORECASE))
+
+
+def redirect_targets(text: str) -> list[str]:
+    """Where the redirects of a command line write. Read from the text, not from words: `x>file` is one word, and
+    a quoted `"> file"` writes nowhere. A backslash before a quote, outside quotes, doesn't open one."""
+    found, quote, k = [], "", 0
+    while k < len(text):
+        ch = text[k]
+        k += 1
+        if quote:
+            quote = "" if ch == quote else quote
+        elif ch == "\\" and text[k:k + 1] in ("'", '"'):
+            k += 1
+        elif ch in "'\"":
+            quote = ch
+        elif ch == ">":
+            while k < len(text) and text[k] in ">|& \t":
+                k += 1
+            target, inner = "", ""
+            while k < len(text) and (inner or text[k] not in " \t\r\n;&|<>()"):
+                ch = text[k]
+                k += 1
+                if inner:
+                    inner = "" if ch == inner else inner
+                    target += ch if inner else ""
+                elif ch in "'\"":
+                    inner = ch
+                else:
+                    target += ch
+            found.append(target)
+    if quote:  # Unbalanced: the quotes can't be trusted to hide anything.
+        found += re.findall(r">[>|&\s]*([^\s;&|<>()]+)", re.sub(r"['\"]", "", text))
+    return found
+
+
+def only_reads(words: list[str]) -> bool:
+    """The program doesn't write what it names, or it is Python running a guard script, with no other guarded word."""
+    name, args = program(words[0]), words[1:]
+    if name in CHANGE_FOLDER:
+        return not any(guarded(a) or a.endswith("$") or "`" in a for a in args)  # (cd $(dirname .git/config))
+    if name == "find":
+        return not FIND_ACTIONS & {a.lower() for a in args}
+    if name in INTERPRETERS:
+        rest = [a for a in args if not re.fullmatch(r"-[0-9.]+|-[BEIOsSuv]+", a)]
+        return bool(rest) and not rest[0].startswith("-") and rest[0].lower().endswith(".py") \
+            and not any(guarded(a) for a in rest[1:])
+    return name in READERS
+
+
+def guarded_write(command: str) -> bool:
+    """A shell command that could write to git's configuration or the project's guards: a redirect into them, a
+    variable holding them, or a command that names them and runs anything outside READERS, in any part of it
+    (`ls .git/hooks/* | xargs rm`). Too strict rather than too loose."""
+    # (also line by line: an apostrophe in a comment would hide the next lines inside "quotes")
+    for text in (command, *command.split("\n")):
+        for line in (text, *substitutions(text)):
+            if any(guarded(target) for target in redirect_targets(line)):
+                return True
+        if any(guarded(value) for value in re.findall(r"(?:^|[\s;&|(])\$?\w+=(\S+)", text)):
+            return True
+        parsed = [words for words, _wrapped, _clean in segments(text)]
+        computed = any(t.endswith("$") or "`" in t for t in redirect_targets(text))  # (> $(echo .git/config))
+        if any(guarded(re.sub(r"^-[a-zA-Z]+", "", w)) for words in parsed for w in words) \
+                and (computed or not all(only_reads(words) for words in parsed)):  # (-t.git/hooks)
+            return True
+    return False
+
+
+def gh_writes(command: str) -> bool:
+    """A gh command that is not a plain read: what it posts or changes isn't checked for personal data."""
+    for words, wrapped, _clean in segments(command):
+        for start in starts(words, wrapped):
+            if program(words[start]) != "gh":
+                continue
+            args = words[start + 1:]
+            positional = [a for a in args if not a.startswith("-")]
+            if not positional or positional[0].lower() in ("help", "version"):
+                continue
+            top = positional[0].lower()
+            if top == "api":
+                method = ""  # (the last one wins; -XPOST, -X=POST and -iXPOST all set it)
+                skip = False
+                for i, a in enumerate(args):
+                    short = re.fullmatch(r"-i*X=?(.*)", a)  # (-i is gh api's only short option without a value)
+                    if skip:  # (an option's value: `-q -XGET` is a jq filter, not the method)
+                        skip = False
+                    elif a in GH_API_VALUES:
+                        skip = True
+                    elif a == "--method" or (short and not short[1]):
+                        method = "".join(args[i + 1:i + 2])
+                        skip = True
+                    elif a.startswith("--method="):
+                        method = a.split("=", 1)[1]
+                    elif short:
+                        method = short[1]
+                if method.upper() not in ("", "GET"):
+                    return True
+                if not method and any(re.match(r"-i*[fF]|--(raw-)?field|--input", a) for a in args):
+                    return True
+                continue
+            if len(positional) < 2 or positional[1].lower() not in GH_READ.get(top, ()):
+                return True
+    return False
+
+
+COMMIT_VALUE_OPTIONS = {"-m", "-F", "-c", "-C", "-t", "--message", "--file", "--author", "--date", "--template",
+                        "--reuse-message", "--reedit-message", "--fixup", "--squash", "--cleanup", "--trailer"}
+
+
+def skips_hooks(command: str) -> bool:
+    """A git invocation that would skip the privacy hooks (parsed: quoting and abbreviations don't hide it)."""
+    for sub, args, _clean, words in git_calls(command):
+        for k, word in enumerate(words):
+            low = word.lower()
+            if low.startswith("--config-env=core.hookspath"):
+                return True
+            if k and words[k - 1] in ("-c", "--config-env") and low.startswith("core.hookspath"):
+                return True
+        if sub is not None and any(a.split("=", 1)[0] == "--output" for a in args):
+            return True  # (git log and diff write a file with it: a hook, or .git/config)
+        if sub is None or sub in READ_ONLY:
+            continue
+        for arg in args:
+            if arg == "--":
+                break
+            name = arg.split("=", 1)[0]
+            if len(name) >= 6 and "--no-verify".startswith(name):
+                return True
+        if sub != "commit":
+            continue
+        i = 0
+        while i < len(args):
+            arg = args[i]
+            i += 1
+            if arg == "--":
+                break
+            if arg in COMMIT_VALUE_OPTIONS:
+                i += 1
+            elif arg.startswith("-") and not arg.startswith("--"):
+                for flag in arg[1:]:
+                    if flag in "mFcCtSu":  # The rest of the word is that option's value.
+                        break
+                    if flag == "n":
+                        return True
+    return False
+
+
 def decide(
     command: str, policy: str, unattended: bool = False
 ) -> tuple[str, str] | None:
@@ -740,6 +947,14 @@ def decide(
     for pattern, reason in BLOCK:
         if re.search(pattern, text, re.IGNORECASE):
             return "block", f"Blocked: {reason}"
+    if skips_hooks(text):
+        return "block", ("Blocked: skipping or re-pointing the git hooks: never. They keep personal data out of the "
+                         "public repo. Fix what they report.")
+    if guarded_write(text):
+        return "block", "Blocked: writing to git's configuration or the project's guards: only the user changes them."
+    if gh_writes(text):
+        return "block", ("Blocked: only reading with gh here: what it posts or changes isn't checked for personal "
+                         "data. Write it out for the user; a Release comes only from release.ps1.")
     asks, blocks = [], []
     for pattern, reason, *options in ASK:
         if re.search(pattern, text, re.IGNORECASE):

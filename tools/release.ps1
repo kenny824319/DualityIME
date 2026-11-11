@@ -295,6 +295,7 @@ if ($Phase -eq "prepare") {
             Write-Host ($msg.TrimEnd() -replace '(?m)^', '           ')
         }
         foreach ($step in Get-PrepareSteps) { Write-Host "[WhatIf] $step" }
+        Write-Host "[WhatIf] py -3 .claude\hooks\privacy_audit.py installer out\DualityIME-$next-setup.exe"
         Write-Host "[WhatIf] then print: git push origin $branch"
         exit 0
     }
@@ -315,6 +316,8 @@ if ($Phase -eq "prepare") {
         $parts = @($step -split ' ')
         Invoke-Change $parts[0] @($parts[1..($parts.Count - 1)]) $failMsg
     }
+    # (checked here, before anything is pushed; publish checks it again)
+    Invoke-Change "py" @("-3", ".claude\hooks\privacy_audit.py", "installer", "out\DualityIME-$next-setup.exe") "the installer did not pass the privacy audit; $failMsg"
     Write-Host ""
     Write-Host "Version $next is committed, checked and built. Then, in this order:"
     Write-Host "  install out\DualityIME-$next-setup.exe (the user: administrator rights)"
@@ -359,6 +362,9 @@ if ($e2eProblem) {
     if ($WhatIf) { Write-Host "[WhatIf] note: $e2eProblem (a real run would stop here)" }
     else { Stop-Release $e2eProblem }
 }
+
+# (the installer goes public: nothing personal in it. The audit lives in the private repo: without it, no Release)
+Invoke-Change "py" @("-3", ".claude\hooks\privacy_audit.py", "installer", $installer) "$installer did not pass the privacy audit (see above)"
 
 $nearest = (& git describe --tags --abbrev=0 HEAD)
 if ($LASTEXITCODE -ne 0) { $nearest = "" }
