@@ -4,3 +4,14 @@
 m06jo4584ru 2k7ru b.41j4zp4{ENTER} => 原味炸雞的肌肉部分
 njo b06xjp6tj062k7yji3vu06u3ru/ 1o4t9 cjo3{ENTER} => 雖然輪船的左賢已經被拆毀
 su3cl3{ENTER} => 你好
+# one character sent last (改) does not split the word typed next (reported: 以精選好的字); 怎麼 + 辦 stays
+cjo41j4cjo4fm4e93{ENTER}u3ru/ vm03cl32k7y4{ENTER} => 會不會去改已經選好的自
+yk3ai7{ENTER}104{ENTER} => 怎麼辦
+# a pick keeps what is shown before it (they came out 要在改迴, 築自編及)
+ul4y94e93cjo6{DOWN}{DOWN}{ENTER}{ENTER} => 要再改迴
+5j6y41u0 ru6{DOWN}{ENTER}{ENTER} => 逐字編及
+# Tab adds 匙 to a picked 私鑰 (鑰匙 is fixed as one word): the pick stays (it came out 斯鑰匙;
+# with 長句選字加強 on 私鑰 comes by itself, nothing to pick)
+n ul4{HOME}{DOWN}{ENTER}{END}{TAB}{ENTER} => 私鑰匙
+# the next characters deleted again: the picked 鎖鑰 is back as it was (it came out 所要)
+nji3ul4{HOME}{DOWN}{DOWN}{ENTER}{END}{TAB}{TAB}{BACK}{BACK}{ENTER} => 鎖鑰

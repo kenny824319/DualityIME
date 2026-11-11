@@ -872,9 +872,16 @@ def context_transition(bigram, prev, phrase, unigram):
     was cut into the dictionary's words, so a pair that makes one of them was never counted as a
     pair: 怎麼 sent, then 辦 alone lost to 半 (怎麼半天 was counted, 怎麼辦 only as one word). Such
     a pair counts as count(怎麼辦) / count(怎麼) when that is more than the pair's own count. Only
-    at the start of a run: inside one, the whole word is a path of its own."""
+    at the start of a run: inside one, the whole word is a path of its own.
+    Not after a phrase of one character: it ends what was sent far more often than it starts a
+    word (改 sent, then 已經選: 改以 is a word, and its share wrote 以｜精選). The share only ever
+    helped where Enter fell inside a word, and broke 15-20 of 12000 cuts at a word boundary
+    (tools/context_eval.py, 2026-11-10); after one character that is the middle of 國家, where
+    nobody presses Enter (the user's call)."""
     if bigram is None or not prev:
         return unigram
+    if len(prev) < 2:
+        return transition(bigram, prev, phrase, unigram)
     b = bigram.logp(prev, phrase)
     if len(prev) + len(phrase) <= MAX_PHRASE_LEN:
         whole, part = bigram.unigram(prev + phrase), bigram.unigram(prev)
@@ -900,6 +907,8 @@ VARIANT_PAIR = -2.0  # ...into a cohesive word only beside a neighbour it preced
                      # corpus (log10: 她說 -1.63; not 字由 -2.88 for 自由, 現像 -2.35, 其她 -3.88)
 ORIG_FIRST = 3     # 注音自動校正 swapped a syllable: this many of what the keys typed spell come second in ↓
 KEPT = "kept"      # marks an override that keeps a character as it was around a pick, not picked itself
+BAR = (-1, 0)      # ...kept by a pick from the bar above the text, which leaves no override of its own:
+                   # in place of the span of the pick, and kept until the text is sent or edited there
 
 
 def place_weight(reading, ch, user):
@@ -1368,6 +1377,7 @@ class Composer:
     def _clear_input(self):
         self.raw = ""
         self.overrides = {}     # (syl start, length) -> (readings tuple, phrase[, KEPT, span of the pick])
+        self.replaced = {}      # span of a word Tab fixed (_pin) -> what it took the place of (_put_back)
         self.forced = set()     # raw offsets the user wants as English/number
         self.chinese = set()    # raw offsets the user wants as zhuyin after all
         self.breaks = set()     # raw offsets where a syllable picked from the bar ends: nothing reads across
@@ -1443,6 +1453,7 @@ class Composer:
             if tuple(self.readings[s:s + l]) == v[0]:
                 valid[span] = v
         self.overrides = valid
+        self._put_back()
         self._drop_orphans()
         self.segments = self._convert_all()
         self._render()
@@ -1602,6 +1613,7 @@ class Composer:
             return {x if x < p else x + d for x in marks if not p <= x < q}
         before = sum(1 for t in self.tokens if t.kind == "zh" and t.start < p)
         self.overrides = {sp: v for sp, v in self.overrides.items() if sp[0] + sp[1] <= before}
+        self._forget_replaced(before)
         fixed = {}
         for a, (b, shown) in self.fixed.items():
             if b <= p:
@@ -1746,6 +1758,42 @@ class Composer:
         self.caret = None
         self._refresh()
 
+    def _put_back(self):
+        """A word Tab fixed over a pick (私鑰 picked, Tab: 鑰匙) is gone - its character deleted,
+        or picked over: the pick is back as it was, and learned as ever when sent (it was guessed
+        again: 斯要 - 2026-11-10 user). What that word kept goes with it; what it took the place of
+        comes back where the syllables are still those and nothing else holds them, the words of
+        earlier Tabs with what they replaced in turn (私鑰匙圈, 圈 deleted: 鑰匙 again, then 私鑰)."""
+        for span in [sp for sp in self.replaced if len(self.overrides.get(sp, ())) != 2]:
+            was, earlier = self.replaced.pop(span)
+            self.overrides = {sp: v for sp, v in self.overrides.items() if len(v) == 2 or v[3] != span}
+            for (a, b), v in sorted(was.items()):
+                if tuple(self.readings[a:a + b]) == v[0] \
+                        and not any(x < a + b and a < x + y for x, y in self.overrides):
+                    self.overrides[(a, b)] = v
+                    if (a, b) in earlier:
+                        self.replaced[(a, b)] = earlier[(a, b)]
+
+    def _forget_replaced(self, before):
+        """An edit from syllable `before` on: the places after it move, so what the records hold
+        there is forgotten; what stands before it can still come back (私鑰匙, Delete before 匙:
+        私鑰, as Backspace after it)."""
+        def cut(record):
+            was, earlier = record
+            gone = {sp for sp in was if sp[0] + sp[1] > before}
+            left = {sp: v for sp, v in was.items() if sp not in gone}
+            below = {sp: cut(r) for sp, r in earlier.items() if sp in left}
+            for sp in sorted(gone & set(earlier)):
+                # (an earlier Tab's word is cut: what it had replaced in turn takes its place here,
+                # and what it kept goes - 私鑰匙圈, 匙 deleted: 私鑰 was two records down)
+                was2, earlier2 = cut(earlier[sp])
+                left = {k: v for k, v in left.items() if len(v) == 2 or v[3] != sp}
+                left.update(was2)
+                below.update(earlier2)
+            return left, {sp: r for sp, r in below.items() if sp in left}
+        self.replaced = {span: record for span, record in ((sp, cut(r)) for sp, r in self.replaced.items())
+                         if record[0]}
+
     def _pin_way(self, readings, chars):
         """How _pin fixes chars over readings: "chars" (each is a character of the dictionary under its
         syllable), "phrase" (the run is a dictionary word), or None (it cannot: nothing is fixed)."""
@@ -1770,10 +1818,26 @@ class Composer:
         phrase = "".join(chars)
         if way == "phrase":
             end = start + len(readings)
-            # a phrase pin replaces every pin it overlaps
-            self.overrides = {sp: v for sp, v in self.overrides.items()
-                              if sp[0] + sp[1] <= start or sp[0] >= end}
+            # a phrase pin replaces every pin it overlaps; what a pick of the user's has outside it
+            # stays, kept with this pin (私鑰 picked, Tab adds 匙 as 鑰匙: 私 was guessed again, 斯鑰匙)
+            cut = [(sp, v) for sp, v in self.overrides.items()
+                   if len(v) == 2 and sp[0] < end and start < sp[0] + sp[1] and (sp[0] < start or sp[0] + sp[1] > end)]
+            gone = {sp for sp in self.overrides if sp[0] < end and start < sp[0] + sp[1]}
+            # (what it takes the place of comes back when this pin goes: _put_back)
+            was = {sp: v for sp, v in self.overrides.items() if sp in gone or (len(v) > 2 and v[3] in gone)}
+            if was:
+                self.replaced[(start, len(readings))] = (
+                    was, {sp: self.replaced.pop(sp) for sp in gone if sp in self.replaced})
+            # (and what a pick it replaces had kept goes on with this pin: before a pick, or of an
+            # earlier Tab's word - 鑰匙, then 鑰匙圈)
+            self.overrides = {sp: v if len(v) == 2 or v[3] not in gone else v[:3] + ((start, len(readings)),)
+                              for sp, v in self.overrides.items() if sp not in gone}
             self.overrides[(start, len(readings))] = (tuple(readings), phrase)
+            for (a, b), (rds, p) in cut:
+                for k in range(a, a + b):
+                    if not start <= k < end and len(p) == b and self.lexicon.has([rds[k - a]], p[k - a]) \
+                            and not any(x <= k < x + y for x, y in self.overrides):
+                        self.overrides[(k, 1)] = ((rds[k - a],), p[k - a], KEPT, (start, len(readings)))
 
     # ---- candidates --------------------------------------------------------
     def _open_candidates(self):
@@ -1976,6 +2040,7 @@ class Composer:
         for name in ("forced", "chinese", "breaks", "exact", "literal", "caps"):
             setattr(sim, name, set(getattr(self, name)))
         sim.fixed, sim.overrides = dict(self.fixed), dict(self.overrides)
+        sim.replaced = dict(self.replaced)  # (_put_back takes records out of it)
         sim.taken, sim.pending = dict(self.taken), dict(self.pending)
         sim._simulating = True
         if action[0] == "syllable":
@@ -1993,11 +2058,13 @@ class Composer:
         self.repl_index = -1
         if action[0] == "fix":
             _, start, end, text = action
+            self._keep_before_bar(start)
             self._learn_zhuyin_text(text)
             self._note_as_typed(start, end)
             self.taken = {a: v for a, v in self.taken.items() if v[0] <= start or a >= end}
             before = sum(1 for t in self.tokens if t.kind == "zh" and t.start < start)
             self.overrides = {sp: v for sp, v in self.overrides.items() if sp[0] + sp[1] <= before}
+            self._forget_replaced(before)
             for marks in (self.forced, self.chinese, self.literal):
                 marks -= set(range(start, end))
             self.fixed = {a: v for a, v in self.fixed.items() if v[0] <= start or a >= end}
@@ -2010,6 +2077,7 @@ class Composer:
             return
         if action[0] == "unfix":
             _, start, as_typed = action
+            self._keep_before_bar(start)
             end = self.fixed.pop(start, (start, None))[0]
             if as_typed:
                 self.forced.add(start)
@@ -2030,10 +2098,12 @@ class Composer:
 
     def _pick_syllable(self, action):
         _, c, j, keep = action
+        self._keep_before_bar(c if keep is None else keep)
         # keys c..j are one syllable, read with the rest again (頁 + 面 can still be 頁面);
         # what is before stays as typed if the caret was inside a word
         before = sum(1 for t in self.tokens if t.kind == "zh" and t.start < c)
         self.overrides = {sp: v for sp, v in self.overrides.items() if sp[0] + sp[1] <= before}
+        self._forget_replaced(before)
         for marks in (self.forced, self.literal):
             marks -= set(range(c, j))
         self.chinese = {x for x in self.chinese if not c < x < j} | {c}
@@ -2359,17 +2429,20 @@ class Composer:
     def _pick(self, i, from_bar=False):
         action = self._cand_actions[i]
         picked = None  # (first syllable, count) of a phrase picked from the list
+        shown = list(self.segments)  # when the user picked: what comes before stays (_keep_before)
         if action[0] == "phrase":
             _, s, l, p = action
-            shown = {a + k: q[k] for a, b, q in self.segments if len(q) == b for k in range(b)}
-            if "".join(shown.get(k, "") for k in range(s, s + l)) != p:  # (what is there already: nothing to do)
+            there = {a + k: q[k] for a, b, q in self.segments if len(q) == b for k in range(b)}
+            if "".join(there.get(k, "") for k in range(s, s + l)) != p:  # (what is there already: nothing to do)
                 # drop overrides overlapped by the new pick, and what an earlier pick there kept
                 self.overrides = {sp: v for sp, v in self.overrides.items()
                                   if (sp[0] + sp[1] <= s or sp[0] >= s + l)
                                   and (len(v) == 2 or v[3][0] + v[3][1] <= s or v[3][0] >= s + l)}
                 self.overrides[(s, l)] = (tuple(self.readings[s:s + l]), p)
+                self._put_back()  # (before the pick keeps what is around it: a pick again, not kept)
                 self._drop_orphans()
                 self._keep_rest(s, l)
+                self._keep_before(s, l, shown)
             picked = (s, l)
         elif action[0] == "chinese":
             _, start, first, readings, p, whole, unlit, unforce, force, unchinese = action
@@ -2388,6 +2461,7 @@ class Composer:
             self._refresh()
             self.overrides[(first, len(readings))] = (readings, p)
             picked = (first, len(readings))
+            self._keep_before(first, len(readings), shown)
         elif action[0] == "tone":
             # another tone of a syllable 注音自動校正 put a tone in: the pick, on that reading
             _, s, r, p = action
@@ -2396,8 +2470,10 @@ class Composer:
                               and (len(v) == 2 or v[3][0] + v[3][1] <= s or v[3][0] >= s + 1)}
             self.overrides[(s, 1)] = ((r,), p)
             self.readings[s] = r  # (what the rest makes a word with: 有形, not 有行; _refresh keeps it)
+            self._put_back()
             self._drop_orphans()
             self._keep_rest(s, 1)
+            self._keep_before(s, 1, shown)
             picked = (s, 1)
         elif action[0] == "exact":
             _, start, s, p = action
@@ -2407,6 +2483,7 @@ class Composer:
             self._refresh()
             self.overrides[(s, 1)] = ((self.readings[s],), p)
             picked = (s, 1)
+            self._keep_before(s, 1, shown)
         elif action[0] == "plain":
             # 代碼記憶 left out for these keys: read as before it learned them (mp3: 允), then this character
             _, start, keys, p = action
@@ -2420,6 +2497,7 @@ class Composer:
                 if s < len(self.readings):
                     self.overrides[(s, 1)] = ((self.readings[s],), p)
                     picked = (s, 1)
+                    self._keep_before(s, 1, shown)
         elif action[0] == "taken":
             # 注音自動校正 the user asked for: these keys are this syllable (si3: ㄋㄧˇ), then this character
             _, start, end, reading, p = action
@@ -2433,6 +2511,7 @@ class Composer:
             s = sum(1 for t in self.tokens if t.kind == "zh" and t.start < start)
             self.overrides[(s, 1)] = ((reading,), p)
             picked = (s, 1)
+            self._keep_before(s, 1, shown)
         elif action[0] == "syllable":
             self.candidates, self._cand_actions = [], []
             self._pick_syllable(action)
@@ -2459,6 +2538,7 @@ class Composer:
             return
         elif action[0] == "raw":
             _, text, start = action
+            self._keep_before_bar(start)
             if not self._note_code(start):
                 self._note_as_typed(start)
             self.taken.pop(start, None)
@@ -2468,6 +2548,8 @@ class Composer:
                 self.user.save()
         self.candidates, self._cand_actions = [], []
         self._refresh()
+        if picked and len(self.overrides.get(picked, ())) == 2:
+            self._keep_before(picked[0], picked[1], self.segments, own=True)
         if picked and self.caret is not None and not from_bar:
             # the caret goes on past the word just changed (實作|頁面), like the ASUS IME
             zh = [t for t in self.tokens if t.kind == "zh"]
@@ -2585,10 +2667,89 @@ class Composer:
                 if any(w == ch for w, _ in self.lexicon.lookup([rd])):
                     self.overrides[(k, 1)] = ((rd,), ch, KEPT, (s, l))
 
+    def _keep_before(self, s, l, shown, own=False):
+        """A pick fixes what was shown before it as well (shown: the segments then): the user
+        chose it looking at them, and converting again around the pick changed them (已經選好的自,
+        字 picked: 以精選好的字 - 2026-11-10 user). Kept like the rest of a word a pick broke
+        (_keep_rest): nothing the user taught, and only as long as that pick is there. Not what a
+        pick or an earlier one's keeping holds already. What makes a word with the pick comes as
+        that word, as in _keep_rest (事實, 時 picked: 適時; 夏在, 載 picked: 下載), and is kept once
+        that is settled (own: shown is then what the pick made). A character the dictionary does
+        not have alone under its syllable is kept as its word."""
+        in_word = set()
+        if not own:
+            now = self._convert_all()
+            in_word = {a + k for a, b, q in now if b > 1 and a < s + l and s < a + b for k in range(b)}
+            # (and a word the dictionary reads with another tone: ㄒㄧㄚˋ ㄗㄞˋ, 載 picked, is 下載 -
+            # _learn_broken_words learns it then. Kept as that word here: no path of its own in
+            # the search, the characters before the pick were guessed again once what stands
+            # before them was kept - 鐸之, 汁 picked: 多汁, not 奪汁)
+            chars = {a + k: q[k] for a, b, q in now if len(q) == b for k in range(b)}
+            for a, b in self.runs:
+                for x in range(a, min(s, b)):
+                    for e in range(max(x + 2, s + l), min(b, x + MAX_PHRASE_LEN) + 1):
+                        if all(k in chars for k in range(x, e)) and self.lexicon.reads_with_other_tones(
+                                self.readings[x:e], "".join(chars[k] for k in range(x, e))):
+                            for k in range(x, s):
+                                if not any(i <= k < i + j for i, j in self.overrides) \
+                                        and self.lexicon.has([self.readings[k]], chars[k]):
+                                    self.overrides[(k, 1)] = ((self.readings[k],), chars[k], KEPT, (s, l))
+        for a, b, q in shown:
+            if len(q) != b or a >= s or (a + b > s and not own):
+                continue
+            self._keep_as_shown(a, q, [k for k in range(a, min(a + b, s)) if k not in in_word], (s, l))
+
+    def _keep_as_shown(self, a, q, where, by):
+        """Keep the word q shown from syllable a at the syllables `where` nothing holds yet, for the
+        pick `by`: each character alone where the dictionary has them all so; else the whole word,
+        if the search can write it there (a candidate of its syllables: not 會勘 with 勘 of the
+        personal dictionary put in by repick - fixed as a word there was no way to write the run,
+        and the keys came out as zhuyin); else the characters that can be kept alone."""
+        b = len(q)
+        free = [k for k in where if not any(x <= k < x + y for x, y in self.overrides)]
+        if not free:
+            return
+        alone = [k for k in free if self.lexicon.has([self.readings[k]], q[k - a])]
+        if len(alone) < len(free) and len(free) == b and b > 1 and any(
+                p == q for p, _ in phrase_candidates(self.readings[a:a + b], self.lexicon, self.user, names=True)):
+            self.overrides[(a, b)] = (tuple(self.readings[a:a + b]), q, KEPT, by)
+            return
+        for k in alone:
+            self.overrides[(k, 1)] = ((self.readings[k],), q[k - a], KEPT, by)
+
+    def _keep_before_bar(self, start):
+        """A pick from the bar above the text (how the keys from `start` are read): what is shown
+        before them stays, as before a pick from the candidates (_keep_before; 搬移師no, ㄙㄟ
+        picked for no: 班遺失㩙). Called before the keys are read again."""
+        before = sum(1 for t in self.tokens if t.kind == "zh" and t.start < start)
+        # (a pick or a word of Tab's on those keys goes with them: what it kept before them is the
+        # bar's now, and so is its own part before them - 逐字編及, the bar on 及: 逐字邊)
+        going = {sp for sp in self.overrides if sp[0] + sp[1] > before}
+        self.overrides = {sp: v for sp, v in self.overrides.items() if not sp[0] < before < sp[0] + sp[1]}
+        # (a word of Tab's among them: the pick it had replaced is back first, a pick again)
+        self._forget_replaced(before)
+        self._put_back()
+        going = {sp for sp in self.overrides if sp[0] + sp[1] > before}
+        self.overrides = {sp: v if len(v) == 2 or v[3] not in going else v[:3] + (BAR,)
+                          for sp, v in self.overrides.items()}
+        for a, b, q in list(self.segments):
+            if len(q) == b and a < before:  # (of the word those keys are in, the part before them)
+                self._keep_as_shown(a, q, range(a, min(a + b, before)), BAR)
+
     def _drop_orphans(self):
-        """Kept characters go with the pick that kept them (deleted, or picked over)."""
-        self.overrides = {sp: v for sp, v in self.overrides.items()
-                          if len(v) == 2 or len(self.overrides.get(v[3], ())) == 2}
+        """Kept characters go with the pick that kept them (deleted, or picked over) - unless
+        another pick stands after them still: they are before a pick as ever, and go on with the
+        nearest (搬移失敗了: 拜 picked, then 一 for 移, then 拜 deleted: 搬 stays, 失 is free)."""
+        picks = sorted(sp for sp, v in self.overrides.items() if len(v) == 2)
+        kept = {}
+        for sp, v in self.overrides.items():
+            if len(v) > 2 and v[3] != BAR and len(self.overrides.get(v[3], ())) != 2:
+                after = next((p for p in picks if p[0] >= sp[0] + sp[1]), None)
+                if after is None:
+                    continue
+                v = v[:3] + (after,)
+            kept[sp] = v
+        self.overrides = kept
 
     def _learn_pairs(self, before):
         """A character picked beside a character on its own, the two no word of the dictionary (繪
@@ -2697,13 +2858,14 @@ class Composer:
             first = moved(s, l)
             if first is None:
                 continue
-            if len(v) > 2:  # (kept around a pick: that pick's place moves too)
+            if len(v) > 2 and v[3] != BAR:  # (kept around a pick: that pick's place moves too)
                 by = moved(*v[3])
                 if by is None:
                     continue
                 v = v[:3] + ((by, v[3][1]),)
             kept[(first, l)] = v
         self.overrides = kept
+        self.replaced = {}
         self._refresh()
 
     def _note_code(self, start):
@@ -2897,8 +3059,9 @@ class Composer:
             self._learn_overrides()
             self.user.save()
             self.overrides = saved
-        self.overrides = {(s - b, l): v if len(v) == 2 else v[:3] + ((v[3][0] - b, v[3][1]),)
+        self.overrides = {(s - b, l): v if len(v) == 2 or v[3] == BAR else v[:3] + ((v[3][0] - b, v[3][1]),)
                           for (s, l), v in self.overrides.items() if s >= b}
+        self.replaced = {}
         self._drop_orphans()
         self._learn_corrections(tok.start)  # (what is sent of them, while the marks are where they were)
         self.forced = {i - tok.start for i in self.forced if i >= tok.start}

@@ -529,6 +529,224 @@ class CompletionTest(Base):
         c.key(special="TAB")
         self.assertEqual(c.composition, "電腦" + first)
 
+    def test_next_character_keeps_a_picked_word_it_overlaps(self):
+        # a picked word XY, then Tab adds Z where YZ can only be fixed as one word (匙 alone is
+        # no ㄕˇ of the dictionary, 佛 no ㄈㄨˊ): the pick of X stays (私鑰 + Tab gives 斯鑰匙)
+        c = self.c
+        for readings, word in (("ㄙ ㄧㄠˋ", "私鑰"), ("ㄙㄨㄛˇ ㄧㄠˋ", "鎖鑰"), ("ㄇㄛˊ ㄈㄤˇ", "摹仿")):
+            with self.subTest(word=word):
+                c.reset()
+                for ch in keys(readings):
+                    c.key(ch)
+                c.key(special="HOME")
+                c.key(special="DOWN")
+                for _ in range(c.candidates.index(word)):
+                    c.key(special="DOWN")
+                c.key(special="ENTER")
+                c.key(special="END")
+                self.assertEqual(c.composition, word)
+                hint = c.suggestions[0]
+                c.key(special="TAB")
+                self.assertEqual(c.composition, word + hint)
+        c.reset()
+
+    def test_next_character_twice_keeps_the_picked_word(self):
+        # the second Tab fixes a longer word over the first one's (鑰匙, then 鑰匙圈): what the first
+        # kept of the pick (私) goes on with it (it came out 斯鑰匙圈 - review 2026-11-10)
+        c = self.c
+        c.config.set(long_sentence=False)
+        c.settings_changed()
+        for ch in keys("ㄙ ㄧㄠˋ"):
+            c.key(ch)
+        c.key(special="HOME")
+        c.key(special="DOWN")
+        for _ in range(c.candidates.index("私鑰")):
+            c.key(special="DOWN")
+        c.key(special="ENTER")
+        c.key(special="END")
+        for _ in range(2):
+            hint = c.composition + c.suggestions[0]
+            c.key(special="TAB")
+            self.assertEqual(c.composition, hint)
+        self.assertEqual(c.composition[:2], "私鑰")
+        c.reset()
+
+    def _pick_word(self, readings, word):
+        c = self.c
+        for ch in keys(readings):
+            c.key(ch)
+        c.key(special="HOME")
+        c.key(special="DOWN")
+        for _ in range(c.candidates.index(word)):
+            c.key(special="DOWN")
+        c.key(special="ENTER")
+        c.key(special="END")
+
+    def test_deleting_the_next_character_brings_the_picked_word_back(self):
+        # Tab's word (鑰匙) took the place of the pick (私鑰): deleted, the pick is back as it was
+        # (it came out 斯要; after two Tabs 斯鑰匙 - 2026-11-10 user), and learned when sent
+        c = self.c
+        c.config.set(long_sentence=False)
+        c.settings_changed()
+        c.user.phrases.clear()
+        self._pick_word("ㄙ ㄧㄠˋ", "私鑰")
+        picked = dict(c.overrides)
+        c.key(special="TAB")
+        self.assertEqual(c.composition, "私鑰匙")
+        c.key(special="BACK")
+        self.assertEqual(c.composition, "私鑰")
+        self.assertEqual(c.overrides, picked)
+        c.key(special="TAB")
+        c.key(special="TAB")
+        self.assertEqual(c.composition, "私鑰匙圈")
+        c.key(special="BACK")
+        self.assertEqual(c.composition, "私鑰匙")
+        c.key(special="BACK")
+        self.assertEqual(c.composition, "私鑰")
+        self.assertEqual(c.overrides, picked)
+        c.key(special="ENTER")
+        self.assertEqual(c.user.phrase_count("ㄙ-ㄧㄠˋ", "私鑰"), 1)
+        c.user.phrases.clear()
+        c.reset()
+
+    def _pick_other(self, shown):
+        """↓ at the caret (before the character shown), another character for it."""
+        c = self.c
+        c.key(special="DOWN")
+        other = next(x for x in c.candidates if len(x) == 1 and x != shown)
+        for _ in range(c.candidates.index(other)):
+            c.key(special="DOWN")
+        c.key(special="ENTER")
+        return other
+
+    def test_a_pick_over_the_next_character_brings_back_what_it_leaves(self):
+        # 匙 picked over (another character for it): 鑰匙 is gone, 私鑰 back beside the new pick, a
+        # pick of the user's as before and learned (it was only kept as shown - review 2026-11-10)
+        c = self.c
+        c.config.set(long_sentence=False)
+        c.settings_changed()
+        c.user.phrases.clear()
+        self._pick_word("ㄙ ㄧㄠˋ", "私鑰")
+        c.key(special="TAB")
+        self.assertEqual(c.composition, "私鑰匙")
+        c.key(special="LEFT")
+        other = self._pick_other("匙")
+        self.assertEqual(c.composition, "私鑰" + other)
+        self.assertEqual(len(c.overrides[(0, 2)]), 2)
+        c.key(special="ENTER")
+        self.assertEqual(c.user.phrase_count("ㄙ-ㄧㄠˋ", "私鑰"), 1)
+        c.user.phrases.clear()
+        # after two Tabs, 圈 picked over: the first Tab's 鑰匙 is back, with the 私 it kept
+        self._pick_word("ㄙ ㄧㄠˋ", "私鑰")
+        c.key(special="TAB")
+        c.key(special="TAB")
+        self.assertEqual(c.composition, "私鑰匙圈")
+        c.key(special="LEFT")
+        other = self._pick_other("圈")
+        self.assertEqual(c.composition, "私鑰匙" + other)
+        c.key(special="END")
+        c.key(special="BACK")
+        c.key(special="BACK")
+        self.assertEqual(c.composition, "私鑰")
+        c.user.phrases.clear()
+        c.reset()
+
+    def test_the_next_character_deleted_in_the_middle_brings_the_pick_back_too(self):
+        # Delete before 匙, as Backspace after it: what stands before the edit has not moved. An
+        # edit before the pick: its place has moved, nothing is put back
+        c = self.c
+        c.config.set(long_sentence=False)
+        c.settings_changed()
+        self._pick_word("ㄙ ㄧㄠˋ", "私鑰")
+        picked = dict(c.overrides)
+        c.key(special="TAB")
+        c.key(special="LEFT")
+        c.key(special="DEL")
+        self.assertEqual(c.composition, "私鑰")
+        self.assertEqual(c.overrides, picked)
+        c.reset()
+        # (after two Tabs, 匙 deleted from under the second one's word: the pick the first had
+        # replaced stands before the edit as well - it came out 斯要圈, review 2026-11-10)
+        self._pick_word("ㄙ ㄧㄠˋ", "私鑰")
+        c.key(special="TAB")
+        c.key(special="TAB")
+        self.assertEqual(c.composition, "私鑰匙圈")
+        c.key(special="LEFT")
+        c.key(special="LEFT")
+        c.key(special="DEL")
+        self.assertEqual(c.composition[:2], "私鑰")
+        self.assertEqual(c.overrides.get((0, 2)), picked[(0, 2)])
+        c.reset()
+        # (and the bar on 匙: 私鑰 is the pick again, not only kept as shown)
+        self._pick_word("ㄙ ㄧㄠˋ", "私鑰")
+        c.key(special="TAB")
+        c.key(special="LEFT")
+        self.pick_bar(c.replacements[0])
+        self.assertEqual(c.composition[:2], "私鑰")
+        self.assertEqual(c.overrides.get((0, 2)), picked[(0, 2)])
+        c.reset()
+        self._pick_word("ㄙ ㄧㄠˋ", "私鑰")
+        c.key(special="TAB")
+        c.key(special="HOME")
+        c.key(special="DEL")
+        self.assertEqual(c.overrides, {})
+        self.assertEqual(c.replaced, {})
+        c.reset()
+
+    def test_the_bar_shown_does_not_use_up_what_the_next_character_replaced(self):
+        # the labels of the bar are made on a copy of the composer: it must not share the record
+        # (ㄏㄠˇ fixed as typed, 私鑰 picked, Tab, the caret to ㄏㄠˇ and back, Backspace: 斯要 in
+        # the Python engine only - review 2026-11-10)
+        c = self.c
+        c.config.set(long_sentence=False)
+        c.settings_changed()
+        for ch in keys("ㄏㄠˇ"):
+            c.key(ch)
+        c.key(special="HOME")
+        c.key(special="UP")
+        c.key(special="ENTER")
+        c.key(special="END")
+        for ch in keys("ㄙ ㄧㄠˋ"):
+            c.key(ch)
+        c.key(special="LEFT")
+        c.key(special="LEFT")
+        c.key(special="DOWN")
+        for _ in range(c.candidates.index("私鑰")):
+            c.key(special="DOWN")
+        c.key(special="ENTER")
+        c.key(special="END")
+        c.key(special="TAB")
+        self.assertTrue(c.composition.endswith("私鑰匙"))
+        c.key(special="HOME")
+        c.key(special="END")
+        c.key(special="BACK")
+        self.assertTrue(c.composition.endswith("私鑰"), c.composition)
+        c.reset()
+
+    def test_next_character_keeps_what_the_picked_word_kept(self):
+        # a pick keeps what is before it (PickKeepsBeforeTest); Tab's word fixed over that pick takes
+        # them over (逐字編輯 + 私鑰 picked, Tab: 逐字編輯 was converted again - review 2026-11-10)
+        c = self.c
+        c.config.set(long_sentence=False)
+        c.settings_changed()
+        for ch in keys("ㄅㄨˋ ㄋㄥˊ ㄌㄞˊ ㄙ ㄧㄠˋ"):
+            c.key(ch)
+        c.key(special="LEFT")
+        c.key(special="LEFT")
+        c.key(special="DOWN")
+        for _ in range(c.candidates.index("私鑰")):
+            c.key(special="DOWN")
+        c.key(special="ENTER")
+        self.assertEqual(len(c.overrides[(2, 1)]), 4)  # kept by the pick of 私鑰
+        # (as if 萊 had been shown there when 私鑰 was picked: converted again it is 來)
+        c.overrides[(2, 1)] = (("ㄌㄞˊ",), "萊", composer.KEPT, (3, 2))
+        c._refresh()
+        c.key(special="END")
+        self.assertEqual(c.composition, "不能萊私鑰")
+        c.key(special="TAB")
+        self.assertEqual(c.composition[:5], "不能萊私鑰")
+        c.reset()
+
     def test_tab_many_times_in_a_row(self):
         # used to crash around the 3rd/4th Tab: a pinned character carries a +1000
         # bonus and the bigram mix computed 10**1000 (OverflowError)
@@ -1302,6 +1520,293 @@ class ContextTest(Base):
         # a pair the corpus counted, and no word made of the two, as before
         self.assertEqual(self.type(keys("ㄧ ㄍㄜ˙")), "一個")
         self.assertEqual(self.type(keys("ㄅㄢˋ")), "半")
+
+    def _sent_then_typed(self, on):
+        """會不會去改 sent, then 已經選好的字 typed syllable by syllable: what is shown after each."""
+        self.c.config.set(long_sentence=on)
+        self.c.settings_changed()
+        self.c.reset()
+        self.assertEqual(self.type(keys("ㄏㄨㄟˋ ㄅㄨˋ ㄏㄨㄟˋ ㄑㄩˋ ㄍㄞˇ")), "會不會去改")
+        shown = []
+        for syllables in ("ㄧˇ ㄐㄧㄥ ㄒㄩㄢˇ", "ㄏㄠˇ", "ㄉㄜ˙", "ㄗˋ"):
+            self.type(keys(syllables), enter=False)
+            shown.append(self.c.composition)
+        return shown
+
+    def test_one_character_sent_does_not_split_the_next_word(self):
+        # 改 sent, then 已經選: 改以 is a word of the dictionary, and its share wrote 以｜精選
+        # (2026-11-10 user). A phrase of one character sent last gets no share.
+        for on in (False, True):
+            with self.subTest(long_sentence=on):
+                self.assertEqual(self._sent_then_typed(on), ["已經選", "已經選好", "已經選好的", "已經選好的自"])
+
+    def test_pick_after_one_character_sent_keeps_the_words_before(self):
+        for on in (False, True):
+            with self.subTest(long_sentence=on):
+                self._sent_then_typed(on)
+                c = self.c
+                c.key(special="DOWN")
+                for _ in range(c.candidates.index("字")):
+                    c.key(special="DOWN")
+                c.key(special="ENTER")
+                self.assertEqual(c.composition, "已經選好的字")
+
+    def test_one_character_sent_still_counts_a_counted_pair(self):
+        bigram, u = self.c.bigram, -3.0
+        # no share after one character, with it after two
+        self.assertEqual(composer.context_transition(bigram, "改", "以", u), composer.transition(bigram, "改", "以", u))
+        self.assertGreater(composer.context_transition(bigram, "怎麼", "辦", u),
+                           composer.transition(bigram, "怎麼", "辦", u))
+        # a pair the corpus counted still counts
+        counted = "成為"
+        self.assertIsNotNone(bigram.logp("改", counted))
+        self.assertEqual(composer.context_transition(bigram, "改", counted, u),
+                         composer.transition(bigram, "改", counted, u))
+        self.assertGreater(composer.context_transition(bigram, "改", counted, u), composer.UNSEEN_PAIR + u)
+
+
+class PickKeepsBeforeTest(Base):
+    """A pick from the candidates fixes what was shown before it too: the user chose a character
+    looking at them (2026-11-10 user: 已經選好的自, 字 picked, came out 以精選好的字). What comes
+    after the pick is converted as ever; what was kept goes with the pick and is nothing learned."""
+
+    SENTENCES = [  # typed, the character picked for the last syllable
+        ("ㄓㄨˊ ㄗˋ ㄅㄧㄢ ㄐㄧˊ", "逐字編輯", "及"),   # came out 築自編及
+        ("ㄌㄧㄤˇ ㄧˊ ㄅㄨˊ ㄏㄨㄟˋ", "兩儀不會", "慧"),  # 兩一不慧
+        ("ㄧㄠˋ ㄗㄞˋ ㄍㄞˇ ㄏㄨㄟˊ", "要再改回", "迴"),  # 要在改迴
+        ("ㄅㄢ ㄧˊ ㄕ ㄅㄞˋ", "搬移失敗", "拜"),         # 班遺失拜
+    ]
+
+    def setUp(self):
+        super().setUp()
+        self.c.user.phrases.clear()
+        self.c.user.phrase_used.clear()
+
+    def mode(self, on):
+        self.c.config.set(long_sentence=on)
+        self.c.settings_changed()
+        self.c.reset()
+
+    def typed(self, zhuyin):
+        for ch in keys(zhuyin):
+            self.c.key(ch)
+        return self.c.composition
+
+    def pick(self, ch):
+        """↓ at the caret, then the candidate ch."""
+        c = self.c
+        c.key(special="DOWN")
+        for _ in range(c.candidates.index(ch)):
+            c.key(special="DOWN")
+        c.key(special="ENTER")
+
+    def test_pick_keeps_the_words_before(self):
+        for on in (False, True):
+            self.mode(on)
+            for zhuyin, text, ch in self.SENTENCES:
+                with self.subTest(text=text):
+                    self.c.reset()
+                    before = self.typed(zhuyin)
+                    if not on:
+                        self.assertEqual(before, text)
+                    self.pick(ch)
+                    self.assertEqual(self.c.composition, before[:-1] + ch)
+
+    def test_what_makes_a_word_with_the_pick_still_comes(self):
+        # (as before: 公 + 勢 is 攻勢, 號 + 事 is 好事 - the user's call 2026-11-10; what stands before
+        # that word is kept)
+        for on in (False, True):
+            with self.subTest(long_sentence=on):
+                self.mode(on)
+                before = self.typed("ㄅㄢˇ ㄅㄣˇ ㄏㄠˋ ㄕˋ")
+                self.pick("事")
+                self.assertEqual(self.c.composition, before[:2] + "好事")
+                self.assertEqual(len(self.c.overrides[(0, 1)]), 4)  # 版 is kept
+
+    def test_a_word_read_with_another_tone_still_comes(self):
+        # 下載 is ㄒㄧㄚˋ ㄗㄞˇ in the dictionary: typed ㄒㄧㄚˋ ㄗㄞˋ after 在 was sent, 長句選字加強 shows
+        # 夏在; 載 picked makes 下載, learned as ever. And only that word: 逐字鐸之, 汁 picked, is 多汁
+        # (it came out 奪汁, converted again once 逐字 was kept - review 2026-11-10)
+        for on in (False, True):
+            with self.subTest(long_sentence=on):
+                self.mode(on)
+                c = self.c
+                c.user.phrases.clear()
+                self.typed("ㄒㄧㄚˋ ㄗㄞˋ")
+                c.key(special="ENTER")
+                self.typed("ㄒㄧㄚˋ ㄗㄞˋ")
+                self.pick("載")
+                self.assertEqual(c.composition, "下載")
+                c.key(special="ENTER")
+                self.assertEqual(c.user.phrase_count("ㄒㄧㄚˋ-ㄗㄞˋ", "下載"), 1)
+                c.reset()
+                c.user.phrases.clear()
+                before = self.typed("ㄓㄨˊ ㄗˋ ㄉㄨㄛˊ ㄓ")
+                self.pick("汁")
+                self.assertEqual(c.composition, before[:2] + "多汁")
+                c.key(special="ENTER")
+                self.assertEqual(c.user.phrase_count("ㄉㄨㄛˊ-ㄓ", "多汁"), 1)
+                c.user.phrases.clear()
+
+    def test_a_word_the_engine_cannot_fix_is_not_kept_whole(self):
+        # 會勘 shown with 勘 of the personal dictionary put in (no word of the dictionary, and 會 is
+        # no ㄏㄨㄟ alone): kept as a word there was no way to write the run, and the keys came out
+        # as zhuyin (review 2026-11-10)
+        saved = self.c.user.custom
+        self.c.user.custom = {"ㄎㄢˋ": ["勘"]}
+        try:
+            for on in (False, True):
+                with self.subTest(long_sentence=on):
+                    self.mode(on)
+                    before = self.typed("ㄏㄨㄟ ㄎㄢˋ ㄉㄜ˙ ㄗˋ")
+                    self.assertEqual(len(before), 4)
+                    self.pick("字" if before[-1] != "字" else "自")
+                    self.assertEqual(len(self.c.composition), 4)
+                    self.assertEqual(self.c.composition[1:3], before[1:3])
+        finally:
+            self.c.user.custom = saved
+
+    def test_an_earlier_pick_takes_over_what_a_later_one_kept(self):
+        # 搬移失敗了: 拜 picked (搬移失 kept), then 一 for 移, then 拜 deleted: 搬 is before a pick still
+        # (it came out 班一失了 - review 2026-11-10)
+        for on in (False, True):
+            with self.subTest(long_sentence=on):
+                self.mode(on)
+                c = self.c
+                before = self.typed("ㄅㄢ ㄧˊ ㄕ ㄅㄞˋ ㄌㄜ˙")
+                c.key(special="LEFT")
+                c.key(special="LEFT")
+                self.pick("拜")
+                c.key(special="HOME")
+                c.key(special="RIGHT")
+                self.pick("一")
+                self.assertEqual(c.composition, before[0] + "一" + before[2] + "拜" + before[4])
+                c.key(special="HOME")
+                for _ in range(4):
+                    c.key(special="RIGHT")
+                c.key(special="BACK")
+                self.assertEqual(c.composition[:2], before[0] + "一")
+                self.assertEqual(c.overrides[(0, 1)][3], (1, 1))
+                self.assertNotIn((2, 1), c.overrides)  # (失 is after the pick left: free again)
+
+    def test_a_pick_from_the_bar_keeps_what_is_before(self):
+        # the bar above the text says how keys are read (no as zhuyin, a syllable cut another way):
+        # what is shown before them stays too (搬移師no, ㄙㄟ picked: 班遺失㩙 - review 2026-11-10)
+        for on in (False, True):
+            with self.subTest(long_sentence=on):
+                self.mode(on)
+                c = self.c
+                n = 0
+                while True:
+                    c.reset()
+                    before = self.typed("ㄅㄢ ㄧˊ ㄕ no ")
+                    c.key(special="LEFT")
+                    c.key(special="LEFT")
+                    c.key(special="LEFT")
+                    if n >= len(c.replacements):
+                        break
+                    label = c.replacements[n]
+                    self.pick_bar(label)
+                    self.assertEqual(c.composition[:3], before[:3], label)
+                    n += 1
+                self.assertGreater(n, 0)
+                # (and the part before them of the word they were in: the bar on 輯 of 編輯 - 逐字邊)
+                n = 0
+                while True:
+                    c.reset()
+                    before = self.typed("ㄓㄨˊ ㄗˋ ㄅㄧㄢ ㄐㄧˊ")
+                    c.key(special="LEFT")
+                    if n >= len(c.replacements):
+                        break
+                    label = c.replacements[n]
+                    self.pick_bar(label)
+                    self.assertEqual(c.composition[:3], before[:3], label)
+                    n += 1
+                self.assertGreater(n, 0)
+                # (and on a character picked, which kept what is before it: the pick goes, they stay)
+                n = 0
+                while True:
+                    c.reset()
+                    self.typed("ㄓㄨˊ ㄗˋ ㄅㄧㄢ ㄐㄧˊ")
+                    self.pick("及")
+                    before = c.composition
+                    c.key(special="LEFT")
+                    if n >= len(c.replacements):
+                        break
+                    label = c.replacements[n]
+                    self.pick_bar(label)
+                    self.assertEqual(c.composition[:3], before[:3], label)
+                    n += 1
+                self.assertGreater(n, 0)
+
+    def test_after_the_pick_is_not_kept(self):
+        for on in (False, True):
+            with self.subTest(long_sentence=on):
+                self.mode(on)
+                c = self.c
+                self.assertEqual(self.typed("ㄨㄛˇ ㄗㄞˋ ㄎㄢˋ ㄎㄢˋ ㄓㄜˋ ㄍㄜ˙")[:1], "我")
+                for _ in range(5):
+                    c.key(special="LEFT")
+                self.pick("在" if c.composition[1] != "在" else "再")
+                picked = c.composition[1]
+                self.assertEqual(sorted(c.overrides), [(0, 1), (1, 1)])
+                self.assertEqual(len(c.overrides[(0, 1)]), 4)  # kept, not picked
+                c.key(special="END")
+                self.typed("ㄏㄣˇ ㄏㄠˇ")
+                self.assertEqual(c.composition[:2], "我" + picked)
+
+    def test_deleting_the_pick_frees_what_it_kept(self):
+        for on in (False, True):
+            with self.subTest(long_sentence=on):
+                self.mode(on)
+                c = self.c
+                self.typed(self.SENTENCES[0][0])
+                self.pick("及")
+                self.assertEqual(len(c.overrides), 4)
+                c.key(special="BACK")
+                self.assertEqual(c.overrides, {})
+
+    def test_a_kept_character_can_be_picked_again(self):
+        for on in (False, True):
+            with self.subTest(long_sentence=on):
+                self.mode(on)
+                c = self.c
+                self.typed(self.SENTENCES[0][0])
+                self.pick("及")
+                first = c.composition[0]
+                c.key(special="HOME")
+                c.key(special="DOWN")
+                other = next(x for x in c.candidates if len(x) == 1 and x != first)
+                c.key(special="ESC")
+                self.pick(other)
+                self.assertEqual(c.composition[0], other)
+                self.assertEqual(len(c.overrides[(0, 1)]), 2)  # a pick of the user's now
+                self.assertEqual(c.composition[-1], "及")
+
+    def test_kept_across_english(self):
+        for on in (False, True):
+            with self.subTest(long_sentence=on):
+                self.mode(on)
+                c = self.c
+                before = self.typed("ㄓㄨˊ ㄗˋ code ㄅㄧㄢ ㄐㄧˊ")
+                self.assertIn("code", before)
+                self.pick("及")
+                self.assertEqual(c.composition, before[:-1] + "及")
+                self.assertTrue({(0, 1), (1, 1)} <= set(c.overrides) or (0, 2) in c.overrides)
+
+    def test_kept_characters_are_not_learned(self):
+        for on in (False, True):
+            with self.subTest(long_sentence=on):
+                self.mode(on)
+                c = self.c
+                c.user.phrases.clear()
+                before = self.typed(self.SENTENCES[0][0])
+                self.pick("及")
+                c.key(special="ENTER")
+                self.assertEqual(c.user.phrase_count("ㄐㄧˊ", "及"), 1)
+                for reading, ch in zip(("ㄓㄨˊ", "ㄗˋ", "ㄅㄧㄢ"), before):
+                    self.assertEqual(c.user.phrase_count(reading, ch), 0)
+                self.assertEqual(sum(len(v) for v in c.user.phrases.values()), 1)
 
 
 class KnownHardTest(Base):

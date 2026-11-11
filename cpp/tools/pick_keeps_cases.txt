@@ -1,0 +1,13 @@
+# End-to-end checks of a pick keeping what is shown before it (one engine for all lines, so what
+# is picked carries over):
+#   powershell -ExecutionPolicy Bypass -File cpp\tools\e2e.ps1 cpp\tools\pick_keeps_cases.txt
+# another character picked for the last syllable: the words before stay (they came out 兩一不慧,
+# 築自編及, 要在改迴, 班遺失拜)
+xu;3u61j6cjo4{DOWN}{DOWN}{ENTER}{ENTER} => 兩儀不慧
+5j6y41u0 ru6{DOWN}{ENTER}{ENTER} => 逐字編及
+ul4y94e93cjo6{DOWN}{DOWN}{ENTER}{ENTER} => 要再改迴
+10 u6g 194{DOWN}{ENTER}{ENTER} => 搬移失拜
+# what makes a word with the pick still comes as that word (號 + 事: 好事); 版本 before it stays
+1031p3cl4g4{DOWN}{DOWN}{ENTER}{ENTER} => 版本好事
+# the reported sentence: 會不會去改 sent, 已經選好的自 typed, 字 picked (it came out 以精選好的字)
+cjo41j4cjo4fm4e93{ENTER}u3ru/ vm03cl32k7y4{DOWN}{DOWN}{ENTER}{ENTER} => 會不會去改已經選好的字

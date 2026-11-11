@@ -612,10 +612,13 @@ double transition(const BigramModel* bigram, const std::optional<ustr>& prev, co
 
 // transition() from the phrase sent last (prev_word) to the first phrase of the run: a pair that
 // makes a word of the dictionary was never counted as a pair (the corpus was cut into words), so
-// it counts as count(怎麼辦) / count(怎麼) when that is more (see engine/composer.py)
+// it counts as count(怎麼辦) / count(怎麼) when that is more (see engine/composer.py). Not after a
+// phrase of one character: it ends what was sent far more often than it starts a word (改 sent,
+// then 已經選: 改以 is a word, and its share wrote 以｜精選)
 double context_transition(const BigramModel* bigram, const std::optional<ustr>& prev, const ustr& phrase,
                           double unigram) {
     if (!bigram || !prev || prev->empty()) return unigram;
+    if (prev->size() < 2) return transition(bigram, prev, phrase, unigram);
     auto b = bigram->logp(*prev, phrase);
     if (static_cast<int>(prev->size() + phrase.size()) <= MAX_PHRASE_LEN) {
         auto whole = bigram->unigram(*prev + phrase);
@@ -1742,6 +1745,7 @@ void Composer::reset() {
 void Composer::clear_input() {
     raw.clear();
     overrides_.clear();
+    replaced_.clear();
     forced_.clear();
     chinese_.clear();
     breaks_.clear();
@@ -1858,6 +1862,7 @@ void Composer::refresh() {
         if (rd == v.first) valid[span] = v;
     }
     overrides_ = std::move(valid);
+    put_back();
     drop_orphans();
     segments_ = convert_all();
     render();
@@ -2034,6 +2039,7 @@ void Composer::splice(int p, int q, const std::string& text) {
     for (auto& [sp, v] : overrides_)
         if (sp.first + sp.second <= before) kept[sp] = v;
     overrides_ = std::move(kept);
+    forget_replaced(before);
     Fixed fixed;
     for (auto& [a, v] : fixed_) {
         if (v.first <= p) fixed[a] = v;
@@ -2296,11 +2302,49 @@ void Composer::pin(int start, const std::vector<ustr>& rds, const std::vector<us
     for (auto& c : chars) phrase += c;
     if (way == PinWay::Phrase) {
         int end = start + static_cast<int>(rds.size());
-        Overrides kept;
+        // a phrase pin replaces every pin it overlaps; what a pick of the user's has outside it stays,
+        // kept with this pin (私鑰 picked, Tab adds 匙 as 鑰匙: 私 was guessed again, 斯鑰匙), and so
+        // does what a pick it replaces had kept (before a pick, or of an earlier Tab's word)
+        std::vector<std::pair<std::pair<int, int>, Pin>> cut;
+        std::set<std::pair<int, int>> gone;
         for (auto& [sp, v] : overrides_)
-            if (sp.first + sp.second <= start || sp.first >= end) kept[sp] = v;
+            if (!(sp.first + sp.second <= start || sp.first >= end)) gone.insert(sp);
+        {  // (what it takes the place of comes back when this pin goes: put_back)
+            Replaced rec;
+            for (auto& [sp, v] : overrides_)
+                if (gone.count(sp) || (v.kept && gone.count(v.by))) rec.was[sp] = v;
+            for (auto& sp : gone)
+                if (auto it = replaced_.find(sp); it != replaced_.end()) {
+                    rec.earlier[sp] = std::move(it->second);
+                    replaced_.erase(it);
+                }
+            if (!rec.was.empty()) replaced_[{start, static_cast<int>(rds.size())}] = std::move(rec);
+        }
+        Overrides kept;
+        for (auto& [sp, v] : overrides_) {
+            if (!gone.count(sp)) {
+                Pin pin = v;
+                if (pin.kept && gone.count(pin.by)) pin.by = {start, static_cast<int>(rds.size())};
+                kept[sp] = pin;
+            } else if (!v.kept && (sp.first < start || sp.first + sp.second > end)) {
+                cut.emplace_back(sp, v);
+            }
+        }
         kept[{start, static_cast<int>(rds.size())}] = {rds, phrase};
         overrides_ = std::move(kept);
+        for (auto& [sp, v] : cut) {
+            if (static_cast<int>(v.second.size()) != sp.second) continue;
+            for (int k = sp.first; k < sp.first + sp.second; ++k) {
+                if (start <= k && k < end) continue;
+                ustr ch(1, v.second[k - sp.first]);
+                if (!lexicon_.has({v.first[k - sp.first]}, ch)) continue;
+                bool covered = false;
+                for (auto& [span, _] : overrides_)
+                    if (span.first <= k && k < span.first + span.second) covered = true;
+                if (!covered)
+                    overrides_[{k, 1}] = Pin{{v.first[k - sp.first]}, ch, true, {start, static_cast<int>(rds.size())}};
+            }
+        }
     }
 }
 
@@ -2987,6 +3031,7 @@ void Composer::pick_syllable(const Action& action) {
     // keys c..j are one syllable, read with the rest again (頁 + 面 can still be 頁面);
     // what is before stays as typed if the caret was inside a word
     int c = action.start, j = action.end;
+    keep_before_bar(action.force >= 0 ? action.force : c);
     int before = 0;
     for (auto& t : tokens)
         if (t.kind == Kind::Zh && t.start < c) ++before;
@@ -2994,6 +3039,7 @@ void Composer::pick_syllable(const Action& action) {
     for (auto& [sp, v] : overrides_)
         if (sp.first + sp.second <= before) kept[sp] = v;
     overrides_ = std::move(kept);
+    forget_replaced(before);
     for (int x = c; x < j; ++x) {
         forced_.erase(x);
         literal_.erase(x);
@@ -3027,6 +3073,7 @@ void Composer::pick_replacement(int i) {
     const Action action = repl_actions_[i];
     repl_index = -1;
     if (action.type == "fix") {
+        keep_before_bar(action.start);
         learn_zhuyin_text(action.text);
         int start = action.start, end = action.end;
         note_as_typed(start, end);
@@ -3043,6 +3090,7 @@ void Composer::pick_replacement(int i) {
         for (auto& [sp, v] : overrides_)
             if (sp.first + sp.second <= before) kept[sp] = v;
         overrides_ = std::move(kept);
+        forget_replaced(before);
         for (auto* marks : {&forced_, &chinese_, &literal_})
             for (int x = start; x < end; ++x) marks->erase(x);
         Fixed fixed;
@@ -3059,6 +3107,7 @@ void Composer::pick_replacement(int i) {
         return;
     }
     if (action.type == "unfix") {
+        keep_before_bar(action.start);
         int end = action.start;
         if (auto it = fixed_.find(action.start); it != fixed_.end()) end = it->second.first;
         fixed_.erase(action.start);
@@ -3171,6 +3220,7 @@ bool Composer::key_symbols(std::optional<char32_t> ch, const std::string& specia
 void Composer::pick(int i, bool from_bar) {
     const Action action = cand_actions_[i];
     std::optional<std::pair<int, int>> picked;  // (first syllable, count) of a phrase picked from the list
+    const std::vector<Segment> shown_then = segments_;  // when the user picked: what comes before stays (keep_before)
     if (action.type == "phrase") {
         int s = action.s, l = action.l;
         std::map<int, char32_t> shown;
@@ -3188,8 +3238,10 @@ void Composer::pick(int i, bool from_bar) {
                     kept[sp] = v;
             kept[{s, l}] = {std::vector<ustr>(readings.begin() + s, readings.begin() + s + l), action.text};
             overrides_ = std::move(kept);
+            put_back();  // (before the pick keeps what is around it: a pick again, not kept)
             drop_orphans();
             keep_rest(s, l);
+            keep_before(s, l, shown_then, false);
         }
         picked = {s, l};
     } else if (action.type == "chinese") {
@@ -3212,6 +3264,7 @@ void Composer::pick(int i, bool from_bar) {
         refresh();
         overrides_[{action.first, static_cast<int>(action.readings.size())}] = {action.readings, action.text};
         picked = {action.first, static_cast<int>(action.readings.size())};
+        keep_before(picked->first, picked->second, shown_then, false);
     } else if (action.type == "tone") {
         // another tone of a syllable 注音自動校正 put a tone in: the pick, on that reading
         int s = action.s;
@@ -3223,8 +3276,10 @@ void Composer::pick(int i, bool from_bar) {
         kept[{s, 1}] = {std::vector<ustr>{action.reading}, action.text};
         overrides_ = std::move(kept);
         readings[s] = action.reading;  // (what the rest makes a word with: 有形, not 有行; refresh keeps it)
+        put_back();
         drop_orphans();
         keep_rest(s, 1);
+        keep_before(s, 1, shown_then, false);
         picked = {s, 1};
     } else if (action.type == "exact") {
         note_as_typed(action.start);
@@ -3233,6 +3288,7 @@ void Composer::pick(int i, bool from_bar) {
         refresh();
         overrides_[{action.s, 1}] = {std::vector<ustr>{readings[action.s]}, action.text};
         picked = {action.s, 1};
+        keep_before(action.s, 1, shown_then, false);
     } else if (action.type == "plain") {
         // 代碼記憶 left out for these keys: read as before it learned them (mp3: 允), then this character
         auto before = picks_by_key();
@@ -3247,6 +3303,7 @@ void Composer::pick(int i, bool from_bar) {
             if (s < static_cast<int>(readings.size())) {
                 overrides_[{s, 1}] = {std::vector<ustr>{readings[s]}, action.text};
                 picked = {s, 1};
+                keep_before(s, 1, shown_then, false);
             }
         }
     } else if (action.type == "taken") {
@@ -3267,6 +3324,7 @@ void Composer::pick(int i, bool from_bar) {
             if (t.kind == Kind::Zh && t.start < start) ++s;
         overrides_[{s, 1}] = {std::vector<ustr>{action.reading}, action.text};
         picked = {s, 1};
+        keep_before(s, 1, shown_then, false);
     } else if (action.type == "syllable") {
         candidates.clear();
         cand_actions_.clear();
@@ -3294,6 +3352,7 @@ void Composer::pick(int i, bool from_bar) {
         commit = before + action.text;
         return;
     } else if (action.type == "raw") {
+        keep_before_bar(action.start);
         if (!note_code(action.start)) note_as_typed(action.start);
         taken_.erase(action.start);
         forced_.insert(action.start);
@@ -3305,6 +3364,10 @@ void Composer::pick(int i, bool from_bar) {
     candidates.clear();
     cand_actions_.clear();
     refresh();
+    if (picked) {
+        auto it = overrides_.find(*picked);
+        if (it != overrides_.end() && !it->second.kept) keep_before(picked->first, picked->second, segments_, true);
+    }
     if (picked && caret_ && !from_bar) {
         // the caret goes on past the word just changed (實作|頁面), like the ASUS IME
         std::vector<const Token*> zh;
@@ -3366,11 +3429,202 @@ void Composer::keep_rest(int s, int l) {
     }
 }
 
+namespace {
+// what a record holds from syllable `before` on is forgotten: those places move
+Replaced cut_record(const Replaced& record, int before) {
+    Replaced out;
+    std::set<std::pair<int, int>> gone;
+    for (auto& [sp, v] : record.was) {
+        if (sp.first + sp.second <= before) out.was[sp] = v;
+        else gone.insert(sp);
+    }
+    for (auto& [sp, r] : record.earlier)
+        if (out.was.count(sp)) out.earlier[sp] = cut_record(r, before);
+    for (auto& sp : gone) {  // (in the order of their places)
+        auto it = record.earlier.find(sp);
+        if (it == record.earlier.end()) continue;
+        // an earlier Tab's word is cut: what it had replaced in turn takes its place here, and what
+        // it kept goes (私鑰匙圈, 匙 deleted: 私鑰 was two records down)
+        Replaced lower = cut_record(it->second, before);
+        Overrides left;
+        for (auto& [k, v] : out.was)
+            if (!v.kept || v.by != sp) left[k] = v;
+        out.was = std::move(left);
+        for (auto& [k, v] : lower.was) out.was[k] = v;
+        for (auto& [k, r] : lower.earlier) out.earlier[k] = r;
+    }
+    std::map<std::pair<int, int>, Replaced> held;
+    for (auto& [sp, r] : out.earlier)
+        if (out.was.count(sp)) held[sp] = r;
+    out.earlier = std::move(held);
+    return out;
+}
+}  // namespace
+
+void Composer::forget_replaced(int before) {
+    // an edit from syllable `before` on: what stands before it can still come back (私鑰匙, Delete
+    // before 匙: 私鑰, as Backspace after it). See engine/composer.py.
+    std::map<std::pair<int, int>, Replaced> left;
+    for (auto& [span, record] : replaced_) {
+        Replaced r = cut_record(record, before);
+        if (!r.was.empty()) left[span] = std::move(r);
+    }
+    replaced_ = std::move(left);
+}
+
+void Composer::put_back() {
+    // a word Tab fixed over a pick (私鑰 picked, Tab: 鑰匙) is gone - its character deleted, or picked
+    // over: the pick is back as it was (it was guessed again: 斯要). What that word kept goes with it;
+    // what it took the place of comes back where the syllables are still those and nothing else holds
+    // them, the words of earlier Tabs with what they replaced in turn. See engine/composer.py.
+    std::vector<std::pair<int, int>> spans;
+    for (auto& [span, _] : replaced_) {
+        auto it = overrides_.find(span);
+        if (it == overrides_.end() || it->second.kept) spans.push_back(span);
+    }
+    for (auto& span : spans) {
+        Replaced rec = std::move(replaced_[span]);
+        replaced_.erase(span);
+        Overrides kept;
+        for (auto& [sp, v] : overrides_)
+            if (!v.kept || v.by != span) kept[sp] = v;
+        overrides_ = std::move(kept);
+        for (auto& [sp, v] : rec.was) {
+            int a = sp.first, b = sp.second;
+            if (a + b > static_cast<int>(readings.size())) continue;
+            if (std::vector<ustr>(readings.begin() + a, readings.begin() + a + b) != v.first) continue;
+            bool held = false;
+            for (auto& [x, _] : overrides_)
+                if (x.first < a + b && a < x.first + x.second) held = true;
+            if (held) continue;
+            overrides_[sp] = v;
+            if (auto it = rec.earlier.find(sp); it != rec.earlier.end()) replaced_[sp] = std::move(it->second);
+        }
+    }
+}
+
+void Composer::keep_before(int s, int l, const std::vector<Segment>& shown, bool own) {
+    // a pick fixes what was shown before it as well (shown: the segments then): the user chose it
+    // looking at them, and converting again around the pick changed them (已經選好的自, 字 picked:
+    // 以精選好的字). Kept like the rest of a word a pick broke (keep_rest). What makes a word with
+    // the pick comes as that word (夏在, 載 picked: 下載) and is kept once that is settled (own).
+    // See engine/composer.py.
+    std::set<int> in_word;
+    if (!own) {
+        auto now = convert_all();
+        std::map<int, char32_t> chars;
+        for (auto& seg : now) {
+            if (seg.length > 1 && seg.start < s + l && s < seg.start + seg.length)
+                for (int k = seg.start; k < seg.start + seg.length; ++k) in_word.insert(k);
+            if (static_cast<int>(seg.phrase.size()) == seg.length)
+                for (int k = 0; k < seg.length; ++k) chars[seg.start + k] = seg.phrase[k];
+        }
+        // (and a word the dictionary reads with another tone: ㄒㄧㄚˋ ㄗㄞˋ, 載 picked, is 下載. Kept as
+        // that word here: 鐸之, 汁 picked, is 多汁, not 奪汁 guessed again)
+        for (auto [a, b] : runs_)
+            for (int x = a; x < std::min(s, b); ++x)
+                for (int e = std::max(x + 2, s + l); e <= std::min(b, x + MAX_PHRASE_LEN); ++e) {
+                    ustr text;
+                    for (int k = x; k < e; ++k)
+                        if (auto it = chars.find(k); it != chars.end()) text += it->second;
+                    if (static_cast<int>(text.size()) != e - x) continue;
+                    if (!lexicon_.reads_with_other_tones(
+                            std::vector<ustr>(readings.begin() + x, readings.begin() + e), text))
+                        continue;
+                    for (int k = x; k < s; ++k) {
+                        bool covered = false;
+                        for (auto& [span, _] : overrides_)
+                            if (span.first <= k && k < span.first + span.second) covered = true;
+                        ustr ch(1, chars[k]);
+                        if (!covered && lexicon_.has({readings[k]}, ch))
+                            overrides_[{k, 1}] = Pin{{readings[k]}, ch, true, {s, l}};
+                    }
+                }
+    }
+    for (auto& seg : shown) {
+        int a = seg.start, b = seg.length;
+        if (static_cast<int>(seg.phrase.size()) != b || a >= s || (a + b > s && !own)) continue;
+        std::vector<int> where;
+        for (int k = a; k < std::min(a + b, s); ++k)
+            if (!in_word.count(k)) where.push_back(k);
+        keep_as_shown(a, seg.phrase, where, {s, l});
+    }
+}
+
+void Composer::keep_as_shown(int a, const ustr& q, const std::vector<int>& where, std::pair<int, int> by) {
+    // each character alone where the dictionary has them all so; else the whole word, if the search
+    // can write it there (a candidate of its syllables: not 會勘 with 勘 of the personal dictionary
+    // put in by repick - the keys came out as zhuyin); else the characters that can be kept alone
+    int b = static_cast<int>(q.size());
+    std::vector<int> free, alone;
+    for (int k : where) {
+        bool covered = false;
+        for (auto& [span, _] : overrides_)
+            if (span.first <= k && k < span.first + span.second) covered = true;
+        if (!covered) free.push_back(k);
+    }
+    if (free.empty()) return;
+    for (int k : free)
+        if (lexicon_.has({readings[k]}, ustr(1, q[k - a]))) alone.push_back(k);
+    if (alone.size() < free.size() && static_cast<int>(free.size()) == b && b > 1) {
+        std::vector<ustr> rds(readings.begin() + a, readings.begin() + a + b);
+        for (auto& [p, _] : phrase_candidates(rds, lexicon_, &user, true))
+            if (p == q) {
+                overrides_[{a, b}] = Pin{rds, q, true, by};
+                return;
+            }
+    }
+    for (int k : alone) overrides_[{k, 1}] = Pin{{readings[k]}, ustr(1, q[k - a]), true, by};
+}
+
+void Composer::keep_before_bar(int start) {
+    // a pick from the bar above the text (how the keys from `start` are read): what is shown before
+    // them stays, as before a pick from the candidates. Called before the keys are read again.
+    int before = 0;
+    for (auto& t : tokens)
+        if (t.kind == Kind::Zh && t.start < start) ++before;
+    {  // (a pick or a word of Tab's on those keys goes with them: what it kept before them is the
+       // bar's now, and so is its own part before them - 逐字編及, the bar on 及: 逐字邊)
+        Overrides kept;
+        for (auto& [sp, v] : overrides_)
+            if (!(sp.first < before && before < sp.first + sp.second)) kept[sp] = v;
+        overrides_ = std::move(kept);
+        // (a word of Tab's among them: the pick it had replaced is back first, a pick again)
+        forget_replaced(before);
+        put_back();
+        std::set<std::pair<int, int>> going;
+        for (auto& [sp, _] : overrides_)
+            if (sp.first + sp.second > before) going.insert(sp);
+        for (auto& [sp, v] : overrides_)
+            if (v.kept && going.count(v.by)) v.by = BAR;
+    }
+    const std::vector<Segment> shown = segments_;
+    for (auto& seg : shown) {
+        int a = seg.start, b = seg.length;
+        if (static_cast<int>(seg.phrase.size()) != b || a >= before) continue;
+        std::vector<int> where;  // (of the word those keys are in, the part before them)
+        for (int k = a; k < std::min(a + b, before); ++k) where.push_back(k);
+        keep_as_shown(a, seg.phrase, where, BAR);
+    }
+}
+
 void Composer::drop_orphans() {
+    // kept characters go with the pick that kept them - unless another pick stands after them
+    // still: they go on with the nearest (see engine/composer.py)
     Overrides kept;
     for (auto& [span, v] : overrides_) {
         auto by = overrides_.find(v.by);
-        if (!v.kept || (by != overrides_.end() && !by->second.kept)) kept[span] = v;
+        if (!v.kept || v.by == BAR || (by != overrides_.end() && !by->second.kept)) {
+            kept[span] = v;
+            continue;
+        }
+        for (auto& [sp, w] : overrides_)  // (in order of their places: the first is the nearest)
+            if (!w.kept && sp.first >= span.first + span.second) {
+                Pin pin = v;
+                pin.by = sp;
+                kept[span] = pin;
+                break;
+            }
     }
     overrides_ = std::move(kept);
 }
@@ -3640,7 +3894,7 @@ void Composer::picks_back(const std::pair<std::vector<int>, Overrides>& before) 
         auto first = moved(span.first, span.second);
         if (!first) continue;
         Pin pin = v;
-        if (pin.kept) {  // (kept around a pick: that pick's place moves too)
+        if (pin.kept && pin.by != BAR) {  // (kept around a pick: that pick's place moves too)
             auto by = moved(pin.by.first, pin.by.second);
             if (!by) continue;
             pin.by.first = *by;
@@ -3648,6 +3902,7 @@ void Composer::picks_back(const std::pair<std::vector<int>, Overrides>& before) 
         kept[{*first, span.second}] = pin;
     }
     overrides_ = std::move(kept);
+    replaced_.clear();
     refresh();
 }
 
@@ -3923,10 +4178,11 @@ void Composer::commit_head() {
     for (auto& [sp, v] : overrides_)
         if (sp.first >= b) {
             Pin p = v;
-            if (p.kept) p.by.first -= b;  // (the pick it belongs to moves along)
+            if (p.kept && p.by != BAR) p.by.first -= b;  // (the pick it belongs to moves along)
             moved[{sp.first - b, sp.second}] = p;
         }
     overrides_ = std::move(moved);
+    replaced_.clear();
     drop_orphans();
     learn_corrections(tok_start);  // (what is sent of them, while the marks are where they were)
     for (auto* set : {&forced_, &chinese_, &breaks_, &exact_, &literal_, &caps_}) {

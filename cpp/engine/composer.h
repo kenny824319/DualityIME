@@ -55,6 +55,14 @@ struct Pin {
     std::pair<int, int> by{-1, -1};
 };
 using Overrides = std::map<std::pair<int, int>, Pin>;  // span -> pin
+// Pin::by of what a pick from the bar above the text keeps: that pick leaves no override of its own
+// (kept until the text is sent or edited there)
+inline constexpr std::pair<int, int> BAR{-1, 0};
+// what a word Tab fixed took the place of: back when that word goes (Composer::put_back)
+struct Replaced {
+    Overrides was;
+    std::map<std::pair<int, int>, Replaced> earlier;  // ...and what the words among them had replaced
+};
 
 std::vector<Scored> phrase_candidates(const std::vector<ustr>& readings, const Lexicon& lexicon, const UserModel* user,
                                       bool names = false);
@@ -211,6 +219,12 @@ private:
     void learn_broken_words(const std::vector<Segment>& before);  // a word corrected by a pick inside it (部隊 to 不對)
     void learn_tone_variant_words(const std::vector<Segment>& before);  // a pick making a word the dictionary has with other tones (下載)
     void keep_rest(int s, int l);  // a pick broke a word: the rest of it stays as it was
+    void keep_before(int s, int l, const std::vector<Segment>& shown, bool own);  // a pick keeps what is before it
+    void put_back();               // a word Tab fixed is gone: what it replaced comes back
+    void forget_replaced(int before);  // an edit from that syllable on: the records of what is after go
+    // keep the word shown from syllable a at the syllables of `where` nothing holds yet, for the pick `by`
+    void keep_as_shown(int a, const ustr& q, const std::vector<int>& where, std::pair<int, int> by);
+    void keep_before_bar(int start);  // a pick from the bar: what is shown before those keys stays
     void drop_orphans();           // kept characters go with the pick that kept them
     void learn_group(const std::vector<std::tuple<int, std::vector<ustr>, ustr>>& group);
     void learn_pairs(const std::vector<Segment>& before);  // 繪 picked after 重 (no word): half of 重繪
@@ -261,6 +275,7 @@ private:
     bool after_english_ = false;
     std::optional<std::pair<ustr, Undo>> last_commit_;
     Overrides overrides_;
+    std::map<std::pair<int, int>, Replaced> replaced_;  // by the span of the word Tab fixed
     std::set<int> forced_, chinese_, literal_, caps_;
     std::set<int> breaks_;  // raw offsets where a syllable picked from the bar ends: nothing reads across
     std::set<int> exact_;   // raw offsets of syllables read as typed, not autocorrected (picked so)

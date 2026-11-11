@@ -164,3 +164,7 @@ mochi {ENTER} => mochi
 rup wu0 2k7mochi5p 2k7a06cl3t {ENTER} => 今天的mochi5p 的蠻好吃
 mochi {ENTER} => mochi 
 rup wu0 2k7mochi5p 2k7a06cl3t {ENTER} => 今天的mochi真的蠻好吃
+# one character sent last (改) does not split the word typed next: 改以 is a word of the dictionary
+# (reported: 已經選好的字 came out 以精選好的字; sent at 選, where it was 以精選: typed on, 長句選字加強
+# put it right by itself)
+cjo41j4cjo4fm4e93{ENTER}u3ru/ vm03{ENTER} => 會不會去改已經選
