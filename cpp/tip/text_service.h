@@ -146,6 +146,7 @@ private:
     bool in_terminal(ITfContext* ctx);
     void watch_layout(ITfContext* ctx);  // OnLayoutChange for this context (nullptr: none)
     void hide_ui();
+    void leave_field();  // the focus went to another text field: what was being typed stays where it is
     void reset_engine();
     bool caret_rect(ITfContext* ctx, RECT& rc);
     void ask_position(ITfContext* ctx);  // an older app that says where the text is only when asked
@@ -168,6 +169,7 @@ private:
     TfGuidAtom attr_atom_ = TF_INVALID_GUIDATOM;
     ComPtr<ITfComposition> composition_;
     ComPtr<ITfContext> comp_context_;
+    ComPtr<ITfDocumentMgr> away_doc_;  // the focus left this document while composing (Excel: back at once)
     ComPtr<LangBarButton> button_;
     bool button_added_ = false;
     bool setting_compartment_ = false;

@@ -341,6 +341,7 @@ STDMETHODIMP TextService::Deactivate() {
         }
         composition_.Reset();
         comp_context_.Reset();
+        away_doc_.Reset();
         watch_layout(nullptr);
         reset_engine();
         hide_ui();
@@ -379,29 +380,70 @@ STDMETHODIMP TextService::Deactivate() {
 
 // ---- focus --------------------------------------------------------------------------------
 
-STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* focus, ITfDocumentMgr*) {
-    // another text field: what was being typed stays where it is
+STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* focus, ITfDocumentMgr* prev) {
     try {
         if (focus && !first_focus_at_) first_focus_at_ = GetTickCount();
-        if (composition_ && comp_context_) {
-            ComPtr<ITfContext> ctx = comp_context_;
-            edit(ctx.Get(), [this](TfEditCookie ec) {
-                if (composition_) composition_->EndComposition(ec);
-            });
-            composition_.Reset();
-            comp_context_.Reset();
-            reset_engine();
+        bool same_doc = false;  // (for the log only)
+        BOOL here = FALSE;
+        if (!focus && composition_ && comp_context_) {
+            // the focus goes nowhere for a moment: Excel moving from a selected cell into editing it gives it
+            // straight back to the same document. Keep the composition (like the Microsoft IME) until we know
+            // (not when this thread has lost the focus: the user went to another program, whichever of
+            // OnKillThreadFocus and this comes first)
+            ComPtr<ITfDocumentMgr> doc;
+            same_doc = SUCCEEDED(comp_context_->GetDocumentMgr(&doc)) && doc && doc.Get() == prev;
+            if (same_doc && thread_mgr_ && SUCCEEDED(thread_mgr_->IsThreadFocus(&here)) && here) {
+                away_doc_ = prev;
+                hide_ui();
+                debug("focus: away while composing");
+                return S_OK;
+            }
         }
-        sent_range_.Reset();
-        sent_context_.Reset();
-        hide_ui();
+        if (away_doc_) {
+            bool back = focus && focus == away_doc_.Get() && composition_ && comp_context_;
+            away_doc_.Reset();
+            if (back) {
+                debug("focus: back to the same document, the composition goes on");
+                last_end_ok_ = last_tip_ok_ = false;  // the text may be in another window now (cell -> editor)
+                ComPtr<ITfContext> c = comp_context_;
+                edit(c.Get(), [this, c](TfEditCookie ec) {
+                    if (composition_) place_ui(ec, c.Get());
+                }, false);
+                return S_OK;
+            }
+        }
+        if (composition_)
+            debug(std::string("focus: composing, ends here: focus=") + (!focus ? "none" : focus == prev ? "same" : "other") +
+                  " same_doc=" + (same_doc ? "1" : "0") + " thread_focus=" + (here ? "1" : "0"));
+        leave_field();
     } catch (...) {
     }
     return S_OK;
 }
 
+void TextService::leave_field() {
+    away_doc_.Reset();
+    if (composition_ && comp_context_) {
+        ComPtr<ITfContext> ctx = comp_context_;
+        edit(ctx.Get(), [this](TfEditCookie ec) {
+            if (composition_) composition_->EndComposition(ec);
+        });
+        composition_.Reset();
+        comp_context_.Reset();
+        reset_engine();
+    }
+    sent_range_.Reset();
+    sent_context_.Reset();
+    hide_ui();
+}
+
 STDMETHODIMP TextService::OnKillThreadFocus() {
     try {
+        HWND fg = GetForegroundWindow();
+        bool ours = fg && GetWindowThreadProcessId(fg, nullptr) == GetCurrentThreadId();
+        debug(std::string("focus: thread focus lost, away=") + (away_doc_ ? "1" : "0") + " composing=" +
+              (composition_ ? "1" : "0") + " foreground=" + (ours ? "ours" : "other"));
+        if (away_doc_) leave_field();  // the user went to another program while the focus was nowhere
         hide_ui();
         if (state_.symbol_page >= 0) close_symbols();  // the user went to another window
     } catch (...) {
@@ -412,6 +454,8 @@ STDMETHODIMP TextService::OnKillThreadFocus() {
 STDMETHODIMP TextService::OnCompositionTerminated(TfEditCookie, ITfComposition*) {
     // the app ended it (a click elsewhere...): start over
     try {
+        debug(std::string("composition: ended by the app, away=") + (away_doc_ ? "1" : "0"));
+        away_doc_.Reset();
         composition_.Reset();
         comp_context_.Reset();
         reset_engine();
@@ -626,6 +670,9 @@ bool TextService::password_field(ITfContext* ctx) {
 }
 
 bool TextService::test_key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
+    // a key while the focus is nowhere: not Excel's move into the cell (it is back before the next key),
+    // so what was being typed ends there, as before
+    if (away_doc_) leave_field();
     if (direct()) {
         // in a game: only a Shift tap matters (it starts typing in the game's chat, see key_up)
         if (vk == VK_SHIFT && cfg_.shift_toggle && !other_modifier()) {
@@ -1057,7 +1104,7 @@ STDMETHODIMP TextService::OnLayoutChange(ITfContext* ctx, TfLayoutCode code, ITf
     try {
         if (code == TF_LC_DESTROY) {
             watch_layout(nullptr);
-        } else if (composition_ && ctx && comp_context_.Get() == ctx) {
+        } else if (composition_ && ctx && comp_context_.Get() == ctx && !away_doc_) {  // (away: the boxes stay hidden)
             ComPtr<ITfContext> c = ctx;
             edit(c.Get(), [this, c](TfEditCookie ec) {
                 if (composition_) place_ui(ec, c.Get());
