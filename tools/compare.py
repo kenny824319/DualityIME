@@ -200,6 +200,19 @@ CASES = [
     "gp3ru8 bjo4gp3ru8 bjo4{END}{LEFT}{DOWN}{DOWN}{DOWN}{ENTER}{HOME}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}"
     "gp3ru8 bjo4{HOME}{RIGHT}{DOWN}{DOWN}{ENTER}{HOME}{DOWN}{DOWN}{ENTER}{END}{LEFT}{DOWN}{DOWN}{ENTER}{ENTER}"
     "gp3ru8 bjo4{HOME}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}gp3ru8 bjo4{ENTER}",
+    # 自訂詞彙 (#13): typed to its start - letters and digits 1, Chinese characters 2, 3 in all - the Tab hint is the
+    # rest of the word whole and Tab writes it as written there; keys compared, not what is shown; the most taken
+    # with Tab first (taken twice below: PQC功能 before PQC技法的ABC功能 from then on); typed whole it stays as typed
+    "PQC{TAB}{ENTER}pqc{TAB}{ENTER}PQ{TAB}{ENTER}AIej/ {TAB}{ENTER}8 Q{TAB}{ENTER}5Gg.3{TAB}{ENTER}284ej3{TAB}{ENTER}",
+    "PQCru4{TAB}{ENTER}PQCx{TAB}{ENTER}ji3ap7PQC{TAB}{ENTER}PQC{TAB}{BACK}{BACK}{ENTER}xPQC{TAB}{ENTER}",
+    "PQCej/ s/6{ENTER}PQCej/ s/6{ENTER}PQC{DOWN}{ESC}{TAB}{ENTER}pqcej/ s/6{ENTER}New{TAB}{ENTER}qm8 {TAB}{ENTER}",
+    "kaz{TAB}{ENTER}KAZ{TAB}{ENTER}{CAPS}kaz{TAB}{CAPS}{ENTER}{CAPS}pqc{TAB}{CAPS}{ENTER}iph{TAB}{ENTER}",
+    "q9 vmp {TAB}{ENTER}284{TAB}{ENTER}284ej3{HOME}{RIGHT}{DOWN}{DOWN}{ENTER}{TAB}{ENTER}",
+    # ...over a character picked or 注音 taken from the bar in what is typed: written as it is all the same
+    "PQCru4{DOWN}{DOWN}{DOWN}{ENTER}{TAB}{ENTER}PQCru4{LEFT}{UP}{ENTER}{END}{TAB}{ENTER}"
+    "pqc{HOME}{UP}{ENTER}{END}{TAB}{ENTER}aiej/ {DOWN}{DOWN}{ENTER}{TAB}{ENTER}",
+    # a word whose 注音 is none (？ from 框選查詢) is no hint
+    "ji3ap7{TAB}{ENTER}tp6{TAB}{ENTER}",
     # the particles of everyday talk, and the keys next to them
     "cl3xji7{ENTER}2jo4u,7{ENTER}c9 su3cl3{ENTER}i7 97 o7 core i7 {ENTER}",
 ]
@@ -266,7 +279,11 @@ CONFIGS = [
 DICTIONARY = {
     "words": [["華碩", "ㄏㄨㄚˊ ㄕㄨㄛˋ"], ["史芸", "ㄕˇㄩㄣˊ"], ["好", "ㄏㄠˇ"], ["ㄎㄎ", ""], ["Kazuma", ""],
               ["哲宇", "ㄓㄜˊ ㄩˇ"], ["蹦", "ㄅㄧㄤˋ"], ["電餅", "ㄉㄧㄢˋ ㄅㄧㄤˇ"], ["掰", "ㄅㄞ˙"],
-              ["呆呆", "ㄉㄞ ㄉㄞ˙"], ["餅噹", "ㄅㄧㄤˇ ㄉㄤ"], ["大餅店", "ㄉㄚˋ ㄅㄧㄤˇ ㄉㄧㄢˋ"], ["電講", "ㄉㄧㄢˋ ㄍㄧㄤˇ"]],
+              ["呆呆", "ㄉㄞ ㄉㄞ˙"], ["餅噹", "ㄅㄧㄤˇ ㄉㄤ"], ["大餅店", "ㄉㄚˋ ㄅㄧㄤˇ ㄉㄧㄢˋ"], ["電講", "ㄉㄧㄢˋ ㄍㄧㄤˇ"],
+              ["PQC技法的ABC功能", "ㄐㄧˋ ㄈㄚˇ ㄉㄜ˙ ㄍㄨㄥ ㄋㄥˊ"], ["PQC功能", "ㄍㄨㄥ ㄋㄥˊ"], ["AI功能", "ㄍㄨㄥ ㄋㄥˊ"],
+              ["阿Q精神", "ㄚ ㄐㄧㄥ ㄕㄣˊ"], ["5G手機", "ㄕㄡˇ ㄐㄧ"], ["大谷翔平", "ㄉㄚˋ ㄍㄨˇ ㄒㄧㄤˊ ㄆㄧㄥˊ"],
+              ["New York披薩", "ㄆㄧ ㄙㄚˋ"], ["iPhone15", ""], ["拍胸脯保證", "ㄆㄞ ㄒㄩㄥ ㄆㄨˇ ㄅㄠˇ ㄓㄥˋ"],
+              ["陳㐀", "ㄔㄣˊ ？"], ["我們㐀", "ㄨㄛˇ ㄇㄣ˙ ？"]],  # (框選查詢 writes ？ for a character it has no reading of)
     "shortcuts": [["addr", "台北市信義區"], ["sig", "祝 順心"], ["cl3", "你好嗎"], ["台灣", "Taiwan"], ["KFC", "肯德基"]],
 }
 
@@ -293,7 +310,7 @@ def compare(cases, config, tmp):
         f.write("\n".join(cases) + "\n")
     for side in ("py", "cpp"):  # each its own files: 全形 on/off is saved in config.json
         os.makedirs(os.path.join(tmp, side), exist_ok=True)
-        for name in ("user.json", "keys.json"):
+        for name in ("user.json", "keys.json", "custom_picks.json"):
             if os.path.exists(os.path.join(tmp, side, name)):
                 os.remove(os.path.join(tmp, side, name))
         files = [("config.json", config), ("dictionary.json", DICTIONARY)]
@@ -334,6 +351,17 @@ def compare(cases, config, tmp):
         corrected_cc = json.load(f)
     if corrected_py != corrected_cc:
         sys.exit(f"DIFFERENT keys.json with {config}")
+    # (自訂詞彙 taken with Tab counted the same: custom_picks.json, written once a word is taken)
+    picks = []
+    for side in ("py", "cpp"):
+        path = os.path.join(tmp, side, "custom_picks.json")
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                picks.append(json.load(f))
+        else:
+            picks.append(None)
+    if picks[0] != picks[1]:
+        sys.exit(f"DIFFERENT custom_picks.json with {config}")
     return keys
 
 

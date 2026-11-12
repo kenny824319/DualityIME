@@ -456,10 +456,93 @@ void CorrectionMemory::save() {
     write_file_atomic(path_, out.dump());
 }
 
+// ---- CustomPickMemory -----------------------------------------------------------------------
+
+CustomPickMemory::CustomPickMemory(std::wstring path, std::function<int()> today)
+    : path_(std::move(path)), today_(std::move(today)) {
+    std::string text;
+    if (path_.empty() || !read_file(path_, text)) return;
+    bool ok = false;
+    Json raw = Json::parse(text, &ok);
+    if (ok) parse(raw, picks_, used_);
+}
+
+void CustomPickMemory::parse(const Json& raw, std::map<ustr, double>& picks, std::map<ustr, int>& used) {
+    // whatever is broken is left out
+    if (!raw.is_object()) return;
+    const Json* p = raw.get("picks");
+    if (!p || !p->is_object()) return;
+    const Json* u = raw.get("used");
+    if (u && !u->is_object()) u = nullptr;
+    for (auto& [word, n] : p->members()) {
+        if (word.empty() || !n.is_number() || n.as_number() <= 0) continue;
+        ustr w = from_utf8(word);
+        picks[w] = n.as_number();
+        const Json* d = u ? u->get(word) : nullptr;
+        if (d && d->is_number()) used[w] = static_cast<int>(d->as_number());
+    }
+}
+
+double CustomPickMemory::count(const ustr& word) const {
+    auto it = picks_.find(word);
+    if (it == picks_.end() || it->second == 0) return 0;
+    auto d = used_.find(word);
+    return faded_count(it->second, d == used_.end() ? nullptr : &d->second, today_());
+}
+
+void CustomPickMemory::record(const ustr& word) {
+    double now = count(word) + 1;
+    picks_[word] = now;
+    used_[word] = today_();
+    save();
+}
+
+void CustomPickMemory::forget() {
+    picks_.clear();
+    used_.clear();
+    save();
+}
+
+void CustomPickMemory::merge(const Json& raw) {
+    // the higher count and the later day of each: the same backup twice adds nothing
+    std::map<ustr, double> picks;
+    std::map<ustr, int> used;
+    parse(raw, picks, used);
+    int today = today_();
+    for (auto& [w, n] : picks) {
+        picks_[w] = std::max(picks_.count(w) ? picks_[w] : 0.0, n);
+        int day = used.count(w) ? used[w] : today;
+        used_[w] = std::max(used_.count(w) ? used_[w] : 0, day);
+    }
+    save();
+}
+
+void CustomPickMemory::save() {
+    if (path_.empty() || keep_file_) return;
+    std::vector<std::pair<double, ustr>> entries;
+    for (auto& [w, _] : picks_) entries.emplace_back(count(w), w);
+    std::sort(entries.begin(), entries.end(), [](auto& a, auto& b) { return a > b; });  // (as Python's reverse sort)
+    std::set<ustr> keep;
+    for (size_t i = 0; i < entries.size() && i < KEEP_CORRECTIONS; ++i)
+        if (entries[i].first >= 1) keep.insert(entries[i].second);
+    for (auto it = picks_.begin(); it != picks_.end();) it = keep.count(it->first) ? std::next(it) : picks_.erase(it);
+    for (auto it = used_.begin(); it != used_.end();) it = keep.count(it->first) ? std::next(it) : used_.erase(it);
+    Json out = Json::object();
+    out["format"] = Json(1);
+    // (each member filled before the next is added: adding one may move the others)
+    Json picks = Json::object(), used = Json::object();
+    for (auto& [w, n] : picks_) picks[to_utf8(w)] = Json(n);
+    for (auto& [w, d] : used_) used[to_utf8(w)] = Json(d);
+    out["picks"] = std::move(picks);
+    out["used"] = std::move(used);
+    write_file_atomic(path_, out.dump());
+}
+
 // ---- UserModel ------------------------------------------------------------------------------
 
 UserModel::UserModel(const std::wstring& path, std::function<int()> today)
     : corrections(next_to(path, L"keys.json"), [this] { return today_(); }),
+      custom_picks(next_to(path, L"custom_picks.json"), [this] { return today_(); }),
       path_(path), today_(std::move(today)) {
     if (!path.empty()) {
         size_t slash = path.find_last_of(L"\\/");
@@ -515,11 +598,44 @@ double UserModel::faded(double count, const int* day) const {
     return count / std::ldexp(1.0, static_cast<int>(k));
 }
 
+static bool alnum(char32_t c) { return is_alpha(c) || is_digit(c); }
+static bool han(char32_t c) { return (c >= 0x3400 && c <= 0x9FFF) || (c >= 0xF900 && c <= 0xFAFF); }
+
 bool is_custom_english(const std::string& word) {
-    // an English word for 自訂詞彙: letters, - or ' inside (Kazuma, e-sports, rock'n'roll), at most 32
-    if (word.empty() || word.size() > 32 || !is_alpha(word.front()) || !is_alpha(word.back())) return false;
-    for (char c : word)
-        if (!is_alpha(c) && c != '-' && c != '\'') return false;
+    // an English word for 自訂詞彙: a letter first, letters and digits, - or ' between them (Kazuma, e-sports,
+    // rock'n'roll, iPhone15), at most 32
+    if (word.empty() || word.size() > 32 || !is_alpha(word.front()) || !alnum(static_cast<unsigned char>(word.back())))
+        return false;
+    for (size_t i = 0; i < word.size(); ++i) {
+        char c = word[i];
+        if (c == '-' || c == '\'') {
+            if (i == 0 || i + 1 >= word.size() || !alnum(static_cast<unsigned char>(word[i - 1])) ||
+                !alnum(static_cast<unsigned char>(word[i + 1])))
+                return false;
+        } else if (!alnum(static_cast<unsigned char>(c))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool is_custom_mixed(const ustr& word) {
+    // Chinese characters, letters, digits, single spaces (not first or last), - or ' between letters or
+    // digits; at least one Chinese character and one letter or digit; at most 32 characters, MAX_PHRASE_LEN Chinese
+    if (word.empty() || word.size() > 32 || word.front() == U' ' || word.back() == U' ' ||
+        word.find(U"  ") != ustr::npos)
+        return false;
+    size_t chinese = std::count_if(word.begin(), word.end(), han);
+    if (chinese == 0 || chinese > static_cast<size_t>(MAX_PHRASE_LEN) || std::none_of(word.begin(), word.end(), alnum))
+        return false;
+    for (size_t i = 0; i < word.size(); ++i) {
+        char32_t c = word[i];
+        if (c == U'-' || c == U'\'') {
+            if (i == 0 || i + 1 >= word.size() || !alnum(word[i - 1]) || !alnum(word[i + 1])) return false;
+        } else if (!alnum(c) && c != U' ' && !han(c)) {
+            return false;
+        }
+    }
     return true;
 }
 
@@ -572,6 +688,7 @@ bool UserModel::reload_custom() {
     std::unordered_set<std::string> ce;
     std::unordered_set<ustr> cz;
     std::vector<ustr> order;
+    std::vector<std::pair<ustr, std::vector<CustomUnit>>> entries;
     std::string text;
     if (exists && read_file(custom_path_, text)) {
         bool ok = false;
@@ -593,10 +710,35 @@ bool UserModel::reload_custom() {
                         continue;
                     }
                     ustr key = reading_key(from_utf8(row.items()[1].as_string()));
-                    size_t syls = std::count(key.begin(), key.end(), U'-') + 1;
-                    if (!phrase.empty() && !key.empty() && phrase.size() == syls && syls <= MAX_PHRASE_LEN) {
+                    if (key.empty()) continue;
+                    std::vector<ustr> syllables = split(key, U'-');
+                    size_t syls = syllables.size();
+                    if (is_custom_mixed(phrase)) {
+                        // (its 注音 is of the Chinese characters alone: a version before skips the row)
+                        if (static_cast<size_t>(std::count_if(phrase.begin(), phrase.end(), han)) == syls) {
+                            std::vector<CustomUnit> units;
+                            size_t k = 0;
+                            for (char32_t ch : phrase) {
+                                CustomUnit u;
+                                u.ch = ch;
+                                if (han(ch)) {
+                                    u.zh = true;
+                                    u.reading = syllables[k++];
+                                }
+                                units.push_back(u);
+                            }
+                            entries.push_back({phrase, units});
+                        }
+                        continue;
+                    }
+                    if (!phrase.empty() && phrase.size() == syls && syls <= MAX_PHRASE_LEN) {
                         if (!c.count(key)) order.push_back(key);
                         c[key].push_back(phrase);
+                        if (std::all_of(phrase.begin(), phrase.end(), han)) {
+                            std::vector<CustomUnit> units;
+                            for (size_t k = 0; k < syls; ++k) units.push_back(CustomUnit{true, phrase[k], syllables[k]});
+                            entries.push_back({phrase, units});
+                        }
                     }
                 }
             }
@@ -624,6 +766,7 @@ bool UserModel::reload_custom() {
     custom_order = std::move(order);
     custom_words = std::move(cw);
     custom_english = std::move(ce);
+    custom_entries = std::move(entries);
     ++words_version_;
     custom_zhuyin = std::move(cz);
     shortcuts = std::move(sc);
@@ -738,6 +881,7 @@ void UserModel::forget_words(int counter) {
         forgot = counter;
         save();
         corrections.forget();  // (注音自動校正's habits and 代碼記憶, the setting on or off)
+        custom_picks.forget();
     }
 }
 
@@ -807,6 +951,7 @@ void UserModel::import_memory(int counter) {
     ++words_version_;
     save();
     if (auto* ac = data.get("keys"); ac) corrections.merge(*ac);  // 校正記憶 / 代碼記憶: their own file, the setting on or off
+    if (auto* cp = data.get("custom_picks"); cp) custom_picks.merge(*cp);  // 自訂詞彙 taken with Tab: its own file
 }
 
 bool is_zhuyin_text(const ustr& text) {
@@ -836,8 +981,10 @@ std::vector<std::string> UserModel::words_starting(const std::string& prefix, si
         if (starts_with(lower(w), p) && w.size() > prefix.size()) mine.push_back(w);
     // English words typed WORD_MIN_USES times (faded), e-mails typed once (never faded)
     std::vector<std::pair<double, std::string>> found;
+    // (ASCII only: what Tab writes from here goes into the keys typed)
     for (auto& [w, _] : words)
-        if (starts_with(lower(w), p) && w.size() > prefix.size()) {
+        if (std::all_of(w.begin(), w.end(), [](char c) { return static_cast<unsigned char>(c) < 128; }) &&
+            starts_with(lower(w), p) && w.size() > prefix.size()) {
             double c = word_count(w);
             if (c >= WORD_MIN_USES) found.emplace_back(c, w);
         }

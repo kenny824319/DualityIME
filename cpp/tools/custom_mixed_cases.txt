@@ -1,0 +1,25 @@
+# e2e-args: -Dictionary cpp\tools\custom_mixed_dictionary.json
+# 自訂詞彙 mixing English with Chinese (#13): typed to its start - letters and digits 1, Chinese characters 2,
+# 3 in all - Tab writes the rest of the word as it is in 自訂詞彙; keys compared, not what is shown
+PQC{TAB}{ENTER} => PQC技法的ABC功能
+pqc{TAB}{ENTER} => PQC技法的ABC功能
+PQCru4{TAB}{ENTER} => PQC技法的ABC功能
+ji3ap7PQC{TAB}{ENTER} => 我們PQC技法的ABC功能
+AIej/ {TAB}{ENTER} => AI功能
+5Gg.3{TAB}{ENTER} => 5G手機
+New{TAB}{ENTER} => New York披薩
+# a Chinese word comes whole too (it was one character at a time); its first two characters must show
+# right (with 長句選字加強 on ㄉㄚˋ ㄍㄨˇ shows 大鼓, so 大谷翔平 gives no hint there)
+q9 vm/ {TAB}{ENTER} => 拍胸脯保證
+# an English word of 自訂詞彙 as it is written there (it kept the case typed)
+kaz{TAB}{ENTER} => Kazuma
+# typed on differently: no word of 自訂詞彙 comes
+PQCx{TAB}{ENTER} => PQCx
+# a character picked, or 注音 taken from the bar, in what is typed: Tab writes the word as it is all the same
+PQCru4{DOWN}{DOWN}{ENTER}{TAB}{ENTER} => PQC技法的ABC功能
+PQCru4{LEFT}{UP}{ENTER}{END}{TAB}{ENTER} => PQC技法的ABC功能
+# a word whose 注音 is none (框選查詢 writes ？ for a character it has no reading of) is no hint (Tab
+# gives the next character as ever; it wrote 我們? )
+ji3ap7{TAB}{ENTER} => 我們的
+# typed whole it stays as typed: only Tab writes it as 自訂詞彙 has it
+aiej/ s/6{ENTER} => ai功能

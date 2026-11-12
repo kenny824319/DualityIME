@@ -131,10 +131,34 @@ def load_english(path=None):
 ZHUYIN_TEXT = "~"  # phrases["~ㄅㄨㄚ"]: 注音文 picked (its keys spell no syllable), counted
 
 
+def _alnum(ch):
+    return ch.isascii() and ch.isalnum()
+
+
 def is_custom_english(word):
-    """An English word for 自訂詞彙: letters, - or ' inside (Kazuma, e-sports, rock'n'roll), at most 32."""
-    return 0 < len(word) <= 32 and word[0].isascii() and word[0].isalpha() and word[-1].isascii() and \
-        word[-1].isalpha() and all(ch.isascii() and (ch.isalpha() or ch in "-'") for ch in word)
+    """An English word for 自訂詞彙: a letter first, letters and digits, - or ' between them (Kazuma, e-sports,
+    rock'n'roll, iPhone15), at most 32."""
+    return 0 < len(word) <= 32 and word[0].isascii() and word[0].isalpha() and _alnum(word[-1]) and \
+        all(_alnum(ch) or ch in "-'" for ch in word) and \
+        all(_alnum(word[i - 1]) and _alnum(word[i + 1]) for i, ch in enumerate(word) if ch in "-'")
+
+
+def is_custom_mixed(word):
+    """A word of 自訂詞彙 mixing Chinese with English letters or digits (PQC技法的ABC功能, iPhone15手機, PQC 功能):
+    Chinese characters, letters, digits, single spaces (not first or last), - or ' between letters or digits;
+    at least one Chinese character and one letter or digit; at most 32 characters, MAX_PHRASE_LEN Chinese."""
+    if not 0 < len(word) <= 32 or word[0] == " " or word[-1] == " " or "  " in word:
+        return False
+    han = sum(1 for ch in word if _is_han(ch))
+    if not 0 < han <= MAX_PHRASE_LEN or not any(_alnum(ch) for ch in word):
+        return False
+    for i, ch in enumerate(word):
+        if ch in "-'":
+            if not (0 < i < len(word) - 1 and _alnum(word[i - 1]) and _alnum(word[i + 1])):
+                return False
+        elif not (_alnum(ch) or ch == " " or _is_han(ch)):
+            return False
+    return True
 
 
 def is_zhuyin_text(text):
@@ -363,6 +387,80 @@ class CorrectionMemory:
         os.replace(tmp, self.path)
 
 
+class CustomPickMemory:
+    """How often each word of 自訂詞彙 was taken with Tab (custom_picks.json next to user.json, apart so a version
+    before, rewriting user.json, keeps it): words that start alike are offered most taken first (#13). Counts
+    fade like the other picks.
+
+    {"format": 1, "picks": {word: count}, "used": {word: day}}
+    """
+
+    def __init__(self, path=None, today=_today):
+        self.path = path
+        self.today = today
+        self.picks, self.used = self._parse(self._read())
+
+    def _read(self):
+        if not self.path or not os.path.exists(self.path):
+            return None
+        try:
+            with open(self.path, encoding="utf-8-sig") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return None
+
+    @staticmethod
+    def _parse(raw):
+        """(picks, used) from the file's (or a backup's) JSON; whatever is broken is left out."""
+        picks, used = {}, {}
+        if not isinstance(raw, dict) or not isinstance(raw.get("picks"), dict):
+            return picks, used
+        their_used = raw.get("used") if isinstance(raw.get("used"), dict) else {}
+        for word, n in raw["picks"].items():
+            if isinstance(word, str) and word and isinstance(n, (int, float)) and not isinstance(n, bool) and n > 0:
+                picks[word] = n
+                day = their_used.get(word)
+                if isinstance(day, int) and not isinstance(day, bool):
+                    used[word] = day
+        return picks, used
+
+    def count(self, word):
+        n = self.picks.get(word, 0)
+        day = self.used.get(word)
+        return n / 2 ** ((self.today() - day) // FORGET_DAYS) if n and day is not None else n
+
+    def record(self, word):
+        self.picks[word] = self.count(word) + 1
+        self.used[word] = self.today()
+        self.save()
+
+    def forget(self):
+        """全部清除."""
+        self.picks, self.used = {}, {}
+        self.save()
+
+    def merge(self, raw):
+        """A backup restored: the higher count and the later day of each (the same backup twice adds nothing)."""
+        their_picks, their_used = self._parse(raw)
+        for word, n in their_picks.items():
+            self.picks[word] = max(self.picks.get(word, 0), n)
+            self.used[word] = max(self.used.get(word, 0), their_used.get(word, self.today()))
+        self.save()
+
+    def save(self):
+        if not self.path:
+            return
+        keep = sorted(((self.count(w), w) for w in self.picks), reverse=True)[:KEEP_CORRECTIONS]
+        keep = {w for n, w in keep if n >= 1}
+        self.picks = {w: n for w, n in self.picks.items() if w in keep}
+        self.used = {w: d for w, d in self.used.items() if w in keep}
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        tmp = self.path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"format": 1, "picks": self.picks, "used": self.used}, f, ensure_ascii=False)
+        os.replace(tmp, self.path)
+
+
 class UserModel:
     """Remembers what the user picked so the next guess is better.
 
@@ -392,10 +490,16 @@ class UserModel:
         self.custom = {}       # reading key -> [phrase]
         self.custom_zhuyin = set()  # 注音文 in 個人詞庫 (ㄅㄨㄚ): offered where its keys are typed
         self.custom_words = []      # English words in 個人詞庫 (Kazuma), in the order given
+        # its Chinese and mixed words (大谷翔平, PQC技法的ABC功能) in the order given, each with its units: ("k", key)
+        # for a letter, digit, space, - or ', ("zh", reading, character) for a Chinese character (#13)
+        self.custom_entries = []
         self.custom_english = set()  # ...the same, lower case
         self.shortcuts = {}    # shortcut keys (lower case) -> text
         self.chinese_shortcuts = {}  # 映射詞彙 both ways, Chinese side as shown -> the other side(s)
         self.custom_path = os.path.join(os.path.dirname(path), "dictionary.json") if path else None
+        # 自訂詞彙 taken with Tab, in a file of its own (#13)
+        self.custom_picks = CustomPickMemory(os.path.join(os.path.dirname(path), "custom_picks.json") if path else None,
+                                             lambda: self.today())
         # 校正記憶 and 代碼記憶, in a file of their own
         self.corrections = CorrectionMemory(os.path.join(os.path.dirname(path), "keys.json") if path else None,
                                             lambda: self.today())
@@ -453,6 +557,7 @@ class UserModel:
             return False
         self._custom_mtime = mtime
         custom, shortcuts, custom_zhuyin, custom_words, custom_english = {}, {}, set(), [], set()
+        entries = []
         chinese = {}
         if mtime is not None:
             try:
@@ -468,8 +573,20 @@ class UserModel:
                         custom_zhuyin.add(phrase)
                         continue
                     key = reading_key(reading)
-                    if phrase and key and len(phrase) == key.count("-") + 1 <= MAX_PHRASE_LEN:
+                    if not key:
+                        continue
+                    syllables = key.split("-")
+                    if is_custom_mixed(phrase):
+                        # (its 注音 is of the Chinese characters alone: a version before skips the row)
+                        if sum(1 for ch in phrase if _is_han(ch)) == len(syllables):
+                            it = iter(syllables)
+                            entries.append((phrase, tuple(("zh", next(it), ch) if _is_han(ch) else ("k", ch)
+                                                          for ch in phrase)))
+                        continue
+                    if phrase and len(phrase) == len(syllables) <= MAX_PHRASE_LEN:
                         custom.setdefault(key, []).append(phrase)
+                        if _is_han(phrase):
+                            entries.append((phrase, tuple(("zh", r, ch) for r, ch in zip(syllables, phrase))))
                 for keys, text in data.get("shortcuts", []):
                     if keys and text:
                         shortcuts[keys.lower()] = text
@@ -482,6 +599,7 @@ class UserModel:
         self.custom, self.shortcuts, self.custom_zhuyin = custom, shortcuts, custom_zhuyin
         self.chinese_shortcuts = chinese
         self.custom_words, self.custom_english = custom_words, custom_english
+        self.custom_entries = entries
         return True
 
     def bonus(self, reading_key, phrase):
@@ -549,6 +667,7 @@ class UserModel:
             self.words, self.word_used, self.forgot = {}, {}, counter
             self.save()
             self.corrections.forget()  # (注音自動校正's habits and 代碼記憶, the setting on or off)
+            self.custom_picks.forget()
 
     def forget_emails(self, counter):
         """全部清除 with 一併清除記住的 Email ticked (the settings tool bumped counter)."""
@@ -603,6 +722,8 @@ class UserModel:
         self.save()
         if "keys" in data:  # 校正記憶 / 代碼記憶: their own file, the setting on or off
             self.corrections.merge(data["keys"])
+        if "custom_picks" in data:  # 自訂詞彙 taken with Tab: its own file
+            self.custom_picks.merge(data["custom_picks"])
 
     def words_starting(self, prefix, limit=3):
         """Remembered words starting with prefix (case-insensitive), most used first."""
@@ -610,7 +731,9 @@ class UserModel:
         # 自訂詞彙's English words first, from the first time
         mine = [w for w in self.custom_words if w.lower().startswith(p) and len(w) > len(prefix)]
         # English words typed WORD_MIN_USES times (faded), e-mails typed once (never faded)
-        hits = [(self.word_count(w), w) for w in self.words if w.lower().startswith(p) and len(w) > len(prefix)]
+        # (ASCII only: what Tab writes from here goes into the keys typed)
+        hits = [(self.word_count(w), w) for w in self.words
+                if w.isascii() and w.lower().startswith(p) and len(w) > len(prefix)]
         hits = [h for h in hits if h[0] >= WORD_MIN_USES]
         hits += [(n, w) for w, n in self.emails.items() if w.lower().startswith(p) and len(w) > len(prefix)
                  and n >= 1]

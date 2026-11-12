@@ -806,6 +806,116 @@ class SettingsTest(Base):
         self.assertFalse(cfg.reload_if_changed())
 
 
+class CustomWordsFileTest(unittest.TestCase):
+    """自訂詞彙 read from dictionary.json: words mixing English (and digits) with Chinese, kept with their
+    keys as units; English words with digits (#13, docs/superpowers/specs/2026-11-12-mixed-custom-words-design.md)."""
+
+    ROWS = [["PQC技法的ABC功能", "ㄐㄧˋ ㄈㄚˇ ㄉㄜ˙ ㄍㄨㄥ ㄋㄥˊ"], ["PQC 功能", "ㄍㄨㄥ ㄋㄥˊ"],
+            ["iPhone15手機", "ㄕㄡˇ ㄐㄧ"], ["iPhone15", ""], ["大谷翔平", "ㄉㄚˋ ㄍㄨˇ ㄒㄧㄤˊ ㄆㄧㄥˊ"],
+            ["PQC功能", "ㄍㄨㄥ"], ["A,B功能", "ㄍㄨㄥ ㄋㄥˊ"], [" PQC功能", "ㄍㄨㄥ ㄋㄥˊ"], ["PQC  功能", "ㄍㄨㄥ ㄋㄥˊ"]]
+
+    def load(self, rows):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        with open(os.path.join(tmp.name, "dictionary.json"), "w", encoding="utf-8") as f:
+            json.dump({"words": rows, "shortcuts": []}, f, ensure_ascii=False)
+        user = UserModel(os.path.join(tmp.name, "user.json"))
+        user.reload_custom()
+        return user
+
+    def test_mixed_words_are_read_in_order_with_their_units(self):
+        user = self.load(self.ROWS)
+        # (syllables not one per Chinese character, a comma, a space at the start, two spaces: left out)
+        self.assertEqual([t for t, _ in user.custom_entries], ["PQC技法的ABC功能", "PQC 功能", "iPhone15手機", "大谷翔平"])
+        units = dict(user.custom_entries)["PQC 功能"]
+        self.assertEqual(units, (("k", "P"), ("k", "Q"), ("k", "C"), ("k", " "), ("zh", "ㄍㄨㄥ", "功"), ("zh", "ㄋㄥˊ", "能")))
+        # a Chinese word is a word of the dictionary for choosing characters as before; a mixed one is not
+        self.assertEqual(user.custom.get("ㄉㄚˋ-ㄍㄨˇ-ㄒㄧㄤˊ-ㄆㄧㄥˊ"), ["大谷翔平"])
+        self.assertNotIn("PQC技法的ABC功能", [p for ps in user.custom.values() for p in ps])
+
+    def test_english_words_may_have_digits(self):
+        user = self.load(self.ROWS)
+        self.assertIn("iphone15", user.custom_english)
+        from engine.lexicon import is_custom_english
+        for word, ok in (("iPhone15", True), ("PS5", True), ("Kazuma", True), ("e-sports", True), ("5G", False),
+                         ("15", False), ("a-", False), ("x" * 33, False)):
+            self.assertEqual(is_custom_english(word), ok, word)
+
+    def test_a_version_before_reads_none_of_the_mixed_words(self):
+        # 3.2.4 took a row when its characters were as many as the syllables of its 注音: never for a mixed one
+        from engine.lexicon import reading_key
+        for phrase, reading in self.ROWS[:3]:
+            self.assertNotEqual(len(phrase), reading_key(reading).count("-") + 1, phrase)
+
+    def test_is_custom_mixed(self):
+        from engine.lexicon import is_custom_mixed
+        for word, ok in (("PQC功能", True), ("PQC 功能", True), ("5G手機", True), ("阿Q精神", True), ("e-sports賽", True),
+                         ("功能", False), ("PQC", False), ("A,B功能", False), (" PQC功能", False), ("PQC功能 ", False),
+                         ("PQC  功能", False), ("-A功能", False), ("A" * 25 + "一二三四五六七八", False),
+                         ("A一二三四五六七八九", False)):
+            self.assertEqual(is_custom_mixed(word), ok, word)
+
+
+class CustomPickMemoryTest(unittest.TestCase):
+    """How often each word of 自訂詞彙 was taken with Tab (custom_picks.json, a file of its own: a version before
+    rewriting user.json drops what it does not know), to order words that start alike (#13)."""
+
+    def make(self, today=20000):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = tmp.name
+        self.day = [today]
+        return UserModel(os.path.join(tmp.name, "user.json"), today=lambda: self.day[0])
+
+    def test_record_count_and_fade(self):
+        user = self.make()
+        mem = user.custom_picks
+        mem.record("PQC功能")
+        mem.record("PQC功能")
+        self.assertEqual(mem.count("PQC功能"), 2)
+        self.assertEqual(mem.count("AI功能"), 0)
+        with open(os.path.join(self.dir, "custom_picks.json"), encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertEqual(data["format"], 1)
+        self.assertEqual(data["picks"], {"PQC功能": 2})
+        self.day[0] += FORGET_DAYS
+        self.assertEqual(mem.count("PQC功能"), 1)
+
+    def test_read_again_and_broken_files(self):
+        user = self.make()
+        user.custom_picks.record("PQC功能")
+        again = UserModel(os.path.join(self.dir, "user.json"), today=lambda: self.day[0])
+        self.assertEqual(again.custom_picks.count("PQC功能"), 1)
+        for broken in ("[]", '{"picks": 5}', '{"picks": {"A功能": "x", "B功能": -1, "C功能": true}}', "not json"):
+            with open(os.path.join(self.dir, "custom_picks.json"), "w", encoding="utf-8") as f:
+                f.write(broken)
+            fresh = UserModel(os.path.join(self.dir, "user.json"), today=lambda: self.day[0])
+            for word in ("A功能", "B功能", "C功能", "PQC功能"):
+                self.assertEqual(fresh.custom_picks.count(word), 0, broken)
+
+    def test_forget_words_clears_it(self):
+        user = self.make()
+        user.custom_picks.record("PQC功能")
+        user.forget_words(1)
+        self.assertEqual(user.custom_picks.count("PQC功能"), 0)
+        with open(os.path.join(self.dir, "custom_picks.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["picks"], {})
+
+    def test_merge_and_import(self):
+        user = self.make()
+        backup = {"format": 1, "picks": {"A功能": 3}, "used": {"A功能": 20000}}
+        user.custom_picks.merge(backup)
+        user.custom_picks.merge(backup)
+        self.assertEqual(user.custom_picks.count("A功能"), 3)
+        # a backup restored: import-memory.json next to user.json holds it with the rest of the memory
+        with open(os.path.join(self.dir, "import-memory.json"), "w", encoding="utf-8") as f:
+            json.dump({"phrases": {}, "custom_picks": {"format": 1, "picks": {"B功能": 2}, "used": {}}}, f,
+                      ensure_ascii=False)
+        user.import_memory(1)
+        self.assertEqual(user.custom_picks.count("B功能"), 2)
+        self.assertEqual(user.custom_picks.count("A功能"), 3)
+
+
 class CompletionTest(Base):
     EMAIL = "abcc12345678@example.com"
 
@@ -2319,8 +2429,9 @@ class NamesTest(Base):
 
 
 class CustomPredictionTest(unittest.TestCase):
-    """個人詞庫's words in the next-character suggestion: once 2 of their characters are typed, before
-    the dictionary's guess (2026-11-09 design, the user's choice of 2); only a guess Tab gives as shown."""
+    """個人詞庫's words in the Tab hint: once 2 of their characters are typed, before the dictionary's guess
+    (2026-11-09 design, the user's choice of 2), the rest of the word whole (2026-11-13, #13: it was one
+    character at a time); only a guess Tab gives as shown."""
 
     WORDS = [["大谷翔平", "ㄉㄚˋ ㄍㄨˇ ㄒㄧㄤˊ ㄆㄧㄥˊ"], ["獎金國", "ㄐㄧㄤˇ ㄐㄧㄣ ㄍㄨㄛˊ"],
              ["大谷翔子", "ㄉㄚˋ ㄍㄨˇ ㄒㄧㄤˊ ㄗˇ"], ["大谷一", "ㄉㄚˋ ㄍㄨˇ ㄧ"], ["拍胸脯保證", "ㄆㄞ ㄒㄩㄥ ㄆㄨˇ ㄅㄠˇ ㄓㄥˋ"]]
@@ -2364,7 +2475,7 @@ class CustomPredictionTest(unittest.TestCase):
         return shown, guess, c.composition
 
     def test_predicted_after_two(self):
-        self.assertEqual(self.suggestion(self.mine, "ㄉㄚˋ ㄍㄨˇ"), "翔")
+        self.assertEqual(self.suggestion(self.mine, "ㄉㄚˋ ㄍㄨˇ"), "翔平")
 
     def test_not_after_one(self):
         self.assertEqual(self.suggestion(self.mine, "ㄉㄚˋ"), self.suggestion(self.plain, "ㄉㄚˋ"))
@@ -2380,11 +2491,14 @@ class CustomPredictionTest(unittest.TestCase):
     def test_a_character_only_in_a_word(self):
         # (review 2026-11-09: 脯 is no character of its own under ㄆㄨˇ, but 拍胸脯 is a word: Tab pins it whole,
         # so it is guessed; a check of single characters alone gave the dictionary's guess instead)
-        self.assertEqual(self.tab(self.mine, "ㄆㄞ ㄒㄩㄥ"), ("拍胸", "脯", "拍胸脯"))
+        self.assertEqual(self.tab(self.mine, "ㄆㄞ ㄒㄩㄥ"), ("拍胸", "脯保證", "拍胸脯保證"))
 
-    def test_not_a_character_tab_cannot_give(self):
-        # (review 2026-11-09: 國 under ㄍㄨㄛˋ, Tab gave 獎金過: the dictionary's guess instead, which Tab gives)
-        self.assertEqual(self.tab(self.odd, "ㄐㄧㄤˇ ㄐㄧㄣ"), self.tab(self.plain, "ㄐㄧㄤˇ ㄐㄧㄣ"))
+    def test_only_what_tab_gives_as_shown(self):
+        # (review 2026-11-09: 國 under ㄍㄨㄛˋ, Tab gave 獎金過. A word of 個人詞庫 is fixed whole now, 國 no
+        # character of its own there or not: what is guessed is what Tab writes, 2026-11-13)
+        self.assertEqual(self.tab(self.odd, "ㄐㄧㄤˇ ㄐㄧㄣ"), ("獎金", "國王", "獎金國王"))
+        self.odd.key(special="ENTER")
+        self.assertEqual(self.odd.commit, "獎金國王")
 
     def test_longest_then_first(self):
         # 大谷翔 typed: 大谷翔平 and 大谷翔子 match 3 characters (the first in dictionary.json wins);
@@ -4535,6 +4649,212 @@ class TypingMemoryTest(CodeMemoryTest):
 for _name in [n for n in dir(CodeMemoryTest) if n.startswith("test_")]:
     if _name not in TypingMemoryTest.__dict__:
         setattr(TypingMemoryTest, _name, None)
+
+
+class CustomCompletionTest(unittest.TestCase):
+    """A word of 自訂詞彙 typed to its start - letters and digits 1 each, Chinese characters 2, 3 in all - comes
+    whole as the Tab hint, and Tab writes it as it is in 自訂詞彙 (#13,
+    docs/superpowers/specs/2026-11-12-mixed-custom-words-design.md). Keys are compared, not what is shown."""
+
+    WORDS = [["PQC技法的ABC功能", "ㄐㄧˋ ㄈㄚˇ ㄉㄜ˙ ㄍㄨㄥ ㄋㄥˊ"], ["PQC功能", "ㄍㄨㄥ ㄋㄥˊ"], ["AI功能", "ㄍㄨㄥ ㄋㄥˊ"],
+             ["阿Q精神", "ㄚ ㄐㄧㄥ ㄕㄣˊ"], ["5G手機", "ㄕㄡˇ ㄐㄧ"], ["大谷翔平", "ㄉㄚˋ ㄍㄨˇ ㄒㄧㄤˊ ㄆㄧㄥˊ"],
+             ["Kazuma", ""]]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.c = create_composer(os.path.join(self.tmp.name, "user.json"))
+        self.c.config.values = dict(DEFAULTS)
+        self.write(self.WORDS)
+
+    writes = 0
+
+    def write(self, words):
+        path = os.path.join(self.tmp.name, "dictionary.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"words": words, "shortcuts": []}, f, ensure_ascii=False)
+        # (every write a new modification time, or it is not read again)
+        CustomCompletionTest.writes += 1
+        t = 2000000000 + CustomCompletionTest.writes
+        os.utime(path, (t, t))
+        self.c.user.reload_custom()
+
+    def typed(self, raw, caps=False):
+        self.c.reset()
+        for ch in raw:
+            self.c.key(ch, caps=caps)
+        return self.c.suggestions
+
+    def tab(self):
+        self.c.key(special="TAB")
+        return self.c.composition
+
+    def test_english_start_after_three_letters(self):
+        self.assertEqual(self.typed("PQ"), [])
+        # neither taken yet: the first in 自訂詞彙
+        self.assertEqual(self.typed("PQC"), ["技法的ABC功能"])
+        self.assertEqual(self.tab(), "PQC技法的ABC功能")
+        self.c.key(special="ENTER")
+        self.assertEqual(self.c.commit, "PQC技法的ABC功能")
+
+    def test_lower_case_keys_match(self):
+        self.assertEqual(self.typed("pqc"), ["技法的ABC功能"])
+        self.assertEqual(self.tab(), "PQC技法的ABC功能")
+
+    def test_weights(self):
+        self.assertEqual(self.typed("AI"), [])
+        self.assertEqual(self.typed("AIej/ "), ["能"])
+        self.assertEqual(self.typed("8 Q"), ["精神"])
+        self.assertEqual(self.typed("5G"), [])
+        self.assertEqual(self.typed("5Gg.3"), ["機"])
+        self.assertEqual(self.tab(), "5G手機")
+
+    def no_model(self):
+        # (長句選字加強 off whatever DUALITYIME_TEST_LONG_SENTENCE says: with it on ㄉㄚˋ ㄍㄨˇ shows 大鼓)
+        self.c.config.set(long_sentence=False)
+        self.c.settings_changed()
+
+    def test_chinese_start_after_two_characters(self):
+        self.no_model()
+        self.assertNotIn("谷翔平", self.typed("284"))
+        self.typed("284ej3")
+        self.assertEqual(self.c.composition, "大谷")
+        self.assertEqual(self.c.suggestions, ["翔平"])  # (it was one character at a time: 翔)
+        self.assertEqual(self.tab(), "大谷翔平")
+
+    def test_chinese_start_needs_the_same_characters(self):
+        self.no_model()
+        self.write([["大穀翔平", "ㄉㄚˋ ㄍㄨˇ ㄒㄧㄤˊ ㄆㄧㄥˊ"], ["大谷翔平", "ㄉㄚˋ ㄍㄨˇ ㄒㄧㄤˊ ㄆㄧㄥˊ"]])
+        # (both start with these keys: what is shown, 大谷, chooses)
+        self.typed("284ej3")
+        self.assertEqual(self.c.composition, "大谷")
+        self.assertEqual(self.c.suggestions, ["翔平"])
+        self.c.user.custom_picks.record("大穀翔平")
+        self.typed("284ej3")
+        self.assertEqual(self.c.suggestions, ["翔平"])
+        self.assertEqual(self.tab(), "大谷翔平")
+        # only 大穀翔平: not where 大谷 is shown
+        self.write([["大穀翔平", "ㄉㄚˋ ㄍㄨˇ ㄒㄧㄤˊ ㄆㄧㄥˊ"]])
+        self.typed("284ej3")
+        self.assertEqual(self.c.composition, "大谷")
+        self.assertNotIn("翔平", self.c.suggestions)
+
+    def test_middle_characters_compare_keys(self):
+        self.typed("PQCru4")
+        self.assertEqual(self.c.suggestions, ["法的ABC功能"])
+        self.assertEqual(self.tab(), "PQC技法的ABC功能")
+
+    def test_diverging_falls_back(self):
+        self.assertNotIn("技法的ABC功能", self.typed("PQCx"))
+        self.assertNotIn("功能", self.typed("PQCx"))
+
+    def test_order_by_tab_count_then_list_order(self):
+        self.typed("PQC")
+        self.assertEqual(self.c.suggestions, ["技法的ABC功能"])
+        self.c.user.custom_picks.record("PQC功能")
+        self.assertEqual(self.typed("PQC"), ["功能"])
+        # taken with Tab: counted
+        self.tab()
+        self.assertEqual(self.c.user.custom_picks.count("PQC功能"), 2)
+        # ...a remembered English word starting so comes after 自訂詞彙's
+        for _ in range(2):
+            self.typed("pqcxyz ")
+            self.c.key(special="ENTER")
+        self.assertEqual(self.typed("pqc"), ["功能"])
+
+    def test_space_kept(self):
+        self.write([["PQC 功能", "ㄍㄨㄥ ㄋㄥˊ"]])
+        self.assertEqual(self.typed("PQC"), [" 功能"])
+        self.assertEqual(self.tab(), "PQC 功能")
+
+    def test_starts_only_at_a_token_start(self):
+        self.assertEqual(self.typed("ji3ap7PQC"), ["技法的ABC功能"])
+        self.assertEqual(self.tab(), "我們PQC技法的ABC功能")
+        self.assertNotIn("技法的ABC功能", self.typed("xPQC"))
+
+    def test_backspace_after_completion(self):
+        self.typed("PQC")
+        self.tab()
+        self.c.key(special="BACK")
+        self.assertEqual(self.c.composition, "PQC技法的ABC功")
+        self.c.key(special="BACK")
+        self.assertEqual(self.c.composition, "PQC技法的ABC")
+
+    def test_typed_whole_stays_as_typed(self):
+        # only Tab writes the word as 自訂詞彙 has it: pqc功能 typed whole and sent stays pqc功能 (the user's call)
+        self.write([["PQC功能", "ㄍㄨㄥ ㄋㄥˊ"]])
+        self.typed("pqcej/ s/6")
+        self.c.key(special="ENTER")
+        self.assertTrue(self.c.commit.startswith("pqc"), self.c.commit)
+        self.assertEqual(self.c.user.custom_picks.count("PQC功能"), 0)
+
+    def test_completion_off(self):
+        self.c.config.set(completion=False)
+        self.assertEqual(self.typed("PQC"), [])
+
+    def test_removed_word_is_not_offered(self):
+        self.c.user.custom_picks.record("PQC舊詞")
+        self.assertEqual(self.typed("PQC"), ["技法的ABC功能"])
+        # 自訂詞彙 saved without the word between the hint and Tab: Tab writes nothing of it
+        self.write([["Kazuma", ""]])
+        self.c.key(special="TAB")
+        self.assertEqual(self.c.composition, "PQC")
+
+    def test_tab_over_a_picked_character(self):
+        # 記 picked for the ㄐㄧˋ typed: Tab writes the word as 自訂詞彙 has it all the same (技)
+        self.typed("PQCru4")
+        self.c.key(special="DOWN")
+        cands = list(self.c.candidates)
+        for _ in range(cands.index("記")):
+            self.c.key(special="DOWN")
+        self.c.key(special="ENTER")
+        self.assertEqual(self.c.composition, "PQC記")
+        self.assertEqual(self.c.suggestions, ["法的ABC功能"])
+        self.assertEqual(self.tab(), "PQC技法的ABC功能")
+        self.c.key(special="ENTER")
+        self.assertEqual(self.c.commit, "PQC技法的ABC功能")
+
+    def test_tab_over_zhuyin_shown_from_the_bar(self):
+        # ㄐㄧˋ taken from the bar (a token of its own, no syllable): the characters Tab fixes stay on theirs
+        self.write([["PQC技髮德", "ㄐㄧˋ ㄈㄚˇ ㄉㄜˊ"]])
+        self.typed("PQCru4")
+        for k in ("LEFT", "UP", "ENTER", "END"):
+            self.c.key(special=k)
+        self.assertIn("ㄐㄧˋ", self.c.composition)
+        self.assertEqual(self.c.suggestions, ["髮德"])
+        self.assertEqual(self.tab(), "PQC技髮德")
+
+    def test_reading_not_zhuyin(self):
+        # a word whose 注音 is not 注音 (框選查詢 writes ？ for a character it has no reading of): typing goes on
+        # (it raised KeyError at every key), as in the C++ engine
+        self.write([["測試", "ce shi"], ["陳㐀", "ㄔㄣˊ ？"], ["PQC功能", "ㄍㄨㄥ ㄋㄥˊ"]])
+        self.typed("ji3")
+        self.assertEqual(self.typed("PQC"), ["功能"])
+        # ...and such a word is no hint: Tab could not write it (it wrote 我們? )
+        self.write([["我們㐀", "ㄨㄛˇ ㄇㄣ˙ ？"], ["PQC陳㐀", "ㄔㄣˊ ？"], ["陳㐀", "ㄔㄣˊ ？"]])
+        self.assertNotIn("㐀", self.typed("ji3ap7"))
+        self.assertEqual(self.typed("PQC"), [])
+
+    def test_english_custom_word_as_written(self):
+        # 自訂詞彙 comes as it is written there, whatever the case typed or Caps Lock (it kept the case typed)
+        self.assertEqual(self.typed("kaz"), ["uma"])
+        self.assertEqual(self.tab(), "Kazuma")
+        self.typed("KAZ")
+        self.assertEqual(self.tab(), "Kazuma")
+        self.typed("KAZ", caps=True)
+        self.assertEqual(self.c.suggestions, ["uma"])
+        self.assertEqual(self.tab(), "Kazuma")
+        self.typed("PQC", caps=True)
+        self.assertEqual(self.c.suggestions, ["技法的ABC功能"])
+        self.assertEqual(self.tab(), "PQC技法的ABC功能")
+        # a remembered English word (not 自訂詞彙) as before: the case typed, capitals with Caps Lock
+        for _ in range(2):
+            self.typed("claude ")
+            self.c.key(special="ENTER")
+        self.typed("Cla")
+        self.assertEqual(self.tab(), "Claude")
+        self.typed("CLA", caps=True)
+        self.assertEqual(self.tab(), "CLAUDE")
 
 
 class PersonalDictionaryTest(unittest.TestCase):

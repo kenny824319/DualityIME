@@ -81,7 +81,9 @@ static bool like_a_name(const Lexicon& lexicon, const std::vector<ustr>& reading
     std::vector<ustr> rest(readings.begin() + 1, readings.end());
     return !lexicon.has(rest, text.substr(1)) && !lexicon.reads_with_other_tones(rest, text.substr(1));
 }
-constexpr int CUSTOM_NEXT_MIN = 2;  // 個人詞庫's words are guessed as the next character once this many of theirs are typed
+// 自訂詞彙's words come whole as the Tab hint once this much of one is typed: a letter or digit 1, a Chinese
+// character 2 (PQC, 大谷, AI功, 阿Q - the user's call, #13)
+constexpr int CUSTOM_MIN_WEIGHT = 3;
 constexpr double BIGRAM_WEIGHT = 0.6;
 const double UNSEEN_PAIR = std::log10(1 - BIGRAM_WEIGHT);
 const double LOG_BIGRAM_WEIGHT = std::log10(BIGRAM_WEIGHT);
@@ -2207,6 +2209,14 @@ void Composer::suggest() {
     sugg_index = 0;
     if (!config.flag("completion") || !candidates.empty() || raw.empty()) return;
     if (caret_) return;  // (only at the end, like the ASUS IME: in the middle the bar is up)
+    if (auto custom = custom_completion()) {
+        const auto& units = user.custom_entries[custom->first].second;
+        ustr label;
+        for (size_t i = static_cast<size_t>(custom->l); i < units.size(); ++i) label.push_back(units[i].ch);
+        suggestions = {label};
+        sugg_actions_ = {*custom};
+        return;
+    }
     std::vector<Action> actions;
     const Token* last = tokens.empty() ? nullptr : &tokens.back();
     // remembered e-mail addresses / English words: the word being typed is a prefix
@@ -2222,8 +2232,10 @@ void Composer::suggest() {
                 Action a;
                 a.type = "word";
                 a.start = start;
-                // an English word keeps the case typed (cla -> claude, Cla -> Claude)
-                a.word = is_email(w) ? w : raw.substr(start) + w.substr(raw.size() - start);
+                // an English word keeps the case typed (cla -> claude, Cla -> Claude); one of 自訂詞彙 is as
+                // written there (kaz -> Kazuma, the user's call 2026-11-13)
+                a.word = is_email(w) || user.custom_english.count(lower(w)) ? w
+                                                                             : raw.substr(start) + w.substr(raw.size() - start);
                 actions.push_back(a);
             }
     }
@@ -2263,7 +2275,7 @@ void Composer::suggest() {
         ustr label;
         if (a.type == "word") {
             std::string l = a.word.substr(raw.size() - a.start);
-            label = U(caps_lock_ ? upper(l) : l);
+            label = U(caps_lock_ && !user.custom_english.count(lower(a.word)) ? upper(l) : l);
         } else {
             label = a.text;
         }
@@ -2277,34 +2289,7 @@ std::vector<Composer::Action> Composer::next_char() {
     // that start with what was just typed (longest context first)
     if (runs_.empty() || runs_.back().second != static_cast<int>(readings.size())) return {};
     auto [a, b] = runs_.back();
-    // 個人詞庫 first: a word of it 2 or more of whose characters (and their readings) end what is typed,
-    // the most characters first, then the first in dictionary.json (大谷 -> 翔 of 大谷翔平; one character, 大,
-    // is left to the dictionary: 我們家 would else follow every 我)
-    for (int k = std::min(MAX_PHRASE_LEN - 1, b - a); k >= CUSTOM_NEXT_MIN; --k) {
-        int s = b - k;
-        ustr typed = composition.substr(syl_offset(s), k);
-        for (const auto& key : user.custom_order) {
-            std::vector<ustr> syls = split(key, U'-');
-            if (static_cast<int>(syls.size()) <= k ||
-                !std::equal(syls.begin(), syls.begin() + k, readings.begin() + s, readings.begin() + b))
-                continue;
-            for (const auto& p : user.custom.at(key)) {
-                // (only a guess Tab can fix as shown, the test pin itself uses: 國 under ㄍㄨㄛˋ gave 獎金過,
-                // 脯 of 拍胸脯 is fixed as the word - review 2026-11-09)
-                if (p.compare(0, k, typed) != 0) continue;
-                std::vector<ustr> chars;
-                for (int i = 0; i <= k; ++i) chars.push_back(ustr(1, p[i]));
-                if (pin_way({syls.begin(), syls.begin() + k + 1}, chars) != PinWay::None) {
-                    Action act;
-                    act.type = "next";
-                    act.s = s;
-                    act.text = ustr(1, p[k]);
-                    act.reading = syls[k];
-                    return {act};
-                }
-            }
-        }
-    }
+    // (個人詞庫's words come whole before this: custom_completion)
     for (int k = std::min(4, b - a); k > 0; --k) {
         int s = b - k;
         int off = syl_offset(s);
@@ -2335,11 +2320,145 @@ std::vector<Composer::Action> Composer::next_char() {
     return {};
 }
 
+std::optional<Composer::Action> Composer::custom_completion() {
+    // a word of 自訂詞彙 (Chinese or mixed) whose keys start with what is typed from the start of a token,
+    // CUSTOM_MIN_WEIGHT of it typed (see engine/composer.py _custom_completion): Action{type "custom", start,
+    // text the word, l the units typed, first its place in custom_entries}
+    const auto& entries = user.custom_entries;
+    if (entries.empty() || raw.empty()) return std::nullopt;
+    std::set<int> starts;
+    for (auto& t : tokens) starts.insert(t.start);
+    std::optional<std::tuple<int, double, int>> best_rank;
+    std::optional<Action> best;
+    for (size_t order = 0; order < entries.size(); ++order) {
+        const auto& [text, units] = entries[order];
+        std::vector<std::string> keys;
+        std::string full;
+        bool writable = true;  // (a 注音 that is none - ？ from 框選查詢: Tab could not write the word)
+        for (auto& u : units) {
+            keys.push_back(u.zh ? table_.reading_to_keys(u.reading) : std::string(1, static_cast<char>(u.ch)));
+            if (u.zh && keys.back().find('?') != std::string::npos) writable = false;
+            full += keys.back();
+        }
+        if (!writable) continue;
+        full = lower(full);
+        std::vector<std::pair<std::vector<ustr>, std::vector<ustr>>> runs;  // the runs of Chinese characters
+        bool in_run = false;
+        for (auto& u : units) {
+            if (u.zh) {
+                if (!in_run) runs.emplace_back();
+                runs.back().first.push_back(u.reading);
+                runs.back().second.push_back(ustr(1, u.ch));
+            }
+            in_run = u.zh;
+        }
+        for (int s : starts) {
+            if (best_rank && s > std::get<0>(*best_rank)) break;
+            std::string typed = raw.substr(s);
+            if (typed.empty() || typed.size() >= full.size() || !starts_with(full, lower(typed))) continue;
+            size_t done = 0, pos = 0;
+            while (done < units.size() && pos + keys[done].size() <= typed.size()) pos += keys[done++].size();
+            int weight = 0;
+            for (size_t i = 0; i < done; ++i)
+                weight += units[i].zh ? 2 : (is_alpha(units[i].ch) || is_digit(units[i].ch)) ? 1 : 0;
+            if (weight < CUSTOM_MIN_WEIGHT) continue;
+            if (units[0].zh && !shown_as(s, units, keys, static_cast<int>(done))) continue;
+            bool pinnable = true;
+            for (auto& [rds, chars] : runs)
+                if (pin_way(rds, chars) == PinWay::None) pinnable = false;
+            if (!pinnable) continue;
+            std::tuple<int, double, int> rank{s, -user.custom_picks.count(text), static_cast<int>(order)};
+            if (!best_rank || rank < *best_rank) {
+                best_rank = rank;
+                Action act;
+                act.type = "custom";
+                act.start = s;
+                act.text = text;
+                act.l = static_cast<int>(done);
+                act.first = static_cast<int>(order);
+                best = act;
+            }
+        }
+    }
+    return best;
+}
+
+bool Composer::shown_as(int s, const std::vector<CustomUnit>& units, const std::vector<std::string>& keys,
+                        int done) const {
+    // the first two Chinese characters of a word starting with Chinese, typed from raw offset s, are shown
+    // as the word writes them
+    int pos = s, seen = 0;
+    for (int i = 0; i < done; ++i) {
+        if (units[i].zh && seen < 2) {
+            ++seen;
+            const Token* tok = nullptr;
+            for (auto& t : tokens)
+                if (t.start == pos && t.kind == Kind::Zh) {
+                    tok = &t;
+                    break;
+                }
+            int at = tok ? tok_offset(pos) : -1;
+            if (!tok || at >= static_cast<int>(composition.size()) || composition[at] != units[i].ch) return false;
+        }
+        pos += static_cast<int>(keys[i].size());
+    }
+    return true;
+}
+
+void Composer::take_custom(const Action& action) {
+    // Tab on a word of 自訂詞彙: the rest of its keys, its English kept English and its Chinese characters fixed
+    // as written; counted for the order of words that start alike
+    // (the word by its text: 個人詞庫 may have been read again since the hint - dictionary.json saved meanwhile)
+    const ustr text = action.text;
+    auto entry = std::find_if(user.custom_entries.begin(), user.custom_entries.end(),
+                              [&](const auto& e) { return e.first == text; });
+    if (entry == user.custom_entries.end()) return;
+    const std::vector<CustomUnit> units = entry->second;
+    int start = action.start;
+    std::vector<std::string> keys;
+    std::string all;
+    for (auto& u : units) {
+        keys.push_back(u.zh ? table_.reading_to_keys(u.reading) : std::string(1, static_cast<char>(u.ch)));
+        all += keys.back();
+    }
+    // (as an edit from start: what was picked or taken from the bar there goes - the word is written as it is)
+    splice(start, static_cast<int>(raw.size()), all);
+    int pos = start;
+    int prev = -1;  // 0 English, 1 space, 2 Chinese
+    std::vector<std::tuple<int, std::vector<ustr>, std::vector<ustr>>> runs;
+    for (size_t i = 0; i < units.size(); ++i) {
+        const auto& u = units[i];
+        int kind = u.zh ? 2 : u.ch == U' ' ? 1 : 0;
+        if (kind != prev) {
+            if (prev >= 0) breaks_.insert(pos);
+            if (kind == 0) forced_.insert(pos);
+            else if (kind == 2) runs.emplace_back(pos, std::vector<ustr>{}, std::vector<ustr>{});
+        }
+        if (kind == 2) {
+            chinese_.insert(pos);
+            std::get<1>(runs.back()).push_back(u.reading);
+            std::get<2>(runs.back()).push_back(ustr(1, u.ch));
+        }
+        pos += static_cast<int>(keys[i].size());
+        prev = kind;
+    }
+    refresh();
+    for (auto& [at, rds, chars] : runs) {
+        int s = 0;
+        for (auto& t : tokens)
+            if (t.kind == Kind::Zh && t.start < at) ++s;
+        pin(s, rds, chars);
+    }
+    user.custom_picks.record(text);
+}
+
 void Composer::take_suggestion() {
     const Action action = sugg_actions_[sugg_index];
-    if (action.type == "word") {
+    if (action.type == "custom") {
+        take_custom(action);
+    } else if (action.type == "word") {
         int start = action.start;
-        if (caps_lock_) {
+        if (caps_lock_ && !user.custom_english.count(lower(action.word))) {
             // what was typed stays; the rest comes in capitals, like the label
             int end = static_cast<int>(raw.size());
             std::string rest = lower(action.word.substr(end - start));
@@ -2396,7 +2515,12 @@ Composer::PinWay Composer::pin_way(const std::vector<ustr>& rds, const std::vect
     if (all_single) return PinWay::Chars;
     ustr phrase;
     for (auto& c : chars) phrase += c;
-    return lexicon_.has(rds, phrase) ? PinWay::Phrase : PinWay::None;
+    if (lexicon_.has(rds, phrase)) return PinWay::Phrase;
+    // (a word of 個人詞庫 is one too: 拍胸脯保證, 脯 no character of its own - Tab writes it whole, #13)
+    if (auto it = user.custom.find(join(rds, U'-')); it != user.custom.end() &&
+        std::find(it->second.begin(), it->second.end(), phrase) != it->second.end())
+        return PinWay::Phrase;
+    return PinWay::None;
 }
 
 void Composer::pin(int start, const std::vector<ustr>& rds, const std::vector<ustr>& chars) {

@@ -146,7 +146,17 @@ function dialog(title, body, buttons) {
 
 // ---- 個人詞庫 editor --------------------------------------------------------------------------
 const CJK = /^[㐀-鿿豈-﫿]+$/;
-const ENGLISH = /^[A-Za-z][A-Za-z'-]*[A-Za-z]$/;   // an English word (Kazuma, e-sports): no 注音 needed
+// an English word (Kazuma, e-sports, iPhone15): a letter first, - or ' between letters or digits, 2 or more
+// (as 框選查詢 takes them); no 注音 needed
+const ENGLISH = /^(?=.{2})[A-Za-z][A-Za-z0-9]*(?:['-][A-Za-z0-9]+)*$/;
+const HAN = /[㐀-鿿豈-﫿]/g;
+// a word mixing Chinese with English letters or digits (PQC技法的ABC功能, PQC 功能): the rules of
+// engine/lexicon.py is_custom_mixed; its 注音 is of its Chinese characters alone
+function isMixed(a) {
+  const han = (a.match(HAN) || []).length;
+  return a.length <= 32 && !/^ | $|  /.test(a) && han > 0 && han <= 8 && /[A-Za-z0-9]/.test(a) &&
+    /^(?:[㐀-鿿豈-﫿A-Za-z0-9 ]|(?<=[A-Za-z0-9])['-](?=[A-Za-z0-9]))+$/.test(a);
+}
 const ZHUYIN = /^[ㄅ-ㄯˊˇˋ˙]*[ㄅ-ㄯ][ㄅ-ㄯˊˇˋ˙]*$/;  // 注音文 (ㄅㄨㄚ): no 注音 either
 function syllables(reading) {
   let n = 0;
@@ -161,7 +171,13 @@ function checkRow(kind, a, b) {
   if (kind === "words") {
     if (ENGLISH.test(a)) return a.length > 32 ? `「${a}」：英文詞彙最多 32 個字元` : "";
     if (ZHUYIN.test(a)) return [...a].length > 8 ? `「${a}」：注音文最多 8 個符號` : "";
-    if (!CJK.test(a)) return `「${a}」：僅支援中文詞彙、英文字母或注音文（英文可包含 - 與 '）`;
+    if (isMixed(a)) {
+      const han = a.match(HAN).length;
+      if (!/^[ㄅ-ㄩˊˇˋ˙ˉ\s-]+$/.test(b)) return `「${a}」：注音欄僅能輸入注音符號與聲調`;
+      if (syllables(b) !== han) return `「${a}」：注音數量須與中文字數相同（共 ${han} 個中文字）`;
+      return "";
+    }
+    if (!CJK.test(a)) return `「${a}」：僅支援中文、英文字母、數字、空白或注音文（英文可包含 - 與 '）`;
     if ([...a].length > 8) return `「${a}」：中文詞彙最多 8 個字`;
     if (!/^[ㄅ-ㄩˊˇˋ˙ˉ\s-]+$/.test(b)) return `「${a}」：注音欄僅能輸入注音符號與聲調`;
     if (syllables(b) !== [...a].length) return `「${a}」：注音數量須與中文字數相同（共 ${[...a].length} 個字）`;
@@ -229,8 +245,9 @@ async function editList(kind) {
     return ia;
   }
   for (const [a, b] of d[kind]) addRow(a, b);
+  // (a word with several spaces in a row keeps one: PQC  功能 is PQC 功能, as 框選查詢 takes it)
   const rows = () => [...tbody.rows].map((r) => [r.cells[0].firstChild.value.trim(), r.cells[1].firstChild.value.trim()])
-    .filter(([a, b]) => a || b);
+    .map(([a, b]) => [words ? a.replace(/ {2,}/g, " ") : a, b]).filter(([a, b]) => a || b);
   const body = h("div", {},
     h("p", { class: "row-desc" }, words ? "輸入法會優先選用此清單中的詞彙。" : "可自定義詞彙映射關係（例：KFC → 肯德基）。中文那一邊打出來後按 ↓，也會出現另一邊（肯德基 → KFC）。"),
     words ? null : mapPreview(),
@@ -253,7 +270,8 @@ async function editList(kind) {
     } }
   ];
   if (words) buttons.splice(0, 0, { text: "自動填入注音", left: true, click: async () => {
-    const empty = [...tbody.rows].filter((r) => CJK.test(r.cells[0].firstChild.value.trim()) && !r.cells[1].firstChild.value.trim());
+    // (a mixed word too: the 注音 of its Chinese characters)
+    const empty = [...tbody.rows].filter((r) => /[㐀-鿿豈-﫿]/.test(r.cells[0].firstChild.value.trim()) && !r.cells[1].firstChild.value.trim());
     const got = await api("readings", { words: empty.map((r) => r.cells[0].firstChild.value.trim()) });
     empty.forEach((r, i) => { if (got[i]) r.cells[1].firstChild.value = got[i]; });
   } });

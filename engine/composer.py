@@ -898,7 +898,8 @@ SPAN_MAX = 4              # characters from the first to the last pick learned a
 # an ordinary sentence the same picks taught pieces of it (鍵變慢, 語料裡常, 會用進 - and with 鍵變慢 a word,
 # 逐漸變慢 read 築鍵變慢; measured, docs/superpowers/items/19/odd_words.py and the review of 2026-11-12)
 SURNAMES = frozenset("陳林黃張李王吳劉蔡楊許鄭謝洪郭邱曾廖賴徐周葉蘇莊呂江何蕭羅高潘簡朱鍾游彭詹胡施沈余盧梁趙顏柯翁魏孫戴范方宋鄧杜傅侯曹薛丁卓阮馬董溫唐藍石蔣古紀姚連馮歐程湯田康姜白汪鄒尤巫鐘黎涂龔嚴韓袁金童陸夏柳邵錢伍倪于譚駱熊任甘秦顧毛章史萬俞雷饒闕凌崔尹孔辛武辜陶易段龍韋葛池孟褚殷麥賀賈莫文管關向包丘梅裴樊房佘左花魯安鮑郝穆翟常申岳齊喬祁談司諸上官令狐皇甫尉遲端木")
-CUSTOM_NEXT_MIN = 2       # 個人詞庫's words are guessed as the next character once this many of theirs are typed
+CUSTOM_MIN_WEIGHT = 3     # 自訂詞彙's words come whole as the Tab hint once this much of one is typed: a letter or
+                          # digit 1, a Chinese character 2 (PQC, 大谷, AI功, 阿Q - the user's call, #13)
 
 
 def phrase_candidates(readings, lexicon, user=None, names=False):
@@ -1755,6 +1756,12 @@ class Composer:
             return
         if self.caret is not None:
             return  # (only at the end, like the ASUS IME: in the middle the bar is up)
+        custom = self._custom_completion()
+        if custom:
+            _, _, _, units, done = custom
+            self.suggestions = ["".join(u[1] if u[0] == "k" else u[2] for u in units[done:])]
+            self._sugg_actions = [custom]
+            return
         actions = []
         last = self.tokens[-1] if self.tokens else None
         # remembered e-mail addresses / English words: the word being typed is a prefix
@@ -1766,8 +1773,9 @@ class Composer:
         for start in sorted(starts):
             if len(self.raw) - start >= 3:
                 for w in self.user.words_starting(self.raw[start:]):
-                    # an English word keeps the case typed (cla -> claude, Cla -> Claude)
-                    if not is_email(w):
+                    # an English word keeps the case typed (cla -> claude, Cla -> Claude); one of 自訂詞彙 is as
+                    # written there (kaz -> Kazuma, the user's call 2026-11-13)
+                    if not is_email(w) and w.lower() not in self.user.custom_english:
                         w = self.raw[start:] + w[len(self.raw) - start:]
                     actions.append(("word", start, w))
         # the English typed at the end: from where the last run of English, symbols and
@@ -1793,7 +1801,7 @@ class Composer:
             if action[0] == "word":
                 _, start, word = action
                 label = word[len(self.raw) - start:]
-                if self.caps_lock:
+                if self.caps_lock and word.lower() not in self.user.custom_english:
                     label = label.upper()
             else:
                 label = action[2]
@@ -1806,20 +1814,7 @@ class Composer:
         if not run or run[1] != len(self.readings):
             return []
         a, b = run
-        # 個人詞庫 first: a word of it 2 or more of whose characters (and their readings) end what is
-        # typed, the most characters first, then the first in dictionary.json (大谷 -> 翔 of 大谷翔平;
-        # one character, 大, is left to the dictionary: 我們家 would else follow every 我)
-        for k in range(min(MAX_PHRASE_LEN - 1, b - a), CUSTOM_NEXT_MIN - 1, -1):
-            s = b - k
-            typed = self.composition[self._syl_offset(s):self._syl_offset(s) + k]
-            for key, phrases in self.user.custom.items():
-                syls = key.split("-")
-                if len(syls) > k and syls[:k] == self.readings[s:b]:
-                    for p in phrases:
-                        # (only a guess Tab can fix as shown, the test _pin itself uses: 國 under ㄍㄨㄛˋ
-                        # gave 獎金過, 脯 of 拍胸脯 is fixed as the word - review 2026-11-09)
-                        if p[:k] == typed and self._pin_way(syls[:k + 1], list(typed + p[k])):
-                            return [("next", s, p[k], syls[k])]
+        # (個人詞庫's words come whole before this: _custom_completion)
         for k in range(min(4, b - a), 0, -1):
             s = b - k
             typed = self.composition[self._syl_offset(s):self._syl_offset(s) + k]
@@ -1833,11 +1828,108 @@ class Composer:
                 return [("next", s, char, reading)]
         return []
 
+    def _custom_completion(self):
+        """A word of 自訂詞彙 (Chinese or mixed: custom_entries) whose keys start with what is typed from the start
+        of a token, CUSTOM_MIN_WEIGHT of it typed: ("custom", start, word, units, units typed), or None (#13).
+        The keys are compared (letters whatever their case), not what is shown: ai is the AI of AI功能, and
+        記 shown for the ㄐㄧˋ of PQC技法 still is 技; but a word starting with Chinese needs its first two
+        characters shown as written (大穀 shown is no 大谷翔平, as before). Only a word Tab can write as it is
+        (_pin_way). Of several: the longest typed, then the most taken with Tab, then the first in 自訂詞彙."""
+        entries = self.user.custom_entries
+        if not entries or not self.raw:
+            return None
+        starts = sorted({t.start for t in self.tokens})
+        best = None
+        for order, (text, units) in enumerate(entries):
+            keys = [u[1] if u[0] == "k" else self.table.reading_to_keys(u[1]) for u in units]
+            if any(u[0] == "zh" and "?" in k for u, k in zip(units, keys)):
+                continue  # (a 注音 that is none - ？ from 框選查詢: Tab could not write the word)
+            full = "".join(keys).lower()
+            runs, run = [], None  # the runs of Chinese characters: (readings, characters)
+            for u in units:
+                if u[0] == "zh":
+                    if run is None:
+                        run = ([], [])
+                        runs.append(run)
+                    run[0].append(u[1])
+                    run[1].append(u[2])
+                else:
+                    run = None
+            for s in starts:
+                typed = self.raw[s:]
+                if best is not None and s > best[0][0]:
+                    break
+                if not typed or len(typed) >= len(full) or not full.startswith(typed.lower()):
+                    continue
+                done, pos = 0, 0
+                while done < len(units) and pos + len(keys[done]) <= len(typed):
+                    pos += len(keys[done])
+                    done += 1
+                weight = sum(2 if u[0] == "zh" else 1 if u[1].isalnum() else 0 for u in units[:done])
+                if weight < CUSTOM_MIN_WEIGHT:
+                    continue
+                if units[0][0] == "zh" and not self._shown_as(s, units, keys, done):
+                    continue
+                if any(self._pin_way(rds, chars) is None for rds, chars in runs):
+                    continue
+                rank = (s, -self.user.custom_picks.count(text), order)
+                if best is None or rank < best[0]:
+                    best = (rank, ("custom", s, text, units, done))
+        return best[1] if best else None
+
+    def _shown_as(self, s, units, keys, done):
+        """The first two Chinese characters of a word starting with Chinese, typed from raw offset s, are
+        shown as the word writes them."""
+        pos, seen = s, 0
+        for u, k in zip(units[:done], keys):
+            if u[0] == "zh" and seen < 2:
+                seen += 1
+                tok = next((t for t in self.tokens if t.start == pos and t.kind == "zh"), None)
+                at = self._tok_offset(pos) if tok is not None else -1
+                if tok is None or at >= len(self.composition) or self.composition[at] != u[2]:
+                    return False
+            pos += len(k)
+        return True
+
+    def _take_custom(self, action):
+        """Tab on a word of 自訂詞彙 (_custom_completion): the rest of its keys, its English kept English and its
+        Chinese characters fixed as written; counted for the order of words that start alike."""
+        _, start, text, _, _ = action
+        # (the word by its text: 個人詞庫 may have been read again since the hint - dictionary.json saved meanwhile)
+        units = next((u for t, u in self.user.custom_entries if t == text), None)
+        if units is None:
+            return
+        keys = [u[1] if u[0] == "k" else self.table.reading_to_keys(u[1]) for u in units]
+        # (as an edit from start: what was picked or taken from the bar there goes - the word is written as it is)
+        self._splice(start, len(self.raw), "".join(keys))
+        pos, prev, runs = start, None, []
+        for u, k in zip(units, keys):
+            kind = "zh" if u[0] == "zh" else "space" if u[1] == " " else "en"
+            if kind != prev:
+                if prev is not None:
+                    self.breaks.add(pos)
+                if kind == "en":
+                    self.forced.add(pos)
+                elif kind == "zh":
+                    runs.append((pos, [], []))
+            if kind == "zh":
+                self.chinese.add(pos)
+                runs[-1][1].append(u[1])
+                runs[-1][2].append(u[2])
+            pos += len(k)
+            prev = kind
+        self._refresh()
+        for at, readings, chars in runs:
+            self._pin(sum(1 for t in self.tokens if t.kind == "zh" and t.start < at), readings, chars)
+        self.user.custom_picks.record(text)
+
     def _take_suggestion(self):
         action = self._sugg_actions[self.sugg_index]
-        if action[0] == "word":
+        if action[0] == "custom":
+            self._take_custom(action)
+        elif action[0] == "word":
             _, start, word = action
-            if self.caps_lock:
+            if self.caps_lock and word.lower() not in self.user.custom_english:
                 # what was typed stays; the rest comes in capitals, like the label
                 end = len(self.raw)
                 rest = word[end - start:].lower()
@@ -1904,6 +1996,9 @@ class Composer:
         if all(self.lexicon.has([rd], ch) for rd, ch in zip(readings, chars)):
             return "chars"
         if self.lexicon.has(readings, "".join(chars)):
+            return "phrase"
+        # (a word of 個人詞庫 is one too: 拍胸脯保證, 脯 no character of its own - Tab writes it whole, #13)
+        if "".join(chars) in self.user.custom.get("-".join(readings), ()):
             return "phrase"
         return None
 

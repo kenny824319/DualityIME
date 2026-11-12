@@ -102,6 +102,10 @@ static class SettingsTest {
             var r = (List<object>)call("readings", new Dictionary<string, object> { { "words", new object[] { "台灣", "你好嗎", "㐀㐁" } } });
             Check("填入注音 from the lexicon", (string)r[0] == "ㄊㄞˊ ㄨㄢ" && ((string)r[1]).Split(' ').Length == 3 && (string)r[2] == "",
                   string.Join(" | ", r));
+            // a word mixing English with Chinese: the 注音 of its Chinese characters alone (#13)
+            r = (List<object>)call("readings", new Dictionary<string, object> { { "words", new object[] { "PQC功能", "iPhone15手機", "PQC 台灣" } } });
+            Check("填入注音 of a mixed word: its Chinese characters", (string)r[0] == "ㄍㄨㄥ ㄋㄥˊ" && (string)r[1] == "ㄕㄡˇ ㄐㄧ" &&
+                  (string)r[2] == "ㄊㄞˊ ㄨㄢ", string.Join(" | ", r));
 
             // 匯出與匯入: one file; importing merges into what is here, the memory through import-memory.json
             File.WriteAllText(Path.Combine(dir, "user.json"),
@@ -112,6 +116,9 @@ static class SettingsTest {
             File.WriteAllText(Path.Combine(dir, "keys.json"),
                 "{\"format\": 1, \"standard\": {\"picks\": {\"817\": {\"\": 2}}, \"used\": {\"817\": {\"\": 20000}}}, \"eten\": {\"picks\": {}, \"used\": {}}}",
                 new UTF8Encoding(false));
+            // 自訂詞彙 taken with Tab: a file of its own too (#13)
+            File.WriteAllText(Path.Combine(dir, "custom_picks.json"),
+                "{\"format\": 1, \"picks\": {\"PQC功能\": 2}, \"used\": {\"PQC功能\": 20000}}", new UTF8Encoding(false));
             call("setConfig", new Dictionary<string, object> { { "key", "preview" }, { "value", "zhuyin" } });
             call("forgetWords", null);
             string file = Path.Combine(dir, "backup.json");
@@ -125,6 +132,8 @@ static class SettingsTest {
                   !savedConfig.ContainsKey("import_memory"), json.Serialize(saved2));
             Check("the export holds 校正記憶 with the memory",
                   ((Dictionary<string, object>)saved2["memory"]).ContainsKey("keys"), json.Serialize(saved2));
+            Check("the export holds the Tab counts of 自訂詞彙 with the memory",
+                  ((Dictionary<string, object>)saved2["memory"]).ContainsKey("custom_picks"), json.Serialize(saved2));
 
             // another computer: different settings and dictionary, one row the same
             File.Delete(Path.Combine(dir, "user.json"));
@@ -149,6 +158,8 @@ static class SettingsTest {
                   File.Exists(Path.Combine(dir, "import-memory.json")), json.Serialize(saved));
             Check("校正記憶 goes to the IME with the memory",
                   File.ReadAllText(Path.Combine(dir, "import-memory.json"), Encoding.UTF8).Contains("\"keys\""), "import-memory.json");
+            Check("the Tab counts of 自訂詞彙 go to the IME with the memory",
+                  File.ReadAllText(Path.Combine(dir, "import-memory.json"), Encoding.UTF8).Contains("custom_picks"), "import-memory.json");
             b.ReadBackup(file);
             call("restoreBackup", new Dictionary<string, object> { { "config", true } });
             saved = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(Path.Combine(dir, "config.json"), Encoding.UTF8));

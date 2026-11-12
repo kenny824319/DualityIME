@@ -48,12 +48,13 @@ FINALS = set("ㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦ")
 
 
 def reading_to_keys(reading):
-    """'ㄋㄧˇ' -> 'su3', 'ㄐㄧ' -> 'ru ' (first tone is the space key)."""
+    """'ㄋㄧˇ' -> 'su3', 'ㄐㄧ' -> 'ru ' (first tone is the space key); what is no 注音 symbol is '?' (a
+    個人詞庫 word's 注音 can be anything: ？ from 框選查詢), as in cpp/engine/zhuyin.cpp."""
     key_of = {v: k for k, v in KEYMAP.items()}
     tone_key = {v: k for k, v in TONES.items() if v}
     if reading and reading[-1] in tone_key:
-        return "".join(key_of[c] for c in reading[:-1]) + tone_key[reading[-1]]
-    return "".join(key_of[c] for c in reading) + " "
+        return "".join(key_of.get(c, "?") for c in reading[:-1]) + tone_key[reading[-1]]
+    return "".join(key_of.get(c, "?") for c in reading) + " "
 
 
 def _rank(sym):

@@ -193,6 +193,9 @@ private:
     void splice(int p, int q, const std::string& text);
     void suggest();
     std::vector<Action> next_char();
+    std::optional<Action> custom_completion();  // 自訂詞彙 typed to its start (#13): see engine/composer.py
+    bool shown_as(int s, const std::vector<CustomUnit>& units, const std::vector<std::string>& keys, int done) const;
+    void take_custom(const Action& action);
     void take_suggestion();
     enum class PinWay { None, Chars, Phrase };
     PinWay pin_way(const std::vector<ustr>& rds, const std::vector<ustr>& chars) const;

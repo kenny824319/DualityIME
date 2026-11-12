@@ -88,7 +88,16 @@ bool is_code(const std::string& keys);
 bool is_email(const std::string& word);  // a remembered e-mail address (else an English word)
 bool is_url(const std::string& word);    // a URL: never remembered
 bool is_one_key(const std::string& raw);  // one letter or digit key, with or without a space: never learned as English
-bool is_custom_english(const std::string& word);  // an English word the user can add to 自訂詞彙
+bool is_custom_english(const std::string& word);  // an English word the user can add to 自訂詞彙 (iPhone15 too)
+// a word of 自訂詞彙 mixing Chinese with English letters or digits (PQC技法的ABC功能): see engine/lexicon.py
+bool is_custom_mixed(const ustr& word);
+// a unit of a Chinese or mixed word of 自訂詞彙: a key (letter, digit, space, - or ') or a Chinese character
+struct CustomUnit {
+    bool zh = false;
+    char32_t ch = 0;  // the key, or the character
+    ustr reading;     // the character's syllable
+    bool operator==(const CustomUnit& o) const { return zh == o.zh && ch == o.ch && reading == o.reading; }
+};
 // zhuyin symbols (and tone marks), at least one symbol: ㄅㄨㄚ, ㄏㄏ, ㄍㄢˋ
 bool is_zhuyin_text(const ustr& text);
 inline const ustr ZHUYIN_TEXT = U"~";  // phrases["~ㄅㄨㄚ"]: 注音文 picked (its keys spell no syllable), counted
@@ -140,6 +149,27 @@ private:
     mutable std::unordered_set<std::string> codes_;
 };
 
+// How often each word of 自訂詞彙 was taken with Tab (custom_picks.json next to user.json, a file of its own):
+// words that start alike are offered most taken first (#13). See engine/lexicon.py CustomPickMemory.
+class CustomPickMemory {
+public:
+    CustomPickMemory(std::wstring path, std::function<int()> today);
+    double count(const ustr& word) const;
+    void record(const ustr& word);
+    void forget();                // 全部清除
+    void merge(const Json& raw);  // a backup restored
+    void save();
+    void keep_file() { keep_file_ = true; }  // never write custom_picks.json again (UserModel::keep_files)
+
+private:
+    static void parse(const Json& raw, std::map<ustr, double>& picks, std::map<ustr, int>& used);
+    std::wstring path_;
+    std::function<int()> today_;
+    bool keep_file_ = false;
+    std::map<ustr, double> picks_;
+    std::map<ustr, int> used_;
+};
+
 class UserModel {
 public:
     // path empty: nothing is read or written (tests)
@@ -177,6 +207,7 @@ public:
     void keep_files() {
         keep_files_ = true;
         corrections.keep_file();
+        custom_picks.keep_file();
     }
 
     OrderedMap<ustr, OrderedMap<ustr, double>> phrases;
@@ -193,10 +224,13 @@ public:
     std::vector<ustr> custom_order;                      // ...its reading keys in dictionary.json's order
     std::vector<std::string> custom_words;               // 個人詞庫's English words, as written (Kazuma)
     std::unordered_set<std::string> custom_english;      // ...the same, lower case
+    // its Chinese and mixed words (大谷翔平, PQC技法的ABC功能) in dictionary.json's order, with their units (#13)
+    std::vector<std::pair<ustr, std::vector<CustomUnit>>> custom_entries;
     std::unordered_set<ustr> custom_zhuyin;  // 注音文 in 個人詞庫 (ㄅㄨㄚ): offered where its keys are typed
     std::map<std::string, ustr> shortcuts;               // keys (lower case) -> text, sorted
     std::map<ustr, std::vector<ustr>> chinese_shortcuts;  // 映射詞彙 both ways: Chinese side as shown -> the other side(s)
     CorrectionMemory corrections;  // 注音自動校正's picks, in a file of their own (read once the setting is on)
+    CustomPickMemory custom_picks;  // 自訂詞彙 taken with Tab, in a file of its own (#13)
 
 private:
     double faded(double count, const int* day) const;

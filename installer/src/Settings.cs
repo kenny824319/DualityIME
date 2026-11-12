@@ -498,6 +498,8 @@ public class Backend {
         return rows.Count;
     }
 
+    static bool IsHan(char c) { return c >= 0x3400 && c <= 0x9FFF || c >= 0xF900 && c <= 0xFAFF; }  // (as Lookup.IsHan)
+
     object Readings(Dictionary<string, object> a) {
         // 注音 for each word, from the dictionary the IME uses ("" if unknown)
         if (readings == null) {
@@ -517,13 +519,23 @@ public class Backend {
         }
         var outList = new List<object>();
         foreach (object w in (a["words"] as object[]) ?? new object[0]) {
+            // each run of Chinese characters: the run as a word of the lexicon, else one character at a time;
+            // English letters, digits and spaces have no 注音 (PQC功能: ㄍㄨㄥ ㄋㄥˊ, #13)
             string word = "" + w;
-            string r;
-            if (readings.TryGetValue(word, out r)) { outList.Add(r.Replace("-", " ")); continue; }
             var syl = new List<string>();
-            foreach (char ch in word) {
-                if (!readings.TryGetValue(ch.ToString(), out r)) { syl = null; break; }
-                syl.Add(r);
+            int i = 0;
+            while (syl != null && i < word.Length) {
+                if (!IsHan(word[i])) { i++; continue; }
+                int j = i;
+                while (j < word.Length && IsHan(word[j])) j++;
+                string run = word.Substring(i, j - i), r;
+                if (readings.TryGetValue(run, out r)) syl.Add(r.Replace("-", " "));
+                else
+                    foreach (char ch in run) {
+                        if (!readings.TryGetValue(ch.ToString(), out r)) { syl = null; break; }
+                        syl.Add(r);
+                    }
+                i = j;
             }
             outList.Add(syl == null ? "" : string.Join(" ", syl));
         }
@@ -547,6 +559,13 @@ public class Backend {
         if (corrections != null) {
             if (memory == null) memory = new Dictionary<string, object>();
             memory["keys"] = corrections;
+        }
+        // 自訂詞彙 taken with Tab (custom_picks.json, a file of its own) too
+        Dictionary<string, object> customPicks = null;
+        try { customPicks = json.DeserializeObject(File.ReadAllText(Path.Combine(dataDir, "custom_picks.json"), Encoding.UTF8)) as Dictionary<string, object>; } catch { }
+        if (customPicks != null) {
+            if (memory == null) memory = new Dictionary<string, object>();
+            memory["custom_picks"] = customPicks;
         }
         var data = new Dictionary<string, object> {
             { "app", Migrate.AppName }, { "format", BackupFormat }, { "created", DateTime.Now.ToString("yyyy-MM-dd HH:mm") },

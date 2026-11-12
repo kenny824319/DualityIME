@@ -35,7 +35,11 @@ static class Lookup {
     static int Main(string[] args) {
         string text = null;
         if (args.Length >= 2 && args[0] == "--print") return Print(Zhuyin(args[1]));
-        if (args.Length >= 2 && args[0] == "--add-word") return Print(AddWord(args[1], Zhuyin(args[1])));
+        if (args.Length >= 2 && args[0] == "--add-word") {
+            string word = AsWord(args[1]);
+            if (!CanBeWord(word)) { Print("「" + word + "」不能加入自訂詞彙"); return 1; }
+            return Print(AddWord(word, Zhuyin(word)));
+        }
         if (args.Length >= 3 && args[0] == "--add-shortcut") return Print(AddShortcut(args[1], args[2]));
         if (args.Length >= 2 && args[0] == "--text") text = args[1];
         // one window at a time: a double Ctrl tap could start several of us at once. Made by a
@@ -204,8 +208,9 @@ static class Lookup {
     public static string AddWord(string word, string zhuyin) {
         var d = ReadDictionary();
         var words = Pairs(d, "words");
-        // (an English word is the same word whatever its case: the engine reads it so)
-        if (words.Any(p => p[0] == word || IsEnglishWord(word) && p[0].Equals(word, StringComparison.OrdinalIgnoreCase)))
+        // (an English word, or the English of a mixed one, is the same whatever its case)
+        if (words.Any(p => p[0] == word ||
+                           (IsEnglishWord(word) || IsMixedWord(word)) && p[0].Equals(word, StringComparison.OrdinalIgnoreCase)))
             return "「" + word + "」已經在自訂詞彙裡了";
         words.Add(new[] { word, zhuyin });
         WriteDictionary(words, Pairs(d, "shortcuts"));
@@ -220,14 +225,32 @@ static class Lookup {
         WriteDictionary(Pairs(d, "words"), shortcuts);
         return "已加入映射詞彙";
     }
-    // A word for 自訂詞彙: Chinese (with its 注音), or an English word (no 注音), as the settings page
-    // takes them (settings/ui/app.js checkRow)
-    public static bool CanBeWord(string s) { return s.Length > 0 && s.Length <= MaxWord && s.All(IsHan) || IsEnglishWord(s); }
-    // letters, - or ' inside (Kazuma, e-sports, rock'n'roll), 2 to 32
+    // A word for 自訂詞彙: Chinese (with its 注音), an English word (no 注音), or one mixing them (the 注音 of its
+    // Chinese characters), as the settings page takes them (settings/ui/app.js checkRow); s as AsWord gives it
+    public static bool CanBeWord(string s) {
+        return s.Length > 0 && s.Length <= MaxWord && s.All(IsHan) || IsEnglishWord(s) || IsMixedWord(s);
+    }
+    // what is selected as a word: no space at either end, one space where there were several (PQC 功能)
+    public static string AsWord(string s) { return string.Join(" ", s.Split((char[])null, StringSplitOptions.RemoveEmptyEntries)); }
+    static bool Letter(char c) { return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z'; }
+    static bool Alnum(char c) { return Letter(c) || c >= '0' && c <= '9'; }
+    // - or ' between letters or digits
+    static bool Joins(string s, int i) { return (s[i] == '-' || s[i] == '\'') && i > 0 && i < s.Length - 1 && Alnum(s[i - 1]) && Alnum(s[i + 1]); }
+    // a letter first, letters and digits, - or ' between them (Kazuma, e-sports, rock'n'roll, iPhone15), 2 to 32
     public static bool IsEnglishWord(string s) {
-        Func<char, bool> letter = c => c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z';
-        return s.Length >= 2 && s.Length <= 32 && letter(s[0]) && letter(s[s.Length - 1]) &&
-               s.All(c => letter(c) || c == '-' || c == '\'');
+        if (s.Length < 2 || s.Length > 32 || !Letter(s[0]) || !Alnum(s[s.Length - 1])) return false;
+        for (int i = 0; i < s.Length; i++)
+            if (!Alnum(s[i]) && !Joins(s, i)) return false;
+        return true;
+    }
+    // Chinese with English letters or digits (PQC技法的ABC功能, PQC 功能): engine/lexicon.py is_custom_mixed
+    public static bool IsMixedWord(string s) {
+        int han = s.Count(IsHan);
+        if (s.Length > 32 || han == 0 || han > MaxWord || !s.Any(Alnum) || s.StartsWith(" ") || s.EndsWith(" ") || s.Contains("  "))
+            return false;
+        for (int i = 0; i < s.Length; i++)
+            if (!IsHan(s[i]) && !Alnum(s[i]) && s[i] != ' ' && !Joins(s, i)) return false;
+        return true;
     }
     public static bool CanBeShortcutText(string s) { return s.Length > 0 && s.Length <= MaxText; }
     public static bool IsShortcutKeys(string s) {
@@ -300,8 +323,9 @@ class LookupWindow : Form {
             }
             int x = px(16);
             x = AddButton("🔊 朗讀", x, y, px(96), px(32), (s, e) => Speak());
-            if (Lookup.CanBeWord(this.text))
-                x = AddButton("加入自訂詞彙", x, y, px(120), px(32), (s, e) => Report(Lookup.AddWord(this.text, zhuyin)));
+            string word = Lookup.AsWord(this.text);
+            if (Lookup.CanBeWord(word))
+                x = AddButton("加入自訂詞彙", x, y, px(120), px(32), (s, e) => Report(Lookup.AddWord(word, Lookup.Zhuyin(word))));
             if (Lookup.CanBeShortcutText(this.text))
                 AddButton("加入映射詞彙", x, y, px(120), px(32), (s, e) => AskShortcut());
             y += px(40);
