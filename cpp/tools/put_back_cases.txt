@@ -1,0 +1,22 @@
+# End-to-end checks of keys put back as English and the syllable picked back (one engine for all lines, so
+# what is remembered carries over):
+#   powershell -ExecutionPolicy Bypass -File cpp\tools\e2e.ps1 cpp\tools\put_back_cases.txt
+# 輸 put back as its keys (gj) from the bar: an English word from then on
+gj {HOME}{UP}{RIGHT}{RIGHT}{ENTER}{END}su3{ENTER} => gj 你
+gj bj4{ENTER} => gj 入
+# 輸 picked back from the bar once: gj is forgotten (reported: picked again and again, 輸入 came out gj 入
+# for good; only a pick from the ↓ list forgot it)
+gj bj4{HOME}{UP}{RIGHT}{ENTER}{ENTER} => 輸入
+gj bj4{ENTER} => 輸入
+ji3gj bj4{ENTER} => 我輸入
+# ...and its zhuyin picked from the bar (ㄕㄨ) forgets it too
+gj {HOME}{UP}{RIGHT}{RIGHT}{ENTER}{END}su3{ENTER} => gj 你
+gj bj4{HOME}{UP}{ENTER}{ENTER} => ㄕㄨ 入
+gj bj4{ENTER} => 輸入
+# 新 put back as its keys (vup), then 新 picked back once from the bar inside 新功能 (reported: picked
+# again and again, and also tried in vup 功能, it never came back)
+vup {HOME}{UP}{RIGHT}{RIGHT}{RIGHT}{ENTER}{END}su3{ENTER} => vup 你
+vup ej/ s/6{ENTER} => vup 功能
+vup ej/ s/6{HOME}{UP}{RIGHT}{ENTER}{ENTER} => 新功能
+vup ej/ s/6{ENTER} => 新功能
+vup {ENTER} => 新

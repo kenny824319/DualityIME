@@ -228,6 +228,12 @@ private:
     void drop_orphans();           // kept characters go with the pick that kept them
     void learn_group(const std::vector<std::tuple<int, std::vector<ustr>, ustr>>& group);
     void learn_pairs(const std::vector<Segment>& before);  // 繪 picked after 重 (no word): half of 重繪
+    void forget_english_at(int c);
+    void forget_english_word(const Token& tok);  // ...this token's English word (its own keys)  // a word read as English picked as something else from its start: not English
+    void learn_spans(const std::vector<Segment>& before);  // 沈 and 睿 picked, 家 between: half of 沈家睿
+    void learn_beside_words(const std::vector<Segment>& before);  // 沈 picked before a taught 家睿: half of 沈家睿
+    // 家睿 learned now turns the 沈 sent before it into 審 from then on: 沈家睿 is learned as it was sent
+    void learn_what_learning_changed(const OrderedMap<ustr, OrderedMap<ustr, double>>& old_phrases);
     void do_commit();
     void remember(const ustr& text);
     bool may_split(const std::string& raw) const;

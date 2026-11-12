@@ -1,0 +1,21 @@
+# End-to-end checks of words of the personal dictionary with a syllable no character has on its own
+# (the second of 掰掰, of 電餅; the first of 餅噹): typed whole they come out, elsewhere the keys are as before
+#   powershell -ExecutionPolicy Bypass -File cpp\tools\e2e.ps1 cpp\tools\phrase_reading_cases.txt -Dictionary cpp\tools\phrase_reading_dictionary.json
+# e2e-args: -Dictionary cpp\tools\phrase_reading_dictionary.json
+19 197{ENTER} => 掰掰
+ep su3gji 19 197{ENTER} => 跟你說掰掰
+19 197au/6wu0 ru04{ENTER} => 掰掰明天見
+2u041u;3{ENTER} => 電餅
+ji3ul4t 2u041u;3{ENTER} => 我要吃電餅
+1u;32; {ENTER} => 餅噹
+# the same keys elsewhere: a number, the keys as typed
+197{ENTER} => 197
+u.3197ek7{ENTER} => 有197個
+196197{ENTER} => 白197
+ok 197{ENTER} => ok 197
+2u04cj84197{ENTER} => 電話197
+ji31u;3{ENTER} => 我1u;3
+1u;3{ENTER} => 1u;3
+you are 19 197{ENTER} => you are 19 197
+# the list on such a syllable is its word (it opened nothing, and Esc then cleared the line)
+19 197{DOWN}{ESC}{ENTER} => 掰掰

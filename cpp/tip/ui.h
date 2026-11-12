@@ -114,7 +114,10 @@ public:
     // text right after `text_rect` (the text being typed); hides itself after `ms` if not 0.
     // follow_caret: the app gave no exact place, so move next to the system caret once
     // the app has moved it (older apps going through the IMM32 layer)
-    void show(const std::wstring& text, const RECT& text_rect, UINT ms = 0, bool follow_caret = false);
+    // below: under the line instead, its left edge at the rect's (above it if there is no room below),
+    // where what is typed next does not come out behind it (the 中／英 box)
+    void show(const std::wstring& text, const RECT& text_rect, UINT ms = 0, bool follow_caret = false,
+              bool below = false);
 
 protected:
     void draw(HDC dc, int w, int h) override;
@@ -124,6 +127,7 @@ private:
     void move_to(const RECT& r);
     std::wstring text_;
     int w_ = 0, h_ = 0;
+    bool below_ = false;
 };
 
 class ZhuyinTip : public Popup {

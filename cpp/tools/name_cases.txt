@@ -1,0 +1,12 @@
+# End-to-end checks of a name picked right again and again (one engine for all lines, so what is picked
+# carries over; a made-up name that goes wrong the way the reported one did):
+#   powershell -ExecutionPolicy Bypass -File cpp\tools\e2e.ps1 cpp\tools\name_cases.txt
+# one character picked, the family name right as it comes (蔣冠廷, 霆 picked): the second time 冠霆 is a word,
+# and with it the family name just sent would read 獎 from then on (it had to be picked twice as well, after
+# the name seemed learned). The name is learned as it was sent: by itself the third time
+ru;3ej04wu/6{ENTER} => 蔣冠廷
+ru;3ej04wu/6{HOME}{RIGHT}{RIGHT}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER} => 蔣冠霆
+ru;3ej04wu/6{HOME}{RIGHT}{RIGHT}{DOWN}{ENTER}{ENTER} => 蔣冠霆
+ru;3ej04wu/6{ENTER} => 蔣冠霆
+ji35l3ru;3ej04wu/6{ENTER} => 我找蔣冠霆
+ru;3ej04wu/6gji cl3{ENTER} => 蔣冠霆說好

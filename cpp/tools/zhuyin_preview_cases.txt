@@ -1,0 +1,14 @@
+# End-to-end checks with the typing preview set to zhuyin (an unfinished syllable shows as zhuyin)
+#   powershell -ExecutionPolicy Bypass -File cpp\tools\e2e.ps1 cpp\tools\zhuyin_preview_cases.txt -Config cpp\tools\zhuyin_preview.json
+# e2e-args: -Config cpp\tools\zhuyin_preview.json
+su3cl3{ENTER} => 你好
+# an unfinished syllable goes out as its zhuyin
+su{ENTER} => ㄋㄧ
+su3t{ENTER} => 你ㄔ
+# ... and back to its keys from the candidates or the bar (reported: there was no way back to them)
+su{DOWN}2{ENTER} => su
+su{HOME}{UP}{ENTER}{ENTER} => su
+t{HOME}{UP}{ENTER}{ENTER} => t
+a{DOWN}2{ENTER} => a
+# this once only: the same keys are zhuyin again
+su3su{ENTER} => 你ㄋㄧ

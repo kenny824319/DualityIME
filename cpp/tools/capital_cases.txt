@@ -7,11 +7,31 @@ UIg;4{ENTER} => UI上
 ji3ap7UIg;4{ENTER} => 我們UI上
 PDFsu3{ENTER} => PDF你
 OKcl3{ENTER} => OK好
-# an English word that goes on in lower case stays English
+# an acronym the English list does not have, then a first tone spelled with letters alone or a tone
+# digit (reported: AMIvup 功能), or a syllable that starts with a digit key (包: 1l)
+AMIvup ej/ s/6{ENTER} => AMI新功能
+AIvup ej/ s/6{ENTER} => AI新功能
+PQCvup ej/ s/6{ENTER} => PQC新功能
+AMIn0 ek4{ENTER} => AMI三個
+API1l dji4{ENTER} => API包括
+# an English word that goes on in lower case stays English, a model's number too
 PDFs{ENTER} => PDFs
 GitHub{ENTER} => GitHub
 IDs{ENTER} => IDs
 NVMe{ENTER} => NVMe
+SQLite{ENTER} => SQLite
+PS5{ENTER} => PS5
+V8{ENTER} => V8
+COVID19{ENTER} => COVID19
+PS5 g4{ENTER} => PS5 是
+# a term that ends in one lower-case letter (i, t, u, g with the space are syllables), or in a digit and
+# a letter, stays as typed (they came out RNA喔, USD吃, MP折); a common word after capitals is still Chinese
+RNAi ok{ENTER} => RNAi ok
+USDt ok{ENTER} => USDt ok
+dBu ok{ENTER} => dBu ok
+MP5k ok{ENTER} => MP5k ok
+mmHg g4{ENTER} => mmHg 是
+AMIu u;4{ENTER} => AMI一樣
 # a syllable people type is zhuyin, not its keys (GitHub issue 1: ㄏㄞ + space came out c9)
 c9 {ENTER} => 嗨
 c9 su3cl3{ENTER} => 嗨你好

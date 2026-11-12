@@ -84,6 +84,24 @@ CASES = [
     "abcc12345678@example.com{ENTER}gmai", "gpt4 python3 don't{ENTER}gpt4 python3 don't{ENTER}don",
     "{CAPS}cla{CAPS}{TAB}", "claud{TAB}",
     "kaz{TAB}", "kazuma ", "su3kazuma{ENTER}", "KAZ{TAB}", "dd{DOWN}1", "1j8{HOME}{UP}{ENTER}{ENTER}1j8{DOWN}1", "cc{HOME}{UP}{ENTER}{ENTER}su3cc{DOWN}{ENTER}", "1j84{HOME}{UP}{ENTER}", "hello{HOME}{UP}", "ok{HOME}{UP}", "lol{HOME}{UP}", "187", "ji318", "2026 ", "5j", "OK{HOME}{UP}", "dd{HOME}{UP}",
+    # an unfinished syllable back to its keys where it shows as zhuyin (preview zhuyin: ↓ and the bar have su,
+    # this once: su is ㄋㄧ again after it); the other previews offer ㄋㄧ only
+    "su{DOWN}2{ENTER}su3su{DOWN}", "su{HOME}{UP}{ENTER}{ENTER}su3su{ENTER}", "t{HOME}{UP}{ENTER}su3t{DOWN}{ESC}{ENTER}",
+    "a{HOME}{UP}{ENTER}{ENTER}su3a{HOME}{RIGHT}{UP}{ENTER}{ENTER}", "{CAPS}su{CAPS}{HOME}{UP}{ENTER}{ENTER}",
+    # (keys with a digit are no code of 代碼記憶 after two such picks: 1j is ㄅㄨ still; a punctuation key
+    # after Chinese is offered neither way)
+    "1j{DOWN}2{ENTER}1j{DOWN}2{ENTER}1j{ENTER}su31j{HOME}{RIGHT}{UP}{ENTER}{ENTER}1j{ENTER}su3cl3,{LEFT}{UP}{ESC}{DOWN}{ESC}{ENTER}",
+    # keys put back as English from the bar (gj of 輸), then the syllable picked back from the bar: forgotten
+    # (輸入 came out gj 入 for good); the bar's label trying the pick out forgets nothing
+    "gj {HOME}{UP}{RIGHT}{RIGHT}{ENTER}{ENTER}gj bj4{HOME}{UP}{RIGHT}{ENTER}{ENTER}gj bj4{ENTER}gj {HOME}{UP}{ENTER}{ENTER}",
+    "gj {HOME}{UP}{RIGHT}{RIGHT}{ENTER}{ENTER}gj bj4{HOME}{UP}{ENTER}{ENTER}gj bj4{ENTER}",
+    "vup {HOME}{UP}{RIGHT}{RIGHT}{RIGHT}{ENTER}{ENTER}vup ej/ s/6{HOME}{UP}{RIGHT}{ENTER}{ENTER}vup ej/ s/6{ENTER}vup {ENTER}",
+    "vup {HOME}{UP}{RIGHT}{RIGHT}{RIGHT}{ENTER}{ENTER}vup {HOME}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}vup {ENTER}",
+    # (an English word with keys right after it: gjbj4 is gj入, gj, - its own keys are the word forgotten)
+    "gj {HOME}{UP}{RIGHT}{RIGHT}{ENTER}{ENTER}gjbj4{HOME}{UP}{ENTER}{ENTER}gjbj4{ENTER}gj {ENTER}",
+    "gj {HOME}{UP}{RIGHT}{RIGHT}{ENTER}{ENTER}gj,{HOME}{UP}{ENTER}{ENTER}gj bj4{ENTER}",
+    # 齊 picked before 一個 (typed ㄍㄜˋ, the dictionary's is ㄍㄜ˙) three times: no 齊一個 (星期一個 stays)
+    ("ji3gji fu6u ek4xk7{HOME}{RIGHT}{RIGHT}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}" * 3) + "vu/ fu6u ek4{ENTER}",
     "su3{^,}cl3{^.}", "{^?}{^[}hello{^]}{^a}{^-}", "hello``", "hello`1", "abc~", "su3`{ESC}",
     "g4{DOWN}{RIGHT}{RIGHT}{DOWN}{LEFT}{UP}{LEFT}{ESC}{ESC}", "g4{DOWN}{RIGHT}{RIGHT}{RIGHT}{RIGHT}{RIGHT}{PGDN}{PGUP}2",
     "u4{DOWN}{RIGHT}{PGDN}{PGDN}{PGDN}{PGDN}{PGDN}{PGDN}{PGDN}{RIGHT}{ENTER}{ENTER}", "fu,6{DOWN}{RIGHT}{RIGHT}{ENTER}",
@@ -135,12 +153,53 @@ CASES = [
     "mochi {ENTER}mochi rup wu0 ji3cl3 mochi5p 2k7a06cl3t {LEFT}{LEFT}{DOWN}2" + "ji3cl3 " * 16 + "{ENTER}",
     # capitals, then zhuyin in lower case (PQC功能, UI上), a word going on in lower case (PDFs)
     "PQCej/ s/6{ENTER}UIg;4{ENTER}PDFs{ENTER}PDFsu3{ENTER}ji3ap7UIg;4{ENTER}",
+    # ...an acronym that is no English word, then a first tone of letters alone, a tone digit, a syllable that
+    # starts with a digit key (AMI新功能, AMI三個, API包括); a syllable of digits alone is a model's number
+    "AMIvup ej/ s/6{ENTER}AIvup ej/ s/6{ENTER}AMIn0 ek4{ENTER}API1l dji4{ENTER}AMI5j/ jp6{ENTER}OK5 2l4xk7{ENTER}",
+    "PS5 {ENTER}V8 {ENTER}COVID19 {ENTER}SQLite {ENTER}NVMe {ENTER}PDFtk {ENTER}JSONify {ENTER}IPsec {ENTER}UIgj {ENTER}",
+    # a term that ends in one lower-case letter, or a digit and a letter, stays as typed; PS5 是
+    "RNAi {ENTER}SQLi {ENTER}DeFi {ENTER}USDt {ENTER}dBu {ENTER}mmHg g4{ENTER}MP5k {ENTER}D2l {ENTER}ji3RNAi {ENTER}"
+    "PS5 g4{ENTER}PS5 2k7{ENTER}APIu ek4{ENTER}API1l {ENTER}AMIu u;4{ENTER}AMIu 2u03{ENTER}dBu u;4{ENTER}USDt 2k7{ENTER}",
     # a syllable only the personal dictionary has: of a word of one character (蹦 ㄅㄧㄤˋ, 掰 ㄅㄞ˙ = 197)
-    # it is typed, and 注音自動校正 knows it (1i;4); of a longer word only (the ㄅㄧㄤˇ of 電餅) it is
-    # none, its keys stay as typed
+    # it is typed, and 注音自動校正 knows it (1i;4); of a longer word only (the ㄅㄧㄤˇ of 電餅, the ㄉㄞ˙ of
+    # 呆呆 = 297) it is one inside that word (after its syllables before it; the first, before its next
+    # one: 餅噹), and elsewhere its keys stay as typed (有297個, 我1u;3); not finished yet too (電 + eu;)
+    "29 297{ENTER}u.3297ek7{ENTER}297{ENTER}room 297{ENTER}296297{ENTER}29 {ENTER}297{ENTER}ep su3gji 29 297au/6wu0 {ENTER}",
+    "1u;32; {ENTER}2841u;32u04{ENTER}2841u;3{ENTER}2u04eu;{ENTER}2u04eu;3cl3{ENTER}ji3eu;3{ENTER}eu;3{ENTER}",
+    # (numbers after English though they are the word's keys; a word of three not typed to its end; ↓ after
+    # such a syllable lists its word)
+    "you are 29 297{ENTER}room 29 297{ENTER}ok 29 297cl3{ENTER}2841u;{ENTER}2841u;3{DOWN}{ESC}{ENTER}29 297{DOWN}{ESC}{ENTER}"
+    "29 297{DOWN}{ENTER}{ENTER}2u041u;3{DOWN}{DOWN}{ENTER}{ENTER}su329 297{LEFT}{DOWN}{ESC}{ENTER}",
+    "29 297{HOME}{UP}{ESC}{DOWN}{ESC}{RIGHT}{UP}{ESC}{DOWN}{ESC}{END}{BACK}{ENTER}29 297{LEFT}{BACK}{END}{ENTER}"
+    "2u041u;3{LEFT}{UP}{ENTER}{ENTER}2u041u;3{HOME}{DEL}{ENTER}",
     "ji31u;4{ENTER}g41u;4xk7{ENTER}ji31i;4{ENTER}197{ENTER}u.3197ek7{ENTER}room 197{ENTER}",
     "2u041u;3{ENTER}ji3ap71u;3cl3{ENTER}1u;3{DOWN}{ESC}{ENTER}1i;3cl3{ENTER}"
     "ji3ap71u;3cl3{LEFT}{LEFT}{LEFT}{RIGHT}{UP}{ESC}{RIGHT}{BACK}{END}{ENTER}ji31u;3" + "ji3cl3 " * 22 + "{ENTER}",
+    # a name picked right again and again (made-up ones, the first character a family name: 葉冠霆): the first
+    # and the last picked with one between them (half of the name, a word the second time), typed again, after
+    # other words; the second sentence taken back ({UNDO}: what it taught too)
+    ("u,4ej04wu/6{END}{DOWN}" + "{DOWN}" * 5 + "{ENTER}{HOME}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}") * 2
+    + "u,4ej04wu/6{ENTER}ji35l3u,4ej04wu/6{ENTER}u,4ej04wu/6gji cl3{ENTER}",
+    "u,4ej04wu/6{END}{DOWN}{DOWN}{DOWN}{ENTER}{HOME}{DOWN}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}"
+    "u,4ej04wu/6{END}{DOWN}{DOWN}{ENTER}{HOME}{DOWN}{DOWN}{ENTER}{ENTER}{UNDO}{ESC}{ESC}u,4ej04wu/6{ENTER}",
+    # ... the same picks where the first character is no family name (瀋家叡): the characters and the pairs
+    # only; 林祤辰, where a pick changes the character after it
+    "gp3ru8 bjo4{HOME}{RIGHT}{RIGHT}{DOWN}{DOWN}{DOWN}{ENTER}{HOME}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}"
+    "gp3ru8 bjo4{HOME}{RIGHT}{RIGHT}{DOWN}{ENTER}{HOME}{DOWN}{ENTER}{ENTER}gp3ru8 bjo4{ENTER}ji35l3gp3ru8 bjo4{ENTER}",
+    "xup6m3tp6{HOME}{RIGHT}" + "{DOWN}" * 27 + "{ENTER}{ENTER}xup6m3tp6{HOME}{RIGHT}" + "{DOWN}" * 8 + "{ENTER}{ENTER}"
+    "xup6m3tp6{HOME}{RIGHT}{RIGHT}" + "{DOWN}" * 7 + "{ENTER}{ENTER}xup6m3tp6{HOME}{RIGHT}{RIGHT}{DOWN}{ENTER}{ENTER}"
+    "xup6m3tp6{ENTER}ji35l3xup6m3tp6{ENTER}",
+    "xup6m3tp6{HOME}{RIGHT}{RIGHT}" + "{DOWN}" * 7 + "{ENTER}{HOME}{RIGHT}" + "{DOWN}" * 27 + "{ENTER}{ENTER}"
+    "xup6m3tp6{ENTER}ji35l3xup6m3tp6{ENTER}",
+    # 霆 picked twice in 蔣冠廷: 冠霆 is a word then, and with it the 蔣 just sent would read 獎 from then on
+    # (長句選字加強 on): 蔣冠霆 is learned as it was sent, and comes by itself the third time
+    "ru;3ej04wu/6{HOME}{RIGHT}{RIGHT}" + "{DOWN}" * 6 + "{ENTER}{ENTER}ru;3ej04wu/6{HOME}{RIGHT}{RIGHT}{DOWN}{ENTER}{ENTER}"
+    "ru;3ej04wu/6{ENTER}ji35l3ru;3ej04wu/6{ENTER}ru;3ej04wu/6g4{ENTER}",
+    # ... the first and the last of six picked (no word of six), every character picked (a word at once),
+    # the name corrected back (forgotten)
+    "gp3ru8 bjo4gp3ru8 bjo4{END}{LEFT}{DOWN}{DOWN}{DOWN}{ENTER}{HOME}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}"
+    "gp3ru8 bjo4{HOME}{RIGHT}{DOWN}{DOWN}{ENTER}{HOME}{DOWN}{DOWN}{ENTER}{END}{LEFT}{DOWN}{DOWN}{ENTER}{ENTER}"
+    "gp3ru8 bjo4{HOME}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}gp3ru8 bjo4{ENTER}",
     # the particles of everyday talk, and the keys next to them
     "cl3xji7{ENTER}2jo4u,7{ENTER}c9 su3cl3{ENTER}i7 97 o7 core i7 {ENTER}",
 ]
@@ -206,7 +265,8 @@ CONFIGS = [
 ]
 DICTIONARY = {
     "words": [["華碩", "ㄏㄨㄚˊ ㄕㄨㄛˋ"], ["史芸", "ㄕˇㄩㄣˊ"], ["好", "ㄏㄠˇ"], ["ㄎㄎ", ""], ["Kazuma", ""],
-              ["哲宇", "ㄓㄜˊ ㄩˇ"], ["蹦", "ㄅㄧㄤˋ"], ["電餅", "ㄉㄧㄢˋ ㄅㄧㄤˇ"], ["掰", "ㄅㄞ˙"]],
+              ["哲宇", "ㄓㄜˊ ㄩˇ"], ["蹦", "ㄅㄧㄤˋ"], ["電餅", "ㄉㄧㄢˋ ㄅㄧㄤˇ"], ["掰", "ㄅㄞ˙"],
+              ["呆呆", "ㄉㄞ ㄉㄞ˙"], ["餅噹", "ㄅㄧㄤˇ ㄉㄤ"], ["大餅店", "ㄉㄚˋ ㄅㄧㄤˇ ㄉㄧㄢˋ"], ["電講", "ㄉㄧㄢˋ ㄍㄧㄤˇ"]],
     "shortcuts": [["addr", "台北市信義區"], ["sig", "祝 順心"], ["cl3", "你好嗎"], ["台灣", "Taiwan"], ["KFC", "肯德基"]],
 }
 

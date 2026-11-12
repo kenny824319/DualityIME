@@ -1,5 +1,6 @@
 // The zhuyin keyboard (標準／大千) and syllable validation.
 #pragma once
+#include <functional>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -67,7 +68,27 @@ public:
     // left out, a word taken out takes its syllables along
     void set_custom(const std::vector<ustr>& reading_keys);
     // the syllable is one only 個人詞庫 has, none of the dictionary
-    bool custom_only(const ustr& reading) const { return toned_.count(reading) && !dictionary_toned_.count(reading); }
+    bool custom_only(const ustr& reading) const {
+        return in_words_.count(reading) || (toned_.count(reading) && !dictionary_toned_.count(reading));
+    }
+    // a syllable only a longer word of 個人詞庫 has (the ㄅㄞ˙ of 掰掰, the ㄅㄧㄤˇ of 電餅) is one inside
+    // that word only: the tokenizer asks, nothing else knows it (not parse_syllable, so neither
+    // 注音自動校正 nor the replacement bar: 197 stays a number). See engine/zhuyin.py
+    bool has_in_words() const { return !in_words_.empty(); }
+    bool has_in_word_parts() const { return !in_word_parts_.empty(); }
+    // like parse_syllable for such a syllable, typed in the usual order: its reading, or empty
+    ustr parse_in_word(std::string_view keys) const;
+    // the symbols of keys that may go on to one (no tone yet, the usual order), or empty
+    ustr partial_in_word(std::string_view keys) const;
+    // it is typed inside its word: the syllables just before it (before: the readings typed so far)
+    // are the word's before it, and, unless it is the word's last, after(the word's next one) says
+    // the keys after it spell that. partial: reading is the symbols of an unfinished one (only as
+    // the word's last syllable)
+    bool in_its_word(const ustr& reading, const std::vector<ustr>& before,
+                     const std::function<bool(const ustr&)>& after, bool partial = false) const;
+    // (the word's syllables, the index of this one in it) for each word such a syllable is in
+    using InWord = std::pair<std::vector<ustr>, size_t>;
+    const std::vector<InWord>& words_with(const ustr& reading) const;
 
 private:
     std::unordered_map<char, char32_t> keymap_;
@@ -79,6 +100,8 @@ private:
     std::unordered_map<ustr, double> dictionary_toned_;  // toned_ and prefixes_ of the dictionary alone
     std::unordered_set<ustr> dictionary_prefixes_;
     bool custom_ = false;  // toned_ has syllables of 個人詞庫 in it
+    // syllable -> (the word's syllables, index); the same by each part of such a syllable
+    std::unordered_map<ustr, std::vector<InWord>> in_words_, in_word_parts_;
 };
 
 }  // namespace sz

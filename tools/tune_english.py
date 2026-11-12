@@ -63,7 +63,8 @@ MIXED = [
     ("GPUs ", "GPUs "), ("WiFi ", "WiFi "), ("iPhone ", "iPhone "), ("DDoS ", "DDoS "), ("PhD ", "PhD "),
     ("SaaS ", "SaaS "), ("YouTube ", "YouTube "), ("JavaScript ", "JavaScript "), ("TypeScript ", "TypeScript "),
     ("PowerShell ", "PowerShell "), ("McDonald ", "McDonald "), ("NTUST ", "NTUST "), ("ASUSTeK ", "ASUSTeK "),
-    ("IEEEj ", "IEEEj "), ("HDMIs ", "HDMIs "), ("RAMs ", "RAMs "), ("PRs ", "PRs "), ("OSes ", "OSes "),
+    ("IPsec ", "IPsec "), ("JSONify ", "JSONify "), ("RNAi ", "RNAi "), ("USDt ", "USDt "), ("dBu ", "dBu "),
+    ("MP5k ", "MP5k "), ("D2l ", "D2l "), ("HDMIs ", "HDMIs "), ("RAMs ", "RAMs "), ("PRs ", "PRs "), ("OSes ", "OSes "),
 ]
 
 

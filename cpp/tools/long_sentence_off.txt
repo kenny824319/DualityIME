@@ -15,3 +15,16 @@ ul4y94e93cjo6{DOWN}{DOWN}{ENTER}{ENTER} => 要再改迴
 n ul4{HOME}{DOWN}{ENTER}{END}{TAB}{ENTER} => 私鑰匙
 # the next characters deleted again: the picked 鎖鑰 is back as it was (it came out 所要)
 nji3ul4{HOME}{DOWN}{DOWN}{ENTER}{END}{TAB}{TAB}{BACK}{BACK}{ENTER} => 鎖鑰
+# what starts with no family name is no name: 鍵 picked twice in 都會讓每個鍵變慢 teaches 鍵變 only (with 鍵變慢
+# a word, 逐漸變慢 read 築鍵變慢 and 圖鑑變慢了 圖鍵變慢了; with 長句選字加強 on neither ever went wrong)
+2. cjo4b;4ao3ek7ru041u04a04{HOME}{RIGHT}{RIGHT}{RIGHT}{RIGHT}{RIGHT}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER} => 都會讓每個鍵變慢
+2. cjo4b;4ao3ek7ru041u04a04{HOME}{RIGHT}{RIGHT}{RIGHT}{RIGHT}{RIGHT}{DOWN}{ENTER}{ENTER} => 都會讓每個鍵變慢
+5j6ru041u04a04{ENTER} => 逐漸變慢
+wj6ru041u04a04xk7{ENTER} => 圖鑑變慢了
+# ...nor what follows the family name when it is a word the dictionary writes with other tones (一個 is ㄧ ㄍㄜ˙
+# there): 齊 picked before 一個 twice taught 齊一個, and 星期一個 read 星齊一個. (Lines run one after another,
+# what was sent before is the context: 我 here, 他 read 她 after 了)
+ji3gji fu6u ek4xk7{HOME}{RIGHT}{RIGHT}{RIGHT}{RIGHT}{DOWN}{ENTER}{HOME}{RIGHT}{RIGHT}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER} => 我說齊一個了
+ji3gji fu6u ek4xk7{HOME}{RIGHT}{RIGHT}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER} => 我說齊一個了
+ji3gji fu6u ek4xk7{HOME}{RIGHT}{RIGHT}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER} => 我說齊一個了
+vu/ fu6u ek4{ENTER} => 星期一個

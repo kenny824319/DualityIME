@@ -130,6 +130,9 @@ class SyllableTable:
         for syl in self.toned:
             self.prefixes.update(_parts(syl))
         self._dictionary = (self.toned, self.prefixes)  # (set_custom adds to copies of these)
+        # syllables only a longer word of 個人詞庫 has (set_custom): syllable -> [(the word's syllables, index)],
+        # and the same by each part of such a syllable, for one not finished yet
+        self.in_words, self.in_word_parts = {}, {}
 
     def set_custom(self, readings):
         """The syllables of the user's own words (個人詞庫) are syllables too. readings: its reading
@@ -148,10 +151,59 @@ class SyllableTable:
                 toned[syl] = CUSTOM_SYLLABLE
                 prefixes.update(_parts(syl))
         self.toned, self.prefixes = toned, prefixes
+        # ...and a syllable only a longer word has (the ㄅㄞ˙ of 掰掰, the ㄅㄧㄤˇ of 電餅) is one inside that
+        # word only (in_its_word): the tokenizer asks, nothing else knows it (not parse_syllable, so
+        # neither 注音自動校正 nor the replacement bar: 197 stays a number, no sentence turns to zhuyin)
+        in_words, parts = {}, {}
+        for key in readings:
+            syllables = tuple(key.split("-"))
+            if len(syllables) < 2:
+                continue
+            for index, syl in enumerate(syllables):
+                if syl not in toned and _well_formed(syl):
+                    in_words.setdefault(syl, []).append((syllables, index))
+                    for part in _parts(syl):
+                        parts.setdefault(part, []).append((syllables, index))
+        self.in_words, self.in_word_parts = in_words, parts
+
+    def parse_in_word(self, keys):
+        """Like parse_syllable, for a syllable only a longer word of 個人詞庫 has, typed in the usual
+        order: its reading, or None. Whether it is one here is in_its_word's to say."""
+        if not self.in_words or len(keys) < 2 or keys[-1] not in self.tones:
+            return None
+        parsed = keys_to_symbols(keys[:-1], self.keymap)
+        if not parsed or not parsed[0] or not parsed[1]:
+            return None
+        reading = parsed[0] + self.tones[keys[-1]]
+        return reading if reading in self.in_words else None
+
+    def partial_in_word(self, keys):
+        """The symbols of keys that may go on to such a syllable (no tone yet, the usual order), or None."""
+        if not self.in_word_parts:
+            return None
+        parsed = keys_to_symbols(keys, self.keymap)
+        return parsed[0] if parsed and parsed[1] and parsed[0] in self.in_word_parts else None
+
+    def in_its_word(self, reading, before, after=None, partial=False):
+        """A syllable only a longer word has (parse_in_word; partial: the symbols of an unfinished one)
+        is typed inside that word: the syllables just before it are the word's before it (before: the
+        readings typed so far), and, unless it is the word's last, after(reading) says the keys after
+        it spell the word's next one (大 + 1u;3 with 大餅店 in 個人詞庫 is no 大ㄅㄧㄤˇ until 店 is typed,
+        as before the word was there). An unfinished one only as the word's last syllable."""
+        for syllables, index in (self.in_word_parts if partial else self.in_words).get(reading, ()):
+            if index and not (len(before) >= index and tuple(before[-index:]) == syllables[:index]):
+                continue
+            last = index == len(syllables) - 1
+            if partial:
+                if last:
+                    return True
+            elif last or (after is not None and after(syllables[index + 1])):
+                return True
+        return False
 
     def custom_only(self, reading):
         """The syllable is one only 個人詞庫 has (set_custom), none of the dictionary."""
-        return reading in self.toned and reading not in self._dictionary[0]
+        return reading in self.in_words or (reading in self.toned and reading not in self._dictionary[0])
 
     def reading_to_keys(self, reading):
         return reading_to_keys(reading)
@@ -215,4 +267,4 @@ class SyllableTable:
 
     def score(self, reading):
         """How common the most common phrase with this reading is (log10)."""
-        return self.toned.get(reading, -99.0)
+        return self.toned.get(reading, CUSTOM_SYLLABLE if reading in self.in_words else -99.0)

@@ -246,6 +246,47 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
                 return True
         return False
 
+    def zh_before(tokens):
+        """The readings of the syllables at the end of these tokens, nothing between them."""
+        out = []
+        for t in reversed(tokens):
+            if t.kind != "zh":
+                break
+            out.append(t.value)
+        return out[::-1]
+
+    def number_after_english(tokens):
+        """The syllables at the end of these tokens are all digits, right after an English word."""
+        k = len(tokens)
+        while k and tokens[k - 1].kind == "zh" and tokens[k - 1].raw.rstrip(" ").isdigit():
+            k -= 1
+        if k == len(tokens):
+            return False
+        if k == 0:
+            return after_english
+        return tokens[k - 1].kind == "en" and tokens[k - 1].raw.strip().isalpha()
+
+    def spells(j, reading):
+        """The keys from j spell this syllable."""
+        return any((table.parse_syllable(raw[j:k]) or (None,))[0] == reading or table.parse_in_word(raw[j:k]) == reading
+                   for k in range(j + 2, min(j + MAX_SYL_KEYS, n) + 1))
+
+    def starts_word(j, readings):
+        """These syllables and the ones the keys from j spell make a word of the dictionary scored
+        CASE_LETTER_WORD at least, of up to CASE_WORD_MAX syllables (包 + 括, 中 + 文 + 字: longer than
+        starts_phrase looks; not 遮住 for MP5k 住)."""
+        if lexicon is None:
+            return False
+        for k in range(j + 2, min(j + MAX_SYL_KEYS, n) + 1):
+            nxt = table.parse_syllable(raw[j:k])
+            if not nxt:
+                continue
+            more = readings + (nxt[0],)
+            if any(s >= CASE_LETTER_WORD for _, s in lexicon.lookup(more)) or \
+                    (len(more) < CASE_WORD_MAX and starts_word(k, more)):
+                return True
+        return False
+
     def offer(j, cost, prev, tok):
         if tok.kind == "en" and tok.raw[0].isdigit() and prev[1] and prev[1][-1].kind == "lit" and                 prev[1][-1].raw in zh_punct:
             # digits right after a zhuyin key read as punctuation: the u,4 of sugatau,4 is 頁,
@@ -258,8 +299,24 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
                 # zhuyin right after English, no space between: the switch, and the more
                 # common the syllable the likelier (python是, not pytho + 裸 for pythoxji3)
                 cost += EN["switch"] + EN["rarity"] * max(0.0, -table.score(tok.value) - 2.0)
-                if prev[1][-1].raw[-1].isupper() and tok.raw[0].islower():
-                    cost -= EN["case_switch"]
+                # after capitals the switch costs nothing when the zhuyin starts with a lower-case key -
+                # but a syllable of one letter is as likely the end of a term (RNAi, USDt, dBu, mmHg: i, t,
+                # u, g with the space are ㄛ ㄔ ㄧ ㄕ), so it gets what it got before unless it starts a
+                # common word with the next syllable (API一樣, not mmHg 是: 失事) - or with a digit key
+                # and has a letter in it, where it starts a word with the next syllable (API包括: 1l; alone
+                # it is as likely a model: MP5k, D2l); a syllable of digits alone never (PS5, V8)
+                # (those two only after an acronym, capitals alone and two at least: after NumPy, dBu, Xu,
+                # My the y, u with the space are the word's last letter - NumPy 本身 read NumP資本身)
+                if prev[1][-1].raw[-1].isupper():
+                    typed = tok.raw.rstrip(" ")
+                    acronym = len(prev[1][-1].raw) >= 2 and prev[1][-1].raw.isalpha() and prev[1][-1].raw.isupper()
+                    if tok.raw[0].islower():
+                        one = len(typed) == 1 and not (acronym and tok.kind == "zh" and
+                                                       starts_phrase(j, tok.value, CASE_LETTER_WORD))
+                        cost -= EN["case_letter"] if one else EN["case_switch"]
+                    elif acronym and tok.raw[0].isdigit() and not typed.isdigit() and tok.kind == "zh" and \
+                            starts_word(j, (tok.value,)):
+                        cost -= EN["case_switch"]
                 if tok.kind == "zh" and starts_phrase(j, tok.value):
                     cost -= EN["phrase"]
             elif tok.kind == "lit" and tok.raw in zh_punct and prev[1][-1].raw[-1].isdigit():
@@ -286,6 +343,15 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
                 not (i > 0 and raw[i - 1].isdigit() and raw[i - 1] not in table.tones and ch.isdigit())
             for j in range(i + 2, min(i + MAX_SYL_KEYS, n) + 1):
                 parsed = table.parse_syllable(raw[i:j])
+                if not parsed and table.in_words:
+                    # a syllable only a longer word of 個人詞庫 has (the ㄅㄞ˙ of 掰掰: 197): one right after
+                    # the word's syllables before it, or before its next one - nowhere else
+                    # (not digits after English with the word's digits before them: you are 19 197)
+                    own = table.parse_in_word(raw[i:j])
+                    if own and not (raw[i:j].rstrip(" ").isdigit() and number_after_english(prev[1])) and \
+                            table.in_its_word(own, zh_before(prev[1]), lambda nxt: spells(j, nxt)):
+                        offer(j, syllable_cost(table, own, True) + crosses(i, j), prev, Token("zh", raw[i:j], own, i))
+                        continue
                 as_typed = parsed and (parsed[1] or not (ordered_only or raw[i:j - 1].isdigit()))
                 # 注音自動校正: a punctuation key out of order after all when the keys after it spell
                 # nothing (;e is ㄍㄤ: 剛; ,u3 stays ,以) - and with digits among them, only after
@@ -357,6 +423,11 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
             if parsed and (parsed[1] or not (ordered_only or raw[i:].isdigit())):
                 cost = COST_PARTIAL + (0.0 if parsed[1] else COST_REORDERED)
                 offer(n, cost + crosses(i, n), prev, Token("partial", raw[i:], parsed[0], i))
+            elif not parsed and table.in_word_parts:
+                # (...and not finished yet, after the word's syllables before it: 電 + 1u; is 電ㄅㄧㄤ)
+                own = table.partial_in_word(raw[i:])
+                if own and table.in_its_word(own, zh_before(prev[1]), partial=True):
+                    offer(n, COST_PARTIAL + crosses(i, n), prev, Token("partial", raw[i:], own, i))
         if ch == " ":
             offer(i + 1, COST_SPACE, prev, Token("lit", " ", " ", i))
             continue
@@ -417,12 +488,21 @@ EN = {
     "symbol": 1.0,        # each other key inside (setup.exe, abc@example.com)
     "learned": -1.0,      # the user picked these keys as English before
     "switch": 2.8,        # zhuyin right after English with no space (python是)
-    "case_switch": 1.5,   # ...less after a capital, when the zhuyin starts with a lower-case key (PQC功能:
-                          # going on in lower case after capitals is the sign; PQCej was one English run)
+    "case_switch": 2.8,   # ...none after a capital, when the zhuyin starts with a lower-case key (PQC功能,
+                          # AMI新功能: going on in lower case after capitals is the sign; PQCej was one
+                          # English run) or a digit key with a letter after it (API包括). Measured with
+                          # 141 acronyms: 1.5 left AMIvup 功能 (each capital costs 0.3 only, so do the
+                          # lower-case keys after them); with 2.8 of 598 words that go on in lower case
+                          # (SQLite, PDFs, JSONify) one more is wrong (PDFtk)
+    "case_letter": 1.5,   # ...as it was (3.2.4) when the syllable is one letter: RNAi, USDt, dBu stay as typed
     "rarity": 0.7,        # ...times how rare its syllable is
     "phrase": 1.0,        # ...less if it starts a word with the next syllable (sugata頁面)
     "digit_symbol": 2.0,  # a symbol next to digits (the 2; of youtube2; is 當, the ,4 of sugatau,4 頁)
 }
+CASE_WORD_MAX = 4  # syllables of the word a digit-key syllable after capitals may start (_tokenize_run starts_word)
+# a syllable of one letter after capitals is zhuyin if it starts a word this common with the next one (一個 -3.1,
+# 一樣 -3.6, 資料, 醫院, 失去 -4.4; not 一是 -5.0 for dBu 是, 失事 -5.4 for mmHg 是)
+CASE_LETTER_WORD = -4.4
 # the word being typed at the end of an English token: all of it, or the part after - / _ .
 _WORD_TAIL = re.compile(r"(?:^|[-/_.])([A-Za-z]+)$")
 _RUN = re.compile(r"[A-Za-z]+(?:['-][A-Za-z]+)*|[0-9]+|.")
@@ -812,6 +892,12 @@ def _digits_to_numbers(tokens, after_english=False, chinese=()):
 
 
 USER_PHRASE_SCORE = -6.0  # base score of phrases only the user has taught us
+SPAN_MAX = 4              # characters from the first to the last pick learned as one word (Composer._learn_spans)
+# What _learn_spans, _learn_beside_words and _learn_what_learning_changed learn starts with one of these: the
+# common family names (and the first character of the two-character ones). A name is what they are for; in
+# an ordinary sentence the same picks taught pieces of it (鍵變慢, 語料裡常, 會用進 - and with 鍵變慢 a word,
+# 逐漸變慢 read 築鍵變慢; measured, docs/superpowers/items/19/odd_words.py and the review of 2026-11-12)
+SURNAMES = frozenset("陳林黃張李王吳劉蔡楊許鄭謝洪郭邱曾廖賴徐周葉蘇莊呂江何蕭羅高潘簡朱鍾游彭詹胡施沈余盧梁趙顏柯翁魏孫戴范方宋鄧杜傅侯曹薛丁卓阮馬董溫唐藍石蔣古紀姚連馮歐程湯田康姜白汪鄒尤巫鐘黎涂龔嚴韓袁金童陸夏柳邵錢伍倪于譚駱熊任甘秦顧毛章史萬俞雷饒闕凌崔尹孔辛武辜陶易段龍韋葛池孟褚殷麥賀賈莫文管關向包丘梅裴樊房佘左花魯安鮑郝穆翟常申岳齊喬祁談司諸上官令狐皇甫尉遲端木")
 CUSTOM_NEXT_MIN = 2       # 個人詞庫's words are guessed as the next character once this many of theirs are typed
 
 
@@ -1903,9 +1989,16 @@ class Composer:
                 not (last.raw in zhuyin_punct(self.table) and self._chinese_before(last)):
             # 注音文: an unfinished syllable can go out as the bare symbols (1 -> ㄅ)
             bare = ("bare", last.start, last.value)
+        # shown as zhuyin (preview "zhuyin": su is ㄋㄧ): the keys as typed too, or there is no way back to them
+        typed = None
+        if bare and self.config.preview == "zhuyin":
+            typed = ("typed", last.raw, last.start)
         if n == 0:
             if bare:
                 self.candidates, self._cand_actions, self.cand_index = [bare[2]], [bare], 0
+                if typed:
+                    self.candidates.append(self._as_typed(last.start, last.raw))
+                    self._cand_actions.append(typed)
             return bool(bare)
         c = self._caret_index()
         # like the ASUS IME: the character after the caret, and the phrases starting
@@ -1916,6 +2009,12 @@ class Composer:
             return False
         a, b = run
         spans = [(t, l) for l in range(min(MAX_PHRASE_LEN, b - t) if c < n else 1, 0, -1)]
+        # a syllable only a longer word of 個人詞庫 has (the ㄅㄞ˙ of 掰掰) has no character of its own:
+        # the word it is in (↓ on it showed nothing)
+        for syllables, index in self.table.in_words.get(self.readings[t], ()):
+            s_, l = t - index, len(syllables)
+            if a <= s_ and s_ + l <= b and tuple(self.readings[s_:s_ + l]) == syllables and (s_, l) not in spans:
+                spans.append((s_, l))
         labels, actions, seen = [], [], set()
         for s_, l in spans:
             for p, _ in phrase_candidates(self.readings[s_:s_ + l], self.lexicon, self.user, names=True):
@@ -1961,6 +2060,9 @@ class Composer:
         if bare:
             labels.append(bare[2])
             actions.append(bare)
+        if typed and self._as_typed(last.start, last.raw) not in labels:
+            labels.append(self._as_typed(last.start, last.raw))
+            actions.append(typed)
         # 映射詞彙 with a Chinese shortcut (牛逼 -> nb): what it stands for comes first
         mapped = [(text, action) for text, action in zip(*self._chinese_shortcuts()) if text not in labels]
         labels = [text for text, _ in mapped] + labels
@@ -2020,6 +2122,10 @@ class Composer:
                 sym = parsed[0] if parsed else self.table.bare(keys) if self._may_be_zhuyin_text(tok.start, keys) else None
                 if sym:
                     add(sym, ("fix", tok.start, stop, sym))
+                if tok.kind == "partial" and self.config.preview == "zhuyin" and                         not (keys in zhuyin_punct(self.table) and self._chinese_before(tok)):
+                    # shown as zhuyin (su: ㄋㄧ): the keys as typed, or there is no way back to them
+                    # (not a punctuation key after Chinese, as in ↓: sent, it is the punctuation)
+                    add(self._as_typed(tok.start, keys), ("typed", keys, tok.start))
             for label, action in zip(*self._syllables_from(self.caret, tok)):         # 滅, 版, 搜
                 add(label, action)
             # a tone key ending a word as its tone mark (the 3 of 103: ˇ, the 4 of dog4: ˋ), where
@@ -2076,6 +2182,7 @@ class Composer:
         self.repl_index = -1
         if action[0] == "fix":
             _, start, end, text = action
+            self._forget_english_at(start)
             self._keep_before_bar(start)
             self._learn_zhuyin_text(text)
             self._note_as_typed(start, end)
@@ -2105,7 +2212,7 @@ class Composer:
         # raw (the keys as typed): the same as from the candidate list
         self._cand_actions = [action]
         self._pick(0, from_bar=True)
-        if action[0] == "raw":
+        if action[0] in ("raw", "typed"):
             self._caret_past(action[2] + len(action[1]))
 
     def _caret_past(self, end):
@@ -2114,8 +2221,29 @@ class Composer:
         self.caret = next((p for p in self._stops() if p >= end), None)
         self._render()
 
+    def _forget_english_at(self, c):
+        """A word read as English, picked as something else from its start (a syllable, its zhuyin): stop
+        guessing English there, as a pick from the list does ("chinese", whole). gj put back as typed
+        once (an English word from then on), 輸 picked from the bar again and again, and 輸入 came out
+        gj 入 for good. Not in a copy trying the pick out for the bar's label: it shares the user model."""
+        if self._simulating:
+            return
+        tok = next((t for t in self.tokens if t.start == c), None)
+        if tok is not None and tok.kind == "en":
+            self._forget_english_word(tok)
+
+    def _forget_english_word(self, tok):
+        """The English word of this token, as typed and as shown, is no English word of the user's. The
+        token's own keys, not the keys up to the next space: gjbj4 (gj入) and gj, have the word gj."""
+        word = tok.raw.rstrip(" ")
+        for w in {word, self._as_typed(tok.start, word)}:
+            self.user.learn_english(w, False)
+        self.user.save()
+
     def _pick_syllable(self, action):
         _, c, j, keep = action
+        if keep is None:
+            self._forget_english_at(c)
         self._keep_before_bar(c if keep is None else keep)
         # keys c..j are one syllable, read with the rest again (頁 + 面 can still be 頁面);
         # what is before stays as typed if the caret was inside a word
@@ -2472,10 +2600,9 @@ class Composer:
                 self.forced.add(force)
                 self._note_code_part(force, start)
             if whole:  # stop guessing English here
-                word = self.raw[start:].split(" ")[0]
-                for w in {word, self._as_typed(start, word)}:
-                    self.user.learn_english(w, False)
-                self.user.save()
+                tok = next((t for t in self.tokens if t.start == start), None)
+                if tok is not None:
+                    self._forget_english_word(tok)
             self._refresh()
             self.overrides[(first, len(readings))] = (readings, p)
             picked = (first, len(readings))
@@ -2554,14 +2681,17 @@ class Composer:
             self.last_commit = None
             self.commit = before + symbols_
             return
-        elif action[0] == "raw":
+        elif action[0] in ("raw", "typed"):
+            # (typed: an unfinished syllable shown as zhuyin put back as its keys, this once - su learned
+            # as an English word, 1j as a code of 代碼記憶, would show as the keys from then on, before
+            # the tone is typed)
             _, text, start = action
             self._keep_before_bar(start)
-            if not self._note_code(start):
+            if action[0] == "raw" and not self._note_code(start):
                 self._note_as_typed(start)
             self.taken.pop(start, None)
             self.forced.add(start)
-            if text.isalpha():
+            if action[0] == "raw" and text.isalpha():
                 self.user.learn_english(text, True)
                 self.user.save()
         self.candidates, self._cand_actions = [], []
@@ -2811,6 +2941,127 @@ class Composer:
             done.add((key, text))
             self.user.learn_half(key, text)
 
+    def _like_a_name(self, readings, text):
+        """What _learn_spans, _learn_beside_words and _learn_what_learning_changed may learn: it starts
+        with a family name (SURNAMES), and what follows that is no word of the dictionary - a given
+        name rarely is, and many family names are everyday characters with common homophones (鐘 中,
+        葉 業, 李 裡): 鐘變慢 learned from 每個鐘變慢 made 過程中變慢了 read 過程鐘變慢了."""
+        # (a word the dictionary writes with other tones too: 一個 is ㄧ ㄍㄜ˙ there, typed ㄍㄜˋ - 齊一個 made
+        # 星期一個 read 星齊一個)
+        rest, more = readings[1:], text[1:]
+        return text[0] in SURNAMES and not self.lexicon.has(rest, more) and             not self.lexicon.reads_with_other_tones(rest, more)
+
+    def _learn_spans(self, before):
+        """Characters picked a little apart in one stretch, what is between them right as it was (the 沈
+        and the 睿 of 沈家睿): what is written from the first to the last of them - SPAN_MAX characters at
+        most - is half a pick of a word, so a word the second time it is sent so. Each alone was learned
+        as a character (沈) and as a pair with its neighbour (家睿), never the name: 審家睿 came again
+        however often both were picked. Only single characters picked, one of them at least changed
+        (not all just looked at); not where every character of it is picked (_learn_group has it at
+        once), nor what the dictionary has or the user taught already; once a sentence. Every
+        character of it on its own, in no word, as the characters of a name are: with a word among
+        them what was learned were pieces of sentences (帶入注 of 帶入注音, 語料裡, 介面畫 - measured,
+        docs/superpowers/items/19/odd_words.py). Corrected back it is forgotten like any word
+        (_learn_broken_words). before: what it would be without the picks."""
+        chars, was = _chars(self.segments), _chars(before)
+        single = {s for s, l, p in self.segments if l == 1 and len(p) == 1}
+        wide = [(s, l) for (s, l), v in self.overrides.items() if len(v) == 2 and l > 1]
+        done = set()
+        for x, y in self.runs:
+            picks = sorted(s for (s, l), v in self.overrides.items() if len(v) == 2 and l == 1 and x <= s < y)
+            if len(picks) < 2:
+                continue
+            a, b = picks[0], picks[-1]
+            if b - a + 1 > SPAN_MAX or len(picks) == b - a + 1:
+                continue
+            if any(s < b + 1 and a < s + l for s, l in wide):
+                continue  # (a word picked whole among them: its own pick)
+            if all(was.get(k) == chars.get(k) for k in picks) or any(k not in single for k in range(a, b + 1)):
+                continue
+            rd = self.readings[a:b + 1]
+            text = "".join(chars[k] for k in range(a, b + 1))
+            key = "-".join(rd)
+            if not self._like_a_name(rd, text) or (key, text) in done or self.lexicon.has(rd, text) or \
+                    self.lexicon.reads_with_other_tones(rd, text) or self.user.phrase_count(key, text) >= 1:
+                continue
+            done.add((key, text))
+            self.user.learn_half(key, text)
+
+    def _learn_beside_words(self, before):
+        """A character picked right beside a word the user taught, no word of the dictionary (沈 before
+        家睿, learned from picks of 睿): half a pick of the two together, so a word the second time. The
+        pair rule leaves a pick next to a word alone (_learn_pairs), so 沈 was learned as a character
+        only, and 審家睿 came again however often it was picked. Only a pick that changed the character,
+        on its own before and now; the word after it first, else the one before it; SPAN_MAX characters
+        at most; once a sentence. before: what it would be without the picks."""
+        alone = {s for s, l, p in before if l == 1 and len(p) == 1}
+        chars, was = _chars(self.segments), _chars(before)
+        words = [(s, l, p) for s, l, p in self.segments if l > 1 and len(p) == l]
+        done = set()
+        for (s, l), v in sorted(self.overrides.items()):
+            if len(v) != 2 or l != 1 or s not in alone or s not in chars or was.get(s) == chars.get(s):
+                continue
+            if not any(a == s and b == 1 for a, b, _ in self.segments):
+                continue  # (part of a word now)
+            for a, b, p in sorted(words, key=lambda w: w[0] != s + 1):
+                if a != s + 1 and a + b != s:
+                    continue
+                first = min(a, s)
+                if b + 1 > SPAN_MAX or not any(x <= first and first + b + 1 <= y for x, y in self.runs):
+                    continue
+                rd = self.readings[a:a + b]
+                if self.lexicon.has(rd, p) or not self.user.learned("-".join(rd), p):
+                    continue
+                rd = self.readings[first:first + b + 1]
+                text = chars[s] + p if a == s + 1 else p + chars[s]
+                key = "-".join(rd)
+                if not self._like_a_name(rd, text) or (key, text) in done or self.lexicon.has(rd, text) or \
+                        self.lexicon.reads_with_other_tones(rd, text) or self.user.phrase_count(key, text) >= 1:
+                    break
+                done.add((key, text))
+                self.user.learn_half(key, text)
+                break
+
+    def _learn_what_learning_changed(self, before):
+        """A word learned in this sentence turns a character right beside it into another one the next
+        time the same keys are typed (家睿 learned from picks of 睿: 沈家睿, just sent, reads 審家睿 from
+        then on - the word leaves 沈 on its own, and on its own it is 審): the character and the word
+        are learned together as they were sent, so what the user saw and sent stays. Seen by reading
+        the sentence again, without the picks, with what was just learned; only for a word that
+        became one now, a character on its own right before it in the same stretch, SPAN_MAX
+        characters at most, no word of the dictionary. before: (phrases, phrase_used) as they were before this
+        sentence taught anything."""
+        new = [(key.split("-"), phrase) for key, bucket in self.user.phrases.items() if "-" in key
+               for phrase, count in bucket.items()
+               if count >= 1 and before[0].get(key, {}).get(phrase, 0) < 1 and len(phrase) == key.count("-") + 1]
+        if not new:
+            return
+        sent = _chars(self.segments)
+        single = {s for s, l, p in self.segments if l == 1 and len(p) == 1}
+        again = None
+        for rd, phrase in new:
+            l = len(rd)
+            for a in range(len(self.readings) - l + 1):
+                if self.readings[a:a + l] != rd or "".join(sent.get(k, "") for k in range(a, a + l)) != phrase:
+                    continue
+                if again is None:
+                    again = _chars(self._convert_all({}))
+                run = next(((x, y) for x, y in self.runs if x <= a and a + l <= y), None)
+                if run is None:
+                    continue
+                # (the character before the word only, the family name: the one after it changing - 慢 after
+                # a learned 鐘變 - made 鐘變慢, and 過程中變慢了 read 過程鐘變慢了)
+                first, last, n = a, a + l - 1, a - 1
+                if run[0] <= n and n in single and n in again and again[n] != sent[n]:
+                    first = n
+                if last - first + 1 == l or last - first + 1 > SPAN_MAX:
+                    continue
+                span = self.readings[first:last + 1]
+                text = "".join(sent[k] for k in range(first, last + 1))
+                if self._like_a_name(span, text) and not self.lexicon.has(span, text) and \
+                        self.user.phrase_count("-".join(span), text) < 1:
+                    self.user.learn_phrase("-".join(span), text)
+
     def _learn_group(self, group):
         if len(group) < 2:
             return
@@ -2833,6 +3084,9 @@ class Composer:
             self._learn_tone_variant_words(before_picks)
             self._learn_overrides()
             self._learn_pairs(before_picks)
+            self._learn_spans(before_picks)
+            self._learn_beside_words(before_picks)
+            self._learn_what_learning_changed(before)
             learned = self.user.phrases_changed(before)
             self.user.save()
         last = self.tokens[-1] if self.tokens else None

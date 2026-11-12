@@ -1422,6 +1422,9 @@ void TextService::place_ui(TfEditCookie ec, ITfContext* ctx) {
           " have_end=" + std::to_string(have_end) + " exact_end=" + std::to_string(exact_end) + " end=" +
           std::to_string(end_rc.left) + "," + std::to_string(end_rc.top) + "," + std::to_string(end_rc.right) + "," +
           std::to_string(end_rc.bottom));
+    // the 中／英 box is under the line for a moment: gone as soon as another box comes up there
+    if (mode_win_ && (!state_.candidates.empty() || !state_.zhuyin_tip.empty() || state_.symbol_page >= 0))
+        mode_win_->hide();
     if (!state_.candidates.empty()) {
         if (!cand_win_) {
             cand_win_ = std::make_unique<CandidateWindow>();
@@ -1640,7 +1643,10 @@ void TextService::show_mode(const std::wstring& text) {
     if (!found && !caret_rect(ctx.Get(), rc)) return;
     if (ctx) own_popups(ctx.Get());  // (Shift before anything was typed in the search box)
     if (!mode_win_) mode_win_ = std::make_unique<HintWindow>();
-    mode_win_->show(text, rc, 800);
+    // under the line: right after the caret, what is typed next came out behind it (beside the caret as
+    // before while the candidates, the zhuyin under the keys or the symbol keyboard are there already)
+    bool below = state_.candidates.empty() && state_.zhuyin_tip.empty() && state_.symbol_page < 0;
+    mode_win_->show(text, rc, 800, false, below);
 }
 
 void TextService::toggle_mode() {

@@ -451,9 +451,10 @@ namespace {
 constexpr int HINT_FONT = 16, HINT_PAD_X = 7, HINT_PAD_Y = 3;
 }
 
-void HintWindow::show(const std::wstring& text, const RECT& r, UINT ms, bool follow_caret) {
+void HintWindow::show(const std::wstring& text, const RECT& r, UINT ms, bool follow_caret, bool below) {
     if (!create(L"DualityIMEHint")) return;
     text_ = text;
+    below_ = below;
     double s = scale();
     HDC dc = GetDC(hwnd_);
     SIZE sz;
@@ -473,6 +474,15 @@ void HintWindow::show(const std::wstring& text, const RECT& r, UINT ms, bool fol
 
 void HintWindow::move_to(const RECT& r) {
     double s = scale();
+    if (below_) {  // (as ZhuyinTip::show places its box)
+        int gap = static_cast<int>(2 * s);
+        RECT work = work_area(r);
+        int x = std::max<int>(work.left, std::min<int>(r.left, work.right - w_));
+        int y = r.bottom + gap;
+        if (y + h_ > work.bottom) y = r.top - gap - h_;
+        place(x, y, w_, h_);
+        return;
+    }
     int x = r.right + static_cast<int>(3 * s);
     int line = r.bottom - r.top;
     int y = line >= h_ ? r.top + (line - h_) / 2 : r.bottom - h_;  // a thin caret line: line up with its bottom

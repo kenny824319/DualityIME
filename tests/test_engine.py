@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import sys
@@ -118,11 +119,36 @@ class MixedEnglishTest(Base):
         # zhuyin, not more of an English word (it came out PQCej/ 能 - 2026-11-11 user)
         for typed, out in (("PQC" + keys("ㄍㄨㄥ ㄋㄥˊ"), "PQC功能"), ("UI" + keys("ㄕㄤˋ"), "UI上"),
                            ("AI" + keys("ㄍㄨㄥ ㄋㄥˊ"), "AI功能"), ("PDF" + keys("ㄋㄧˇ"), "PDF你"),
-                           # ...and an English word going on in lower case stays one
-                           ("PDFs ", "PDFs "), ("GitHub ", "GitHub "), ("IDs ", "IDs "), ("NVMe ", "NVMe ")):
-            with self.subTest(out=out):
-                self.c.reset()
-                self.assertEqual(self.type(typed), out)
+                           # an acronym that is no word of the English list, then a first tone spelled with
+                           # letters alone, or a tone digit (it came out AMIvup 功能 - 2026-11-12 user)
+                           ("AMI" + keys("ㄒㄧㄣ ㄍㄨㄥ ㄋㄥˊ"), "AMI新功能"), ("AI" + keys("ㄒㄧㄣ ㄍㄨㄥ ㄋㄥˊ"), "AI新功能"),
+                           ("PQC" + keys("ㄒㄧㄣ ㄍㄨㄥ ㄋㄥˊ"), "PQC新功能"), ("AMI" + keys("ㄙㄢ ㄍㄜˋ"), "AMI三個"),
+                           # ...or a syllable that starts with a digit key and has a letter (包: 1l)
+                           ("API" + keys("ㄅㄠ ㄎㄨㄛˋ"), "API包括"),
+                           # ...and an English word going on in lower case stays one, a model's number too
+                           ("PDFs ", "PDFs "), ("GitHub ", "GitHub "), ("IDs ", "IDs "), ("NVMe ", "NVMe "),
+                           ("SQLite ", "SQLite "), ("PS5 ", "PS5 "), ("V8 ", "V8 "), ("COVID19 ", "COVID19 "),
+                           ("PS5 " + keys("ㄕˋ"), "PS5 是"),
+                           # a term that ends in one lower-case letter (i, t, u, g with the space are ㄛ ㄔ ㄧ ㄕ)
+                           # or in a digit and a letter stays as typed (they came out RNA喔, USD吃, MP折)
+                           ("RNAi ", "RNAi "), ("SQLi ", "SQLi "), ("DeFi ", "DeFi "), ("USDt ", "USDt "),
+                           ("dBu ", "dBu "), ("mmHg " + keys("ㄕˋ"), "mmHg 是"), ("MP5k ", "MP5k "), ("D2l ", "D2l "),
+                           (keys("ㄨㄛˇ") + "RNAi ", "我RNAi "), ("dBu " + keys("ㄕˋ"), "dBu 是"),
+                           # ...but a syllable of one letter that starts a common word is zhuyin (一樣, 一點)
+                           ("AMI" + keys("ㄧ ㄧㄤˋ"), "AMI一樣"), ("AMI" + keys("ㄧ ㄉㄧㄢˇ"), "AMI一點"),
+                           # ...only after an acronym: after a word with lower-case letters in it the letter
+                           # is its last (they came out NumP資本身, dB一下降, X一樣, MP遮住)
+                           ("NumPy " + keys("ㄅㄣˇ ㄕㄣ"), "NumPy 本身"), ("dBu " + keys("ㄒㄧㄚˋ ㄐㄧㄤˋ"), "dBu 下降"),
+                           ("Xu " + keys("ㄧㄤˋ"), "Xu 樣"), ("MP5k " + keys("ㄓㄨˋ"), "MP5k 住"),
+                           ("D2l " + keys("ㄆㄧㄢˋ"), "D2l 片"),
+                           # a digit key first: a word of three whose first two syllables are none (的問題)
+                           ("API" + keys("ㄉㄜ˙ ㄨㄣˋ ㄊㄧˊ"), "API的問題")):
+            for lm in (True, False):
+                with self.subTest(out=out, lm=lm):
+                    self.c.config.set(long_sentence=lm)
+                    self.c.reset()
+                    self.assertEqual(self.type(typed), out)
+        self.c.config.set(long_sentence=True)
 
     def test_a_reading_people_type_is_no_obscure_syllable(self):
         # ㄏㄞ + space came out as its keys, c9: 嗨 is ㄏㄞˋ first in the source data, so ㄏㄞ had the
@@ -148,7 +174,8 @@ class MixedEnglishTest(Base):
             c.table.set_custom(c.user.custom)
             self.assertEqual(self.type(typed), "我蹦")
             # only of a word of one character: the ㄅㄧㄤˇ of 電餅 has no character of its own (a
-            # syllable like it came up wherever its keys were typed: 197 is the ㄅㄞ˙ of 掰掰)
+            # syllable like it came up wherever its keys were typed: 197 is the ㄅㄞ˙ of 掰掰); it is
+            # one inside its word only (test_a_syllable_only_a_longer_word_has)
             self.assertNotIn("ㄅㄧㄤˇ", c.table.toned)
             self.assertEqual(self.type(keys("ㄨㄛˇ") + "1u;3"), "我1u;3")
             c.user.custom = {"ㄅㄞ-ㄅㄞ˙": ["掰掰"]}
@@ -196,6 +223,102 @@ class MixedEnglishTest(Base):
             c.table.set_custom(c.user.custom)
             self.assertEqual(self.type(typed), before)
         finally:
+            c.user.custom = saved
+            c.table.set_custom(c.user.custom)
+
+    def test_a_syllable_only_a_longer_word_has(self):
+        # 掰掰 ㄅㄞ ㄅㄞ˙, 電餅 ㄉㄧㄢˋ ㄅㄧㄤˇ in 個人詞庫: no character has ㄅㄞ˙ or ㄅㄧㄤˇ on its own, so the
+        # words could not be typed. Such a syllable is one right after its word's syllables before it
+        # (or, the word's first, before its next), and nowhere else: its keys are what they were
+        c = self.c
+        saved = c.user.custom
+        words = {"ㄅㄞ-ㄅㄞ˙": ["掰掰"], "ㄉㄧㄢˋ-ㄅㄧㄤˇ": ["電餅"], "ㄅㄧㄤˇ-ㄉㄤ": ["餅噹"], "ㄉㄚˋ-ㄅㄧㄤˇ-ㄉㄧㄢˋ": ["大餅店"]}
+        cases = [
+            ("19 197", "掰掰"),
+            (keys("ㄍㄣ ㄋㄧˇ ㄕㄨㄛ") + "19 197", "跟你說掰掰"),
+            ("19 197" + keys("ㄇㄧㄥˊ ㄊㄧㄢ ㄐㄧㄢˋ"), "掰掰明天見"),
+            (keys("ㄨㄛˇ ㄧㄠˋ ㄔ ㄉㄧㄢˋ") + "1u;3", "我要吃電餅"),
+            ("1u;3" + keys("ㄉㄤ"), "餅噹"),                       # the word's first syllable
+            (keys("ㄉㄚˋ") + "1u;3" + keys("ㄉㄧㄢˋ"), "大餅店"),      # the middle one of three
+            # elsewhere the keys are as before
+            ("197", "197"),
+            (keys("ㄧㄡˇ") + "197" + keys("ㄍㄜ˙"), "有197個"),
+            (keys("ㄅㄞˊ") + "197", "白197"),                     # (ㄅㄞˊ is not the word's ㄅㄞ)
+            ("ok 197", "ok 197"),
+            (keys("ㄉㄧㄢˋ ㄏㄨㄚˋ") + "197", "電話197"),
+            ("1u;3", "1u;3"),
+            # numbers after English, though they are the word's keys
+            ("you are 19 197", "you are 19 197"),
+            ("room 19 197", "room 19 197"),
+        ]
+        try:
+            for lm in (True, False):
+                for auto in (False, True):
+                    c.config.set(long_sentence=lm, autocorrect=auto)
+                    c.settings_changed()
+                    c.user.custom = dict(words)
+                    c.table.set_custom(c.user.custom)
+                    for typed, out in cases:
+                        c.reset()
+                        self.assertEqual(self.type(typed), out, (typed, lm, auto))
+                    # not after another syllable: as before the words were added (注音自動校正 reads the ;
+                    # as the l next to it, with them or without)
+                    c.reset()
+                    with_words = self.type(keys("ㄨㄛˇ") + "1u;3")
+                    c.user.custom = {}
+                    c.table.set_custom(c.user.custom)
+                    c.reset()
+                    self.assertEqual(self.type(keys("ㄨㄛˇ") + "1u;3"), with_words, (lm, auto))
+                    self.assertEqual(with_words, "我表" if auto else "我1u;3")
+            c.config.set(long_sentence=True, autocorrect=False)
+            c.settings_changed()
+            c.user.custom = dict(words)
+            c.table.set_custom(c.user.custom)
+            # nothing else knows the syllable: not a syllable of the table, no character offered for it
+            self.assertNotIn("ㄅㄞ˙", c.table.toned)
+            self.assertIsNone(c.table.parse_syllable("197"))
+            # a word of three not typed to its end: the keys, as before the word was there (it came out
+            # 大ㄅㄧㄤˇ), then the word
+            c.reset()
+            for ch in keys("ㄉㄚˋ") + "1u;3":
+                c.key(ch)
+            self.assertEqual(c.composition, "大1u;3")
+            for ch in keys("ㄉㄧㄢˋ"):
+                c.key(ch)
+            self.assertEqual(c.composition, "大餅店")
+            # ↓ after such a syllable: the word it is in (it showed nothing, and Esc then cleared the line)
+            c.reset()
+            for ch in "19 197":
+                c.key(ch)
+            c.key(special="DOWN")
+            self.assertEqual(c.candidates[0], "掰掰")
+            c.key(special="ESC")
+            self.assertEqual(c.composition, "掰掰")
+            # being typed, after the word's syllables before it: its zhuyin already. ㄍㄧㄤ: no syllable
+            # of the dictionary starts so (ㄅㄧㄤ is the start of one, and zhuyin anywhere as before)
+            c.user.custom = {"ㄉㄧㄢˋ-ㄍㄧㄤˇ": ["電講"]}
+            c.table.set_custom(c.user.custom)
+            self.assertIsNone(c.table.parse_partial("eu;"))
+            c.config.set(preview="zhuyin")
+            c.reset()
+            for ch in keys("ㄉㄧㄢˋ") + "eu;":
+                c.key(ch)
+            self.assertEqual(c.composition, "電ㄍㄧㄤ")
+            c.key("3")
+            self.assertEqual(c.composition, "電講")
+            c.reset()
+            for ch in keys("ㄨㄛˇ") + "eu;":
+                c.key(ch)
+            self.assertEqual(c.composition, "我eu;")
+            c.reset()
+            # the word gone from 個人詞庫: the syllable goes with it
+            c.user.custom = {}
+            c.table.set_custom(c.user.custom)
+            c.reset()
+            self.assertEqual(self.type("19 197"), "掰197")
+        finally:
+            c.config.values = dict(DEFAULTS)
+            c.settings_changed()
             c.user.custom = saved
             c.table.set_custom(c.user.custom)
 
@@ -541,6 +664,134 @@ class SettingsTest(Base):
             c.key(ch)
         self.assertEqual(c.composition, "ㄋㄧ")
         self.assertEqual(c.cursor, 2)
+
+    def test_keys_put_back_as_english_are_forgotten_when_a_syllable_is_picked_from_the_bar(self):
+        # 輸 (gj + space) put back as its keys once from the bar: gj is an English word from then on. 輸
+        # picked back from the bar (not the list) never forgot it, and 輸入 came out gj 入 for good
+        # (reported 2026-11-12)
+        c = self.c
+        for ch in "gj ":
+            c.key(ch)
+        c.key(special="HOME")
+        self.pick_bar("gj")
+        c.key(special="ENTER")
+        self.assertIn("gj", c.user.english)
+        self.assertEqual(self.type("gj bj4", enter=False), "")
+        self.assertEqual(c.composition, "gj 入")
+        c.key(special="HOME")
+        self.pick_bar("輸")
+        self.assertEqual(c.composition, "輸入")
+        c.key(special="ENTER")
+        self.assertNotIn("gj", c.user.english)
+        self.assertEqual(self.type("gj bj4"), "輸入")
+        # its zhuyin picked from the bar (ㄕㄨ) forgets it too
+        for ch in "gj ":
+            c.key(ch)
+        c.key(special="HOME")
+        self.pick_bar("gj")
+        c.key(special="ENTER")
+        self.assertIn("gj", c.user.english)
+        for ch in "gj bj4":
+            c.key(ch)
+        c.key(special="HOME")
+        self.pick_bar("ㄕㄨ")
+        c.key(special="ENTER")
+        self.assertNotIn("gj", c.user.english)
+        # an English word with keys right after it (gjbj4 is gj入, gj,): its own keys are the word forgotten
+        # (no space after gj: no syllable there, the bar offers its zhuyin only)
+        for typed, pick in (("gjbj4", "bar"), ("gj,", "bar")):
+            c.user.english.add("gj")
+            c.reset()
+            for ch in typed:
+                c.key(ch)
+            self.assertTrue(c.composition.startswith("gj"), typed)
+            c.key(special="HOME")
+            if pick == "bar":
+                self.pick_bar("ㄕㄨ")
+            else:
+                c.key(special="DOWN")
+                for _ in range(c.candidates.index("輸")):
+                    c.key(special="DOWN")
+                c.key(special="ENTER")
+            c.key(special="ENTER")
+            self.assertNotIn("gj", c.user.english, typed)
+        # (the bar trying a pick out for its label forgets nothing: gj put back is English still)
+        for ch in "gj ":
+            c.key(ch)
+        c.key(special="HOME")
+        self.pick_bar("gj")
+        c.key(special="ENTER")
+        self.assertIn("gj", c.user.english)
+        c.user.learn_english("gj", False)
+
+    def test_zhuyin_preview_back_to_the_keys_from_the_bar(self):
+        # shown as zhuyin, an unfinished syllable had no way back to its keys (su, t, a)
+        c = self.c
+        for raw, shown in (("su", "ㄋㄧ"), ("t", "ㄔ"), ("a", "ㄇ")):
+            c.config.set(preview="zhuyin")
+            c.reset()
+            for ch in raw:
+                c.key(ch)
+            self.assertEqual(c.composition, shown)
+            c.key(special="HOME")
+            self.assertEqual(c.replacements, [raw])
+            self.pick_bar(raw)
+            self.assertEqual(c.composition, raw)
+            c.key(special="ENTER")
+            self.assertEqual(c.commit, raw)
+        # this once only: su is not an English word from then on (it would show as su before its tone)
+        self.assertEqual(c.user.english, set())
+        for ch in "su3su":
+            c.key(ch)
+        self.assertEqual(c.composition, "你ㄋㄧ")
+        # ... nor are keys with a digit a code of 代碼記憶 after two picks (1j is ㄅㄨ still)
+        for _ in range(3):
+            c.reset()
+            for ch in "1j":
+                c.key(ch)
+            self.assertEqual(c.composition, "ㄅㄨ")
+            c.key(special="DOWN")
+            c.key("2")
+            self.assertEqual(c.composition, "1j")
+            c.key(special="ENTER")
+        self.assertEqual(c.user.corrections.codes(), frozenset())
+        # a punctuation key after Chinese is punctuation once sent, no unfinished syllable to put back
+        # (你好ㄝ + Enter is 你好，): neither ↓ nor the bar offers the key
+        c.reset()
+        for ch in "su3cl3,":
+            c.key(ch)
+        c.key(special="LEFT")
+        self.assertEqual(c.replacements, [])
+
+    def test_zhuyin_preview_back_to_the_keys_from_the_candidates(self):
+        c = self.c
+        c.config.set(preview="zhuyin")
+        for ch in "su":
+            c.key(ch)
+        c.key(special="DOWN")
+        self.assertEqual(c.candidates, ["ㄋㄧ", "su"])
+        c.key("2")
+        self.assertEqual(c.composition, "su")
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "su")
+        for ch in "su3t":  # after a character: last, after the unfinished syllable's zhuyin
+            c.key(ch)
+        c.key(special="DOWN")
+        self.assertEqual(c.candidates[-2:], ["ㄔ", "t"])
+
+    def test_keys_preview_offers_the_keys_nowhere_new(self):
+        # the other two settings show the keys already: as before
+        c = self.c
+        for preview in ("keys", "keys_hint"):
+            c.config.set(preview=preview)
+            c.reset()
+            for ch in "su":
+                c.key(ch)
+            c.key(special="DOWN")
+            self.assertEqual(c.candidates, ["ㄋㄧ"])
+            c.key(special="ESC")
+            c.key(special="HOME")
+            self.assertEqual(c.replacements, ["ㄋㄧ"])
 
     def test_config_file_is_reloaded(self):
         import json
@@ -2780,6 +3031,189 @@ class LearnedSinglesTest(Base):
         self.assertEqual(self.type(keys("ㄧ")), "伊")
         self.learn("ㄒㄧㄢˋ", "線")
         self.assertEqual(self.type(keys("ㄒㄧㄢˋ")), "線")
+
+
+class NamePickTest(Base):
+    """A name of three characters picked right again and again was never learned (reported 2026-11-12;
+    a made-up name here that goes wrong the same way: 葉冠霆, ㄧㄝˋ ㄍㄨㄢˋ ㄊㄧㄥˊ, comes out 業冠廷). Two
+    characters picked a little apart, the one between them right (_learn_spans), or one picked beside
+    a word the user taught (_learn_beside_words: 冠霆 learned from picks of 霆, then 葉 before it): half
+    a pick of the whole, a word the second time."""
+
+    TYPED = "ㄧㄝˋ ㄍㄨㄢˋ ㄊㄧㄥˊ"
+    KEY = "ㄧㄝˋ-ㄍㄨㄢˋ-ㄊㄧㄥˊ"
+    learn = LearnedSinglesTest.learn
+    pick_at = LearnedSinglesTest.pick_at
+
+    def setUp(self):
+        super().setUp()
+        # (長句選字加強 off whatever DUALITYIME_TEST_LONG_SENTENCE says: what is shown before the picks
+        # is the dictionary's alone)
+        self.c.config.set(long_sentence=False)
+        self.c.settings_changed()
+        self.c.user.phrases.clear()
+        self.c.user.phrase_used.clear()
+
+    def pick_all(self, typed, picks):
+        c = self.c
+        for ch in keys(typed):
+            c.key(ch)
+        for at, cand in picks:
+            c.key(special="HOME")
+            for _ in range(at):
+                c.key(special="RIGHT")
+            c.key(special="DOWN")
+            for _ in range(c.candidates.index(cand)):
+                c.key(special="DOWN")
+            c.key(special="ENTER")
+        c.key(special="ENTER")
+        return c.commit
+
+    def test_two_characters_picked_with_one_between_them(self):
+        count = self.c.user.phrase_count
+        self.assertEqual(self.type(keys(self.TYPED)), "業冠廷")
+        self.assertEqual(self.pick_all(self.TYPED, [(2, "霆"), (0, "葉")]), "葉冠霆")
+        self.assertEqual(count(self.KEY, "葉冠霆"), 0.5)
+        self.assertNotEqual(self.type(keys(self.TYPED)), "葉冠霆")  # (once is not enough)
+        self.assertEqual(self.pick_all(self.TYPED, [(0, "葉"), (2, "霆")]), "葉冠霆")
+        self.assertEqual(count(self.KEY, "葉冠霆"), 1)
+        self.assertEqual(self.type(keys(self.TYPED)), "葉冠霆")
+        # ... at the start of a sentence, in the middle and at the end of one
+        self.assertEqual(self.type(keys(self.TYPED + " ㄕㄨㄛ ㄏㄠˇ")), "葉冠霆說好")
+        self.assertEqual(self.type(keys("ㄨㄛˇ ㄓㄠˇ " + self.TYPED)), "我找葉冠霆")
+        self.assertEqual(self.type(keys("ㄑㄧㄥˇ ㄨㄣˋ " + self.TYPED + " ㄗㄞˋ ㄇㄚ˙")), "請問葉冠霆在嗎")
+
+    def test_a_character_picked_before_a_word_the_user_taught(self):
+        # 冠霆 is a word of the user's already (from picks of 霆): 葉 picked before it was a character only
+        count = self.c.user.phrase_count
+        self.learn("ㄍㄨㄢˋ-ㄊㄧㄥˊ", "冠霆")
+        self.assertEqual(self.type(keys(self.TYPED)), "業冠霆")
+        self.assertEqual(self.pick_at(self.TYPED, 0, "葉"), "葉冠霆")
+        self.assertEqual(count(self.KEY, "葉冠霆"), 0.5)
+        self.assertEqual(self.type(keys(self.TYPED)), "業冠霆")  # (once is not enough)
+        self.assertEqual(self.pick_at(self.TYPED, 0, "葉"), "葉冠霆")
+        self.assertEqual(count(self.KEY, "葉冠霆"), 1)
+        self.assertEqual(self.type(keys(self.TYPED)), "葉冠霆")
+        self.assertEqual(self.type(keys("ㄨㄛˇ ㄓㄠˇ " + self.TYPED)), "我找葉冠霆")
+
+    def test_a_character_picked_after_a_word_the_user_taught(self):
+        count = self.c.user.phrase_count
+        self.learn("ㄧㄝˋ-ㄍㄨㄢˋ", "葉冠")
+        self.assertEqual(self.type(keys(self.TYPED)), "葉冠停")
+        self.pick_at(self.TYPED, 2, "霆")
+        self.assertEqual(count(self.KEY, "葉冠霆"), 0.5)
+        self.pick_at(self.TYPED, 2, "霆")
+        self.assertEqual(count(self.KEY, "葉冠霆"), 1)
+        self.assertEqual(self.type(keys(self.TYPED)), "葉冠霆")
+
+    def test_a_word_just_learned_keeps_the_character_beside_it(self):
+        # 長句選字加強 on: 蔣冠廷 comes, 霆 is picked, twice: 冠霆 is a word. With it the 蔣 just sent read 獎
+        # from then on (the word leaves it on its own), so the surname had to be picked twice as well,
+        # each time after the name seemed learned. 蔣冠霆 is learned as it was sent.
+        c = self.c
+        c.config.set(long_sentence=True)
+        c.settings_changed()
+        if c._lm() is None:
+            self.skipTest("no language model here (numpy)")
+        typed, key = "ㄐㄧㄤˇ ㄍㄨㄢˋ ㄊㄧㄥˊ", "ㄐㄧㄤˇ-ㄍㄨㄢˋ-ㄊㄧㄥˊ"
+        self.assertEqual(self.type(keys(typed)), "蔣冠廷")
+        self.assertEqual(self.pick_at(typed, 2, "霆"), "蔣冠霆")
+        self.assertEqual(c.user.phrase_count(key, "蔣冠霆"), 0)   # (nothing changed beside it yet)
+        self.assertEqual(self.type(keys(typed)), "蔣冠廷")
+        self.assertEqual(self.pick_at(typed, 2, "霆"), "蔣冠霆")
+        self.assertEqual(c.user.phrase_count("ㄍㄨㄢˋ-ㄊㄧㄥˊ", "冠霆"), 1)
+        self.assertEqual(c.user.phrase_count(key, "蔣冠霆"), 1)
+        self.assertEqual(self.type(keys(typed)), "蔣冠霆")
+        self.assertEqual(self.type(keys("ㄨㄛˇ ㄓㄠˇ " + typed)), "我找蔣冠霆")
+        self.assertEqual(self.type(keys(typed + " ㄕㄨㄛ ㄏㄠˇ")), "蔣冠霆說好")
+
+    def test_a_word_just_learned_that_changes_nothing_beside_it_stays_alone(self):
+        # (長句選字加強 off: 講冠廷 comes, so 蔣 is picked too; the pair alone teaches no longer word)
+        self.learn("ㄏㄨㄟˋ", "繪", 36)
+        self.learn("ㄏㄨㄟˋ", "會", 2)
+        typed = "ㄗˋ ㄉㄧㄥˋ ㄔㄨㄥˊ ㄏㄨㄟˋ"
+        self.pick_at(typed, 3, "繪")
+        self.pick_at(typed, 3, "繪")
+        self.assertEqual(self.c.user.phrase_count("ㄔㄨㄥˊ-ㄏㄨㄟˋ", "重繪"), 1)
+        self.assertFalse([k for k in self.c.user.phrases if k.count("-") >= 2])
+
+    def test_not_beside_a_word_of_the_dictionary(self):
+        # 蟲 picked after 自訂 (a word of the dictionary, not one the user taught): no 自訂蟲
+        self.pick_at("ㄗˋ ㄉㄧㄥˋ ㄔㄨㄥˊ ㄏㄨㄟˋ", 2, "蟲")
+        self.assertFalse([k for k in self.c.user.phrases if k.count("-") >= 2])
+
+    def test_not_what_is_picked_far_apart(self):
+        # the first and the last of six characters picked: no word of six
+        self.pick_all(self.TYPED + " " + self.TYPED, [(5, "霆"), (0, "葉")])
+        self.assertFalse([k for k in self.c.user.phrases if k.count("-") >= 2])
+
+    def test_every_character_picked_is_a_word_at_once(self):
+        # (as before: picks side by side are one word the first time, and no half on top of it)
+        self.pick_all(self.TYPED, [(2, "霆"), (1, "貫"), (0, "葉")])
+        self.assertEqual(self.c.user.phrase_count(self.KEY, "葉貫霆"), 1)
+
+    def test_the_word_corrected_back_is_forgotten(self):
+        self.pick_all(self.TYPED, [(2, "霆"), (0, "葉")])
+        self.pick_all(self.TYPED, [(2, "霆"), (0, "葉")])
+        self.assertEqual(self.type(keys(self.TYPED)), "葉冠霆")
+        self.pick_at(self.TYPED, 0, "業")
+        self.assertEqual(self.c.user.phrase_count(self.KEY, "葉冠霆"), 0)
+
+    def test_once_a_sentence(self):
+        # the name twice in one sentence, picked in both: still half
+        self.pick_all(self.TYPED + " , " + self.TYPED, [(6, "霆"), (4, "葉"), (2, "霆"), (0, "葉")])
+        self.assertEqual(self.c.user.phrase_count(self.KEY, "葉冠霆"), 0.5)
+
+    def test_not_where_a_word_follows_the_family_name(self):
+        # many family names are everyday characters with common homophones (鐘 中): 鐘 picked twice in
+        # 每個鐘變慢 made 鐘變 a word and, 慢 changing after it, 鐘變慢 - and 過程中變慢了 read 過程鐘變慢了.
+        # Only the character before a word just learned is kept with it (the family name)
+        typed = "ㄇㄟˇ ㄍㄜ˙ ㄓㄨㄥ ㄅㄧㄢˋ ㄇㄢˋ"
+        for _ in range(3):
+            c = self.c
+            c.reset()
+            for ch in keys(typed):
+                c.key(ch)
+            if c.composition[2] != "鐘":
+                c.key(special="ESC")
+                self.pick_at(typed, 2, "鐘")
+            else:
+                c.key(special="ENTER")
+        self.assertFalse([k for k in self.c.user.phrases if k.count("-") >= 2])
+        self.assertEqual(self.type(keys("ㄍㄨㄛˋ ㄔㄥˊ ㄓㄨㄥ ㄅㄧㄢˋ ㄇㄢˋ ㄌㄜ˙")), "過程中變慢了")
+
+    def test_not_where_a_word_with_other_tones_follows_the_family_name(self):
+        # 一個 is ㄧ ㄍㄜ˙ in the dictionary; typed ㄍㄜˋ and picked, it is the user's word, and 齊 picked before
+        # it twice taught 齊一個 - 星期一個 read 星齊一個
+        typed = "ㄊㄚ ㄕㄨㄛ ㄑㄧˊ ㄧ ㄍㄜˋ ㄌㄜ˙"
+        self.learn("ㄧ-ㄍㄜˋ", "一個")
+        for _ in range(3):
+            self.pick_at(typed, 2, "齊")
+        self.assertEqual(self.c.user.phrase_count("ㄑㄧˊ-ㄧ-ㄍㄜˋ", "齊一個"), 0)
+        self.assertEqual(self.type(keys("ㄒㄧㄥ ㄑㄧˊ ㄧ ㄍㄜˋ")), "星期一個")
+
+    def test_not_what_starts_with_no_family_name(self):
+        # the same picks where the first character is no family name (瀋): what was learned so were pieces
+        # of ordinary sentences (鍵變慢, and 逐漸變慢 read 築鍵變慢 then) - the characters and the pair only
+        typed = "ㄕㄣˇ ㄐㄧㄚ ㄖㄨㄟˋ"
+        for _ in range(2):
+            self.pick_all(typed, [(2, "叡"), (0, "瀋")])
+        self.assertFalse([k for k in self.c.user.phrases if k.count("-") >= 2])
+        self.c.user.phrases.clear()
+        self.learn("ㄐㄧㄚ-ㄖㄨㄟˋ", "家叡")
+        for _ in range(2):
+            self.pick_at(typed, 0, "瀋")
+        self.assertFalse([k for k in self.c.user.phrases if k.count("-") >= 2])
+
+    def test_taking_the_sentence_back_takes_back_what_it_taught(self):
+        c = self.c
+        self.pick_all(self.TYPED, [(2, "霆"), (0, "葉")])
+        before = (copy.deepcopy(c.user.phrases), copy.deepcopy(c.user.phrase_used))
+        self.pick_all(self.TYPED, [(2, "霆"), (0, "葉")])
+        self.assertEqual(c.user.phrase_count(self.KEY, "葉冠霆"), 1)
+        c.undo_commit()
+        self.assertEqual((c.user.phrases, c.user.phrase_used), before)
+        c.reset()
 
 
 class PairPickTest(Base):

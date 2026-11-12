@@ -62,6 +62,25 @@ constexpr double RARE_SCORE = -6.0;
 constexpr int MAX_SYL_KEYS = 5;
 constexpr size_t MAX_RAW = 100;  // keys in the buffer before the oldest phrase is sent (the ASUS IME: about 100)
 constexpr double USER_PHRASE_SCORE = -6.0;
+constexpr int SPAN_MAX = 4;  // characters from the first to the last pick learned as one word (Composer::learn_spans)
+// what learn_spans, learn_beside_words and learn_what_learning_changed learn starts with one of these: the
+// common family names (and the first character of the two-character ones). A name is what they are for; in
+// an ordinary sentence the same picks taught pieces of it (鍵變慢, 語料裡常 - and with 鍵變慢 a word, 逐漸變慢
+// read 築鍵變慢). The same list as engine/composer.py SURNAMES
+static bool is_surname(char32_t c) {
+    static const ustr names = U"陳林黃張李王吳劉蔡楊許鄭謝洪郭邱曾廖賴徐周葉蘇莊呂江何蕭羅高潘簡朱鍾游彭詹胡施沈余盧梁趙顏柯翁魏孫戴范方宋鄧杜傅侯曹薛丁卓阮馬董溫唐藍石蔣古紀姚連馮歐程湯田康姜白汪鄒尤巫鐘黎涂龔嚴韓袁金童陸夏柳邵錢伍倪于譚駱熊任甘秦顧毛章史萬俞雷饒闕凌崔尹孔辛武辜陶易段龍韋葛池孟褚殷麥賀賈莫文管關向包丘梅裴樊房佘左花魯安鮑郝穆翟常申岳齊喬祁談司諸上官令狐皇甫尉遲端木";
+    return names.find(c) != ustr::npos;
+}
+// ...and what follows the family name is no word of the dictionary: a given name rarely is, and many
+// family names are everyday characters with common homophones (鐘 中, 葉 業, 李 裡): 鐘變慢 learned from
+// 每個鐘變慢 made 過程中變慢了 read 過程鐘變慢了
+static bool like_a_name(const Lexicon& lexicon, const std::vector<ustr>& readings, const ustr& text) {
+    if (text.empty() || !is_surname(text[0])) return false;
+    // (a word the dictionary writes with other tones too: 一個 is ㄧ ㄍㄜ˙ there, typed ㄍㄜˋ - 齊一個 made
+    // 星期一個 read 星齊一個)
+    std::vector<ustr> rest(readings.begin() + 1, readings.end());
+    return !lexicon.has(rest, text.substr(1)) && !lexicon.reads_with_other_tones(rest, text.substr(1));
+}
 constexpr int CUSTOM_NEXT_MIN = 2;  // 個人詞庫's words are guessed as the next character once this many of theirs are typed
 constexpr double BIGRAM_WEIGHT = 0.6;
 const double UNSEEN_PAIR = std::log10(1 - BIGRAM_WEIGHT);
@@ -236,7 +255,13 @@ constexpr double EN_DIGIT = 1.4;        // each digit (python3, h264)
 constexpr double EN_SYMBOL = 1.0;       // each other key inside (setup.exe, abc@example.com)
 constexpr double EN_LEARNED = -1.0;     // the user picked these keys as English before
 constexpr double EN_SWITCH = 2.8;       // zhuyin right after English with no space (python是)
-constexpr double EN_CASE_SWITCH = 1.5;  // ...less after a capital, when the zhuyin starts with a lower-case key (PQC功能)
+constexpr double EN_CASE_SWITCH = 2.8;  // ...none after a capital, when the zhuyin starts with a lower-case key
+                                        // (PQC功能, AMI新功能) or a digit key with a letter after it (API包括)
+constexpr double EN_CASE_LETTER = 1.5;  // ...as it was (3.2.4) when the syllable is one letter: RNAi, USDt, dBu
+constexpr size_t CASE_WORD_MAX = 4;     // syllables of the word a digit-key syllable after capitals may start
+// a syllable of one letter after capitals is zhuyin if it starts a word this common with the next one (一個 -3.1,
+// 一樣 -3.6, 資料, 醫院, 失去 -4.4; not 一是 -5.0 for dBu 是, 失事 -5.4 for mmHg 是)
+constexpr double CASE_LETTER_WORD = -4.4;
 constexpr double EN_RARITY = 0.7;       // ...times how rare its syllable is
 constexpr double EN_PHRASE = 1.0;       // ...less if it starts a word with the next syllable (sugata頁面)
 constexpr double EN_DIGIT_SYMBOL = 2.0; // a symbol next to digits (the 2; of youtube2; is 當, the ,4 of sugatau,4 頁)
@@ -386,6 +411,21 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
         }
         return false;
     };
+    // these syllables and the ones the keys from j spell make a word of the dictionary, of up to
+    // CASE_WORD_MAX syllables (包 + 括, 中 + 文 + 字: longer than starts_phrase looks)
+    std::function<bool(size_t, std::vector<ustr>)> starts_word = [&](size_t j, std::vector<ustr> syllables) {
+        if (!lexicon) return false;
+        for (size_t k = j + 2; k <= std::min(j + MAX_SYL_KEYS, n); ++k) {
+            auto nxt = table.parse_syllable(rv0.substr(j, k - j));
+            if (!nxt) continue;
+            std::vector<ustr> more = syllables;
+            more.push_back(nxt->first);
+            for (auto& [p, s] : lexicon->lookup(more))
+                if (s >= CASE_LETTER_WORD) return true;  // (not 遮住 for MP5k 住)
+            if (more.size() < CASE_WORD_MAX && starts_word(k, more)) return true;
+        }
+        return false;
+    };
     auto offer = [&](size_t i, size_t j, double cost, Token tok) {
         if (tok.kind == Kind::En && is_digit(tok.raw[0]) && i > 0 && best[i].tok.kind == Kind::Lit &&
             best[i].tok.raw.size() == 1 && zh_punct.count(best[i].tok.raw[0]))
@@ -400,7 +440,27 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
             {
                 cost += EN_SWITCH + EN_RARITY * std::max(0.0, -table.score(tok.value) - 2.0);
                 char last = best[i].tok.raw.back(), first = tok.raw[0];
-                if (last >= 'A' && last <= 'Z' && first >= 'a' && first <= 'z') cost -= EN_CASE_SWITCH;
+                // - but a syllable of one letter is as likely the end of a term (RNAi, USDt, dBu, mmHg), so
+                // it gets what it got before; a digit key first only where it starts a word with the next
+                // syllable (API包括; alone it is as likely a model: MP5k, D2l); digits alone never (PS5, V8)
+                // (those two only after an acronym, capitals alone and two at least: after NumPy, dBu, Xu,
+                // My the y, u with the space are the word's last letter - NumPy 本身 read NumP資本身)
+                if (last >= 'A' && last <= 'Z') {
+                    const std::string typed = rstrip(tok.raw);
+                    const std::string& before = best[i].tok.raw;
+                    bool acronym = before.size() >= 2;
+                    for (char c : before)
+                        if (c < 'A' || c > 'Z') acronym = false;
+                    if (first >= 'a' && first <= 'z')
+                        // (unless it starts a common word with the next syllable: API一樣, not mmHg 是)
+                        cost -= typed.size() == 1 &&
+                                        !(acronym && tok.kind == Kind::Zh && starts_phrase(j, tok.value, CASE_LETTER_WORD))
+                                    ? EN_CASE_LETTER
+                                    : EN_CASE_SWITCH;
+                    else if (acronym && is_digit(first) && !all_digit(typed) && tok.kind == Kind::Zh &&
+                             starts_word(j, {tok.value}))
+                        cost -= EN_CASE_SWITCH;
+                }
                 if (tok.kind == Kind::Zh && starts_phrase(j, tok.value)) cost -= EN_PHRASE;
             } else if (tok.kind == Kind::Lit && tok.raw.size() == 1 && zh_punct.count(tok.raw[0]) &&
                      is_digit(best[i].tok.raw.back()))
@@ -425,6 +485,29 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
         return 0.0;
     };
     std::string_view rv(raw);
+    // the readings of the syllables at the end of the best tokens up to i, nothing between them
+    auto zh_before = [&](size_t i) {
+        std::vector<ustr> out;
+        for (size_t p = i; p > 0 && best[p].tok.kind == Kind::Zh; p = best[p].prev) out.push_back(best[p].tok.value);
+        std::reverse(out.begin(), out.end());
+        return out;
+    };
+    // the syllables at the end of the best tokens up to i are all digits, right after an English word
+    auto number_after_english = [&](size_t i) {
+        size_t p = i;
+        while (p > 0 && best[p].tok.kind == Kind::Zh && all_digit(rstrip(best[p].tok.raw))) p = best[p].prev;
+        if (p == i) return false;
+        if (p == 0) return after_english;
+        return best[p].tok.kind == Kind::En && all_alpha(strip(best[p].tok.raw));
+    };
+    // the keys from j spell this syllable
+    auto spells = [&](size_t j, const ustr& reading) {
+        for (size_t k = j + 2; k <= std::min(j + MAX_SYL_KEYS, n); ++k) {
+            auto nxt = table.parse_syllable(rv.substr(j, k - j));
+            if ((nxt && nxt->first == reading) || table.parse_in_word(rv.substr(j, k - j)) == reading) return true;
+        }
+        return false;
+    };
     for (size_t i = 0; i < n; ++i) {
         if (!best[i].set) continue;
         char ch = raw[i];
@@ -439,6 +522,18 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
                            !(i > 0 && is_digit(raw[i - 1]) && !table.is_tone_key(raw[i - 1]) && is_digit(ch));
             for (size_t j = i + 2; j <= std::min(i + MAX_SYL_KEYS, n); ++j) {
                 auto parsed = table.parse_syllable(rv.substr(i, j - i));
+                if (!parsed && table.has_in_words()) {
+                    // a syllable only a longer word of 個人詞庫 has (the ㄅㄞ˙ of 掰掰: 197): one right after
+                    // the word's syllables before it, or before its next one - nowhere else
+                    // (not digits after English with the word's digits before them: you are 19 197)
+                    ustr own = table.parse_in_word(rv.substr(i, j - i));
+                    if (!own.empty() && !(all_digit(rstrip(rv.substr(i, j - i))) && number_after_english(i)) &&
+                        table.in_its_word(own, zh_before(i), [&](const ustr& nxt) { return spells(j, nxt); })) {
+                        offer(i, j, syllable_cost(table, own, true) + crosses(i, j),
+                              Token{Kind::Zh, raw.substr(i, j - i), own, ii});
+                        continue;
+                    }
+                }
                 // (digit keys read as zhuyin only in the normal order: 2024 is a number)
                 bool as_typed = parsed && (parsed->second || !(ordered_only || all_digit(rv.substr(i, j - 1 - i))));
                 // 注音自動校正: a punctuation key out of order after all when the keys after it spell
@@ -530,6 +625,11 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
             if (parsed && (parsed->second || !(ordered_only || all_digit(rv.substr(i))))) {
                 double cost = COST_PARTIAL + (parsed->second ? 0.0 : COST_REORDERED);
                 offer(i, n, cost + crosses(i, n), Token{Kind::Partial, raw.substr(i), parsed->first, ii});
+            } else if (!parsed && table.has_in_word_parts()) {
+                // (...and not finished yet, after the word's syllables before it: 電 + 1u; is 電ㄅㄧㄤ)
+                ustr own = table.partial_in_word(rv.substr(i));
+                if (!own.empty() && table.in_its_word(own, zh_before(i), nullptr, true))
+                    offer(i, n, COST_PARTIAL + crosses(i, n), Token{Kind::Partial, raw.substr(i), own, ii});
             }
         }
         if (ch == ' ') {
@@ -2438,11 +2538,24 @@ bool Composer::open_candidates() {
             bare = a;
         }
     }
+    // shown as zhuyin (preview "zhuyin": su is ㄋㄧ): the keys as typed too, or there is no way back to them
+    std::optional<Action> typed;
+    if (bare && config.text("preview") == "zhuyin") {
+        Action a;
+        a.type = "typed";
+        a.word = last->raw;
+        a.start = last->start;
+        typed = a;
+    }
     if (n == 0) {
         if (bare) {
             candidates = {bare->text};
             cand_actions_ = {*bare};
             cand_index = 0;
+            if (typed) {
+                candidates.push_back(as_typed(last->start, last->raw));
+                cand_actions_.push_back(*typed);
+            }
         }
         return bare.has_value();
     }
@@ -2461,6 +2574,14 @@ bool Composer::open_candidates() {
     int b_end = run->second;
     std::vector<std::pair<int, int>> spans;
     for (int l = c < n ? std::min(MAX_PHRASE_LEN, b_end - t) : 1; l > 0; --l) spans.emplace_back(t, l);
+    // a syllable only a longer word of 個人詞庫 has (the ㄅㄞ˙ of 掰掰) has no character of its own: the
+    // word it is in (↓ on it showed nothing)
+    for (auto& [syllables, index] : table_.words_with(readings[t])) {
+        int s0 = t - static_cast<int>(index), l = static_cast<int>(syllables.size());
+        if (run->first <= s0 && s0 + l <= b_end && std::equal(syllables.begin(), syllables.end(), readings.begin() + s0) &&
+            std::find(spans.begin(), spans.end(), std::pair<int, int>{s0, l}) == spans.end())
+            spans.emplace_back(s0, l);
+    }
     std::unordered_set<ustr> seen;
     for (auto [s0, l] : spans) {
         std::vector<ustr> part(readings.begin() + s0, readings.begin() + s0 + l);
@@ -2557,6 +2678,13 @@ bool Composer::open_candidates() {
     if (bare) {
         labels.push_back(bare->text);
         actions.push_back(*bare);
+    }
+    if (typed) {
+        ustr text = as_typed(last->start, last->raw);
+        if (std::find(labels.begin(), labels.end(), text) == labels.end()) {
+            labels.push_back(text);
+            actions.push_back(*typed);
+        }
     }
     // 映射詞彙 with a Chinese shortcut (牛逼 -> nb): what it stands for comes first
     std::vector<ustr> mapped;
@@ -2988,6 +3116,17 @@ void Composer::replacement_bar(std::vector<ustr>& out_labels, std::vector<Action
             if (auto parsed = table_.parse_partial(keys)) sym = parsed->first;
             else if (may_be_zhuyin_text(start, keys)) sym = table_.bare(keys);
             if (!sym.empty()) add(sym, fix(start, stop, sym));
+            bool punct = keys.size() == 1 && zhuyin_punct(table_).count(keys[0]) &&
+                         chinese_before(static_cast<size_t>(tok - tokens.data()));
+            if (tok->kind == Kind::Partial && config.text("preview") == "zhuyin" && !punct) {
+                // shown as zhuyin (su: ㄋㄧ): the keys as typed, or there is no way back to them
+                // (not a punctuation key after Chinese, as in ↓: sent, it is the punctuation)
+                Action r;
+                r.type = "typed";
+                r.word = std::string(keys);
+                r.start = start;
+                add(as_typed(start, r.word), r);
+            }
         }
         add_all(more_labels, more_actions);  // 滅, 版, 搜
         // a tone key ending a word as its tone mark (the 3 of 103: ˇ, the 4 of dog4: ˋ), where
@@ -3044,10 +3183,33 @@ ustr Composer::preview(const Action& action, int start, int end) const {
     return sim.composition.substr(from, to - from);
 }
 
+void Composer::forget_english_at(int c) {
+    // a word read as English, picked as something else from its start (a syllable, its zhuyin): stop
+    // guessing English there, as a pick from the list does ("chinese", whole). gj put back as typed once
+    // (an English word from then on), 輸 picked from the bar again and again, and 輸入 came out gj 入 for
+    // good. Not in a copy trying the pick out for the bar's label: it shares the user model
+    if (simulating_) return;
+    for (auto& t : tokens) {
+        if (t.start != c) continue;
+        if (t.kind == Kind::En) forget_english_word(t);
+        break;
+    }
+}
+
+void Composer::forget_english_word(const Token& tok) {
+    // the English word of this token, as typed and as shown, is no English word of the user's. The token's
+    // own keys, not the keys up to the next space: gjbj4 (gj入) and gj, have the word gj
+    std::string word = rstrip(tok.raw);
+    user.learn_english(word, false);
+    user.learn_english(to_utf8(as_typed(tok.start, word)), false);
+    user.save();
+}
+
 void Composer::pick_syllable(const Action& action) {
     // keys c..j are one syllable, read with the rest again (頁 + 面 can still be 頁面);
     // what is before stays as typed if the caret was inside a word
     int c = action.start, j = action.end;
+    if (action.force < 0) forget_english_at(c);
     keep_before_bar(action.force >= 0 ? action.force : c);
     int before = 0;
     for (auto& t : tokens)
@@ -3090,6 +3252,7 @@ void Composer::pick_replacement(int i) {
     const Action action = repl_actions_[i];
     repl_index = -1;
     if (action.type == "fix") {
+        forget_english_at(action.start);
         keep_before_bar(action.start);
         learn_zhuyin_text(action.text);
         int start = action.start, end = action.end;
@@ -3136,7 +3299,8 @@ void Composer::pick_replacement(int i) {
     // raw (the keys as typed): the same as from the candidate list
     cand_actions_ = {action};
     pick(0, true);
-    if (action.type == "raw") caret_past(action.start + static_cast<int>(action.word.size()));
+    if (action.type == "raw" || action.type == "typed")
+        caret_past(action.start + static_cast<int>(action.word.size()));
 }
 
 void Composer::caret_past(int end) {
@@ -3272,11 +3436,11 @@ void Composer::pick(int i, bool from_bar) {
             note_code_part(action.force, action.start);
         }
         if (action.whole) {  // stop guessing English here
-            std::string rest = raw.substr(action.start);
-            std::string word = rest.substr(0, rest.find(' '));
-            user.learn_english(word, false);
-            user.learn_english(to_utf8(as_typed(action.start, word)), false);
-            user.save();
+            for (auto& t : tokens)
+                if (t.start == action.start) {
+                    forget_english_word(t);
+                    break;
+                }
         }
         refresh();
         overrides_[{action.first, static_cast<int>(action.readings.size())}] = {action.readings, action.text};
@@ -3368,12 +3532,15 @@ void Composer::pick(int i, bool from_bar) {
         last_commit_.reset();
         commit = before + action.text;
         return;
-    } else if (action.type == "raw") {
+    } else if (action.type == "raw" || action.type == "typed") {
+        // (typed: an unfinished syllable shown as zhuyin put back as its keys, this once - su learned
+        // as an English word, 1j as a code of 代碼記憶, would show as the keys from then on, before
+        // the tone is typed)
         keep_before_bar(action.start);
-        if (!note_code(action.start)) note_as_typed(action.start);
+        if (action.type == "raw" && !note_code(action.start)) note_as_typed(action.start);
         taken_.erase(action.start);
         forced_.insert(action.start);
-        if (all_alpha(action.word)) {
+        if (action.type == "raw" && all_alpha(action.word)) {
             user.learn_english(action.word, true);
             user.save();
         }
@@ -3826,6 +3993,163 @@ void Composer::learn_pairs(const std::vector<Segment>& before) {
     }
 }
 
+void Composer::learn_spans(const std::vector<Segment>& before) {
+    // characters picked a little apart in one stretch, what is between them right as it was (the 沈
+    // and the 睿 of 沈家睿): what is written from the first to the last of them - SPAN_MAX characters
+    // at most - is half a pick of a word, so a word the second time it is sent so. Each alone was
+    // learned as a character (沈) and as a pair with its neighbour (家睿), never the name. Only single
+    // characters picked, one of them at least changed (not all just looked at); not where every
+    // character of it is picked (learn_group has it at once), nor what the dictionary has or the
+    // user taught already; once a sentence. Every character of it on its own, in no word, as the
+    // characters of a name are: with a word among them what was learned were pieces of sentences
+    // (帶入注 of 帶入注音, 語料裡, 介面畫 - measured). before: what it would be without the picks.
+    auto chars = chars_of(segments_), was = chars_of(before);
+    std::set<int> single;
+    for (auto& seg : segments_)
+        if (seg.length == 1 && seg.phrase.size() == 1) single.insert(seg.start);
+    std::set<std::pair<ustr, ustr>> done;
+    for (auto& [x, y] : runs_) {
+        std::vector<int> picks;
+        for (auto& [span, v] : overrides_)
+            if (!v.kept && span.second == 1 && x <= span.first && span.first < y) picks.push_back(span.first);
+        if (picks.size() < 2) continue;
+        int a = picks.front(), b = picks.back();
+        if (b - a + 1 > SPAN_MAX || static_cast<int>(picks.size()) == b - a + 1) continue;
+        bool wide = false;  // (a word picked whole among them: its own pick)
+        for (auto& [span, v] : overrides_)
+            if (!v.kept && span.second > 1 && span.first < b + 1 && a < span.first + span.second) wide = true;
+        if (wide) continue;
+        bool changed = false, whole = true;
+        for (int k : picks) {
+            auto w = was.find(k), c = chars.find(k);
+            if (w == was.end() || c == chars.end() || w->second != c->second) changed = true;
+        }
+        for (int k = a; k <= b; ++k)
+            if (!single.count(k)) whole = false;
+        if (!changed || !whole) continue;
+        std::vector<ustr> rd(readings.begin() + a, readings.begin() + b + 1);
+        ustr text;
+        for (int k = a; k <= b; ++k) text.push_back(chars.at(k));
+        ustr key = join(rd, U'-');
+        if (!like_a_name(lexicon_, rd, text) || done.count({key, text}) || lexicon_.has(rd, text) ||
+            lexicon_.reads_with_other_tones(rd, text) || user.phrase_count(key, text) >= 1)
+            continue;
+        done.insert({key, text});
+        user.learn_half(key, text);
+    }
+}
+
+void Composer::learn_beside_words(const std::vector<Segment>& before) {
+    // a character picked right beside a word the user taught, no word of the dictionary (沈 before
+    // 家睿, learned from picks of 睿): half a pick of the two together, so a word the second time. The
+    // pair rule leaves a pick next to a word alone (learn_pairs), so 沈 was learned as a character
+    // only, and 審家睿 came again however often it was picked. Only a pick that changed the
+    // character, on its own before and now; the word after it first, else the one before it;
+    // SPAN_MAX characters at most; once a sentence. before: what it would be without the picks.
+    std::set<int> alone;
+    for (auto& seg : before)
+        if (seg.length == 1 && seg.phrase.size() == 1) alone.insert(seg.start);
+    auto chars = chars_of(segments_), was = chars_of(before);
+    std::vector<const Segment*> words;
+    for (auto& seg : segments_)
+        if (seg.length > 1 && static_cast<int>(seg.phrase.size()) == seg.length) words.push_back(&seg);
+    std::set<std::pair<ustr, ustr>> done;
+    for (auto& [span, v] : overrides_) {
+        int s = span.first;
+        if (v.kept || span.second != 1 || !alone.count(s) || !chars.count(s)) continue;
+        if (auto w = was.find(s); w != was.end() && w->second == chars.at(s)) continue;
+        bool single = false;  // (else part of a word now)
+        for (auto& seg : segments_)
+            if (seg.start == s && seg.length == 1) single = true;
+        if (!single) continue;
+        // (the word after it first, then the others in their order)
+        std::vector<const Segment*> order;
+        for (auto* w : words)
+            if (w->start == s + 1) order.push_back(w);
+        for (auto* w : words)
+            if (w->start != s + 1) order.push_back(w);
+        for (auto* w : order) {
+            int a = w->start, b = w->length;
+            if (a != s + 1 && a + b != s) continue;
+            int first = std::min(a, s);
+            bool in_run = false;
+            for (auto& [x, y] : runs_)
+                if (x <= first && first + b + 1 <= y) in_run = true;
+            if (b + 1 > SPAN_MAX || !in_run) continue;
+            std::vector<ustr> word_rd(readings.begin() + a, readings.begin() + a + b);
+            if (lexicon_.has(word_rd, w->phrase) || !user.learned(join(word_rd, U'-'), w->phrase)) continue;
+            std::vector<ustr> rd(readings.begin() + first, readings.begin() + first + b + 1);
+            ustr text = a == s + 1 ? ustr(1, chars.at(s)) + w->phrase : w->phrase + ustr(1, chars.at(s));
+            ustr key = join(rd, U'-');
+            if (!like_a_name(lexicon_, rd, text) || done.count({key, text}) || lexicon_.has(rd, text) ||
+                lexicon_.reads_with_other_tones(rd, text) || user.phrase_count(key, text) >= 1)
+                break;
+            done.insert({key, text});
+            user.learn_half(key, text);
+            break;
+        }
+    }
+}
+
+void Composer::learn_what_learning_changed(const OrderedMap<ustr, OrderedMap<ustr, double>>& old_phrases) {
+    // a word learned in this sentence turns a character right beside it into another one the next
+    // time the same keys are typed (家睿 learned from picks of 睿: 沈家睿, just sent, reads 審家睿 from
+    // then on - the word leaves 沈 on its own, and on its own it is 審): the character and the word
+    // are learned together as they were sent, so what the user saw and sent stays. Seen by reading
+    // the sentence again, without the picks, with what was just learned; only for a word that
+    // became one now, a character on its own beside it in the same stretch, SPAN_MAX characters at
+    // most, no word of the dictionary. old_phrases: as they were before this sentence taught anything.
+    std::vector<std::pair<std::vector<ustr>, ustr>> fresh;
+    for (auto& [key, bucket] : user.phrases) {
+        if (key.find(U'-') == ustr::npos) continue;
+        std::vector<ustr> rd = split(key, U'-');
+        const auto* old_bucket = old_phrases.find(key);
+        for (auto& [phrase, count] : bucket) {
+            const double* old = old_bucket ? old_bucket->find(phrase) : nullptr;
+            if (count >= 1 && (old ? *old : 0.0) < 1 && phrase.size() == rd.size()) fresh.push_back({rd, phrase});
+        }
+    }
+    if (fresh.empty()) return;
+    auto sent = chars_of(segments_);
+    std::set<int> single;
+    for (auto& seg : segments_)
+        if (seg.length == 1 && seg.phrase.size() == 1) single.insert(seg.start);
+    std::optional<std::map<int, char32_t>> again;
+    const int n_readings = static_cast<int>(readings.size());
+    for (auto& [rd, phrase] : fresh) {
+        const int l = static_cast<int>(rd.size());
+        for (int a = 0; a + l <= n_readings; ++a) {
+            bool here = true;
+            for (int k = 0; here && k < l; ++k) {
+                auto c = sent.find(a + k);
+                if (readings[a + k] != rd[k] || c == sent.end() || c->second != phrase[k]) here = false;
+            }
+            if (!here) continue;
+            if (!again) {
+                Overrides none;
+                again = chars_of(convert_all(&none));
+            }
+            std::optional<std::pair<int, int>> run;
+            for (auto& [x, y] : runs_)
+                if (!run && x <= a && a + l <= y) run = std::pair<int, int>{x, y};
+            if (!run) continue;
+            // (the character before the word only, the family name: the one after it changing - 慢 after a
+            // learned 鐘變 - made 鐘變慢, and 過程中變慢了 read 過程鐘變慢了)
+            int first = a, last = a + l - 1, n = a - 1;
+            if (auto now = again->find(n);
+                run->first <= n && single.count(n) && now != again->end() && now->second != sent.at(n))
+                first = n;
+            if (last - first + 1 == l || last - first + 1 > SPAN_MAX) continue;
+            std::vector<ustr> span(readings.begin() + first, readings.begin() + last + 1);
+            ustr text;
+            for (int k = first; k <= last; ++k) text.push_back(sent.at(k));
+            ustr key = join(span, U'-');
+            if (like_a_name(lexicon_, span, text) && !lexicon_.has(span, text) && user.phrase_count(key, text) < 1)
+                user.learn_phrase(key, text);
+        }
+    }
+}
+
 void Composer::learn_group(const std::vector<std::tuple<int, std::vector<ustr>, ustr>>& group) {
     if (group.size() < 2) return;
     std::vector<ustr> rds;
@@ -3852,6 +4176,9 @@ void Composer::do_commit() {
         learn_tone_variant_words(before);
         learn_overrides();
         learn_pairs(before);
+        learn_spans(before);
+        learn_beside_words(before);
+        learn_what_learning_changed(old_phrases);
         undo.learned = user.phrases_changed(old_phrases, old_used);
         user.save();
     }

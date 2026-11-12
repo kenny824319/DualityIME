@@ -155,14 +155,71 @@ void SyllableTable::set_custom(const std::vector<ustr>& reading_keys) {
     // has no character of its own, and came up wherever its keys were typed (197 is ㄅㄞ˙: 有197個)
     for (const auto& key : reading_keys)
         if (key.find(U'-') == ustr::npos && !dictionary_toned_.count(key) && well_formed(key)) more.push_back(key);
-    if (more.empty() && !custom_) return;  // (as the dictionary's already)
-    toned_ = dictionary_toned_;
-    prefixes_ = dictionary_prefixes_;
-    for (const auto& syl : more) {
-        toned_[syl] = CUSTOM_SYLLABLE;
-        add_parts(syl, prefixes_);
+    if (!more.empty() || custom_) {  // (else as the dictionary's already)
+        toned_ = dictionary_toned_;
+        prefixes_ = dictionary_prefixes_;
+        for (const auto& syl : more) {
+            toned_[syl] = CUSTOM_SYLLABLE;
+            add_parts(syl, prefixes_);
+        }
+        custom_ = !more.empty();
     }
-    custom_ = !more.empty();
+    // ...and a syllable only a longer word has is one inside that word only (in_its_word)
+    in_words_.clear();
+    in_word_parts_.clear();
+    for (const auto& key : reading_keys) {
+        std::vector<ustr> syllables = split(key, U'-');
+        if (syllables.size() < 2) continue;
+        for (size_t index = 0; index < syllables.size(); ++index) {
+            const ustr& syl = syllables[index];
+            if (toned_.count(syl) || !well_formed(syl)) continue;
+            in_words_[syl].push_back({syllables, index});
+            std::unordered_set<ustr> parts;
+            add_parts(syl, parts);
+            for (const auto& part : parts) in_word_parts_[part].push_back({syllables, index});
+        }
+    }
+}
+
+ustr SyllableTable::parse_in_word(std::string_view keys) const {
+    if (in_words_.empty() || keys.size() < 2) return ustr();
+    auto tone = tones_.find(keys.back());
+    if (tone == tones_.end()) return ustr();
+    Parsed parsed = keys_to_symbols(keys.substr(0, keys.size() - 1), keymap_);
+    if (!parsed || parsed->first.empty() || !parsed->second) return ustr();
+    ustr reading = parsed->first + tone->second;
+    return in_words_.count(reading) ? reading : ustr();
+}
+
+ustr SyllableTable::partial_in_word(std::string_view keys) const {
+    if (in_word_parts_.empty()) return ustr();
+    Parsed parsed = keys_to_symbols(keys, keymap_);
+    return parsed && parsed->second && in_word_parts_.count(parsed->first) ? parsed->first : ustr();
+}
+
+bool SyllableTable::in_its_word(const ustr& reading, const std::vector<ustr>& before,
+                                const std::function<bool(const ustr&)>& after, bool partial) const {
+    const auto& words = partial ? in_word_parts_ : in_words_;
+    auto found = words.find(reading);
+    if (found == words.end()) return false;
+    for (const auto& [syllables, index] : found->second) {
+        if (index && !(before.size() >= index &&
+                       std::equal(before.end() - static_cast<std::ptrdiff_t>(index), before.end(), syllables.begin())))
+            continue;
+        bool last = index == syllables.size() - 1;
+        if (partial) {
+            if (last) return true;
+        } else if (last || (after && after(syllables[index + 1]))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+const std::vector<SyllableTable::InWord>& SyllableTable::words_with(const ustr& reading) const {
+    static const std::vector<InWord> none;
+    auto found = in_words_.find(reading);
+    return found == in_words_.end() ? none : found->second;
 }
 
 std::string SyllableTable::reading_to_keys(const ustr& reading) const {
@@ -258,7 +315,8 @@ std::vector<ustr> SyllableTable::toned_forms(std::string_view keys) const {
 
 double SyllableTable::score(const ustr& reading) const {
     auto it = toned_.find(reading);
-    return it == toned_.end() ? -99.0 : it->second;
+    if (it != toned_.end()) return it->second;
+    return in_words_.count(reading) ? CUSTOM_SYLLABLE : -99.0;
 }
 
 }  // namespace sz
