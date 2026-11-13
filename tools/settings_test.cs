@@ -46,6 +46,16 @@ static class SettingsTest {
             Check("setConfig writes the candidate layout", (string)saved["cand_layout"] == "grid" &&
                   (string)saved["cand_keys"] == "1234qweras" && (int)saved["cand_columns"] == 5, json.Serialize(saved));
 
+            // 自訂外觀 (#22): one setting, an object, {} = the default look
+            var look = cfg.ContainsKey("appearance") ? cfg["appearance"] as Dictionary<string, object> : null;
+            Check("appearance default is empty", look != null && look.Count == 0, json.Serialize(cfg));
+            call("setConfig", new Dictionary<string, object> { { "key", "appearance" }, { "value", new Dictionary<string, object> {
+                { "on", true }, { "bg", "#1d2340" }, { "all", new Dictionary<string, object> { { "fade", 45 } } } } } });
+            saved = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(Path.Combine(dir, "config.json"), Encoding.UTF8));
+            var savedLook = saved["appearance"] as Dictionary<string, object>;
+            Check("setConfig writes appearance", savedLook != null && (bool)savedLook["on"] && (string)savedLook["bg"] == "#1d2340" &&
+                  (int)((Dictionary<string, object>)savedLook["all"])["fade"] == 45, json.Serialize(saved));
+
             File.WriteAllText(Path.Combine(dir, "config.json"), "{\"preview\": \"keys_hint\", \"theme\": \"x\"}", new UTF8Encoding(false));
             call("setConfig", new Dictionary<string, object> { { "key", "lookup" }, { "value", false } });
             saved = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(Path.Combine(dir, "config.json"), Encoding.UTF8));
@@ -217,6 +227,75 @@ static class SettingsTest {
             Check("an older backup restores its candidate row (no layout of its own)",
                   (string)saved["cand_layout"] == "" && (int)saved["cand_per_row"] == 9 && (string)saved["cand_keys"] == "123456789" &&
                   (int)saved["cand_columns"] == 0, json.Serialize(saved));
+
+            // 自訂外觀 (#22): photos copied into appearance\, shrunk to 1200, in the backup, written back on restore
+            string pics = Path.Combine(dir, "pics");
+            Directory.CreateDirectory(pics);
+            Func<string, int, int, System.Drawing.Imaging.ImageFormat, string> picture = (name, w, h, format) => {
+                string p = Path.Combine(pics, name);
+                using (var bmp = new System.Drawing.Bitmap(w, h)) {
+                    using (var g = System.Drawing.Graphics.FromImage(bmp)) g.Clear(System.Drawing.Color.SteelBlue);
+                    bmp.Save(p, format);
+                }
+                return p;
+            };
+            Func<string, System.Drawing.Size> sizeOf = (p) => {
+                using (var img = System.Drawing.Image.FromFile(p)) return img.Size;
+            };
+            string looks = Path.Combine(dir, "appearance");
+            string got = b.ImportImage(picture("wide.png", 2400, 1000, System.Drawing.Imaging.ImageFormat.Png), "all");
+            Check("a big photo is shrunk to 1200 and kept as PNG", got == "all.png" && sizeOf(Path.Combine(looks, "all.png")) == new System.Drawing.Size(1200, 500), got);
+            File.WriteAllBytes(Path.Combine(looks, "cand.png"), new byte[] { 1 });
+            got = b.ImportImage(picture("small.jpg", 300, 200, System.Drawing.Imaging.ImageFormat.Jpeg), "cand");
+            Check("a small JPEG is kept as it is and replaces the slot's PNG", got == "cand.jpg" &&
+                  sizeOf(Path.Combine(looks, "cand.jpg")) == new System.Drawing.Size(300, 200) && !File.Exists(Path.Combine(looks, "cand.png")), got);
+            // a photo taken upright on a phone (EXIF orientation 6: turn right) comes in upright
+            string upright = Path.Combine(pics, "upright.jpg");
+            using (var bmp = new System.Drawing.Bitmap(300, 200)) {
+                var prop = (System.Drawing.Imaging.PropertyItem)System.Runtime.Serialization.FormatterServices.GetUninitializedObject(
+                    typeof(System.Drawing.Imaging.PropertyItem));
+                prop.Id = 0x0112; prop.Type = 3; prop.Len = 2; prop.Value = new byte[] { 6, 0 };
+                bmp.SetPropertyItem(prop);
+                bmp.Save(upright, System.Drawing.Imaging.ImageFormat.Jpeg);
+            }
+            got = b.ImportImage(upright, "tip");
+            Check("a photo with EXIF orientation 6 is turned upright", got == "tip.jpg" &&
+                  sizeOf(Path.Combine(looks, "tip.jpg")) == new System.Drawing.Size(200, 300), got);
+            bool refusedBmp = false;
+            try { b.ImportImage(picture("x.bmp", 10, 10, System.Drawing.Imaging.ImageFormat.Bmp), "all"); } catch (Exception e) { refusedBmp = e.Message == "請選擇 JPG 或 PNG 圖片"; }
+            Check("a BMP is refused", refusedBmp, "");
+            byte[] allBytes = File.ReadAllBytes(Path.Combine(looks, "all.png"));
+            b.WriteBackup(file);
+            var withPics = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(file, Encoding.UTF8));
+            var images = withPics.ContainsKey("appearance_images") ? withPics["appearance_images"] as Dictionary<string, object> : null;
+            Check("the backup has the photos", images != null && images.ContainsKey("all.png") && images.ContainsKey("cand.jpg"), json.Serialize(images));
+            Directory.Delete(looks, true);
+            b.ReadBackup(file);
+            call("restoreBackup", new Dictionary<string, object> { { "config", true } });
+            Check("restoring 設定 writes the photos back", File.Exists(Path.Combine(looks, "all.png")) &&
+                  File.ReadAllBytes(Path.Combine(looks, "all.png")).SequenceEqual(allBytes), "");
+            // a backup naming a file with a path in it writes nothing outside appearance\ (review 2026-11-13)
+            var evil = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(file, Encoding.UTF8));
+            string outside = Path.Combine(dir, "all.png");
+            evil["appearance_images"] = new Dictionary<string, object> {
+                { "..\\all.png", Convert.ToBase64String(new byte[] { 1, 2, 3 }) },
+                { Path.Combine(pics, "cand.jpg"), Convert.ToBase64String(new byte[] { 4, 5, 6 }) } };
+            File.WriteAllText(file, json.Serialize(evil), new UTF8Encoding(false));
+            b.ReadBackup(file);
+            call("restoreBackup", new Dictionary<string, object> { { "config", true } });
+            Check("a backup's file name with a path is not written", !File.Exists(outside) && !File.Exists(Path.Combine(pics, "cand.jpg")), "");
+            b.WriteBackup(file);
+            b.ReadBackup(file);
+            call("restoreBackup", new Dictionary<string, object> { { "words", true } });
+            File.WriteAllText(file,
+                "{\"app\":\"兩儀輸入法\",\"format\":1,\"created\":\"2026-11-01 10:00\",\"memory\":{\"phrases\":{}}," +
+                "\"dictionary\":{\"words\":[],\"shortcuts\":[]},\"config\":{\"cand_per_row\":1}}", new UTF8Encoding(false));
+            call("setConfig", new Dictionary<string, object> { { "key", "appearance" }, { "value", new Dictionary<string, object> { { "on", true } } } });
+            b.ReadBackup(file);
+            call("restoreBackup", new Dictionary<string, object> { { "config", true } });
+            saved = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(Path.Combine(dir, "config.json"), Encoding.UTF8));
+            Check("an older backup (no appearance, no photos) leaves the look and the photos as they are",
+                  (bool)((Dictionary<string, object>)saved["appearance"])["on"] && File.Exists(Path.Combine(looks, "all.png")), json.Serialize(saved));
 
             // the export is 3.0
             b.WriteBackup(file);

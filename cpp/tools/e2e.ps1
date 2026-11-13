@@ -10,7 +10,9 @@
 # -User learned_singles_user.json: the test engine's user.json to start from (else nothing learned)
 # -Dictionary custom_prediction_dictionary.json: the test engine's dictionary.json (個人詞庫; else none)
 # -QuickFill quick_fill_sample.json: the test engine's quick_fill.json (快速填入; else none)
-param($Script = "$PSScriptRoot\tsf_test.txt", $Mode = "", $SaveTo = "", $Config = "", $User = "", $Dictionary = "", $QuickFill = "")
+# -Images folder: its files become the test engine's appearance folder (自訂外觀's photos; else none)
+param($Script = "$PSScriptRoot\tsf_test.txt", $Mode = "", $SaveTo = "", $Config = "", $User = "", $Dictionary = "", $QuickFill = "",
+      $Images = "")
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $build = Join-Path $PSScriptRoot "..\build"
 $installed = Join-Path $env:ProgramFiles "DualityIME\DualityIMEEngine.exe"
@@ -36,6 +38,10 @@ if ($Config) { Copy-Item $Config (Join-Path $dir "config.json") }
 if ($User) { Copy-Item $User (Join-Path $dir "user.json") }
 if ($Dictionary) { Copy-Item $Dictionary (Join-Path $dir "dictionary.json") }
 if ($QuickFill) { Copy-Item $QuickFill (Join-Path $dir "quick_fill.json") }
+if ($Images) {
+    New-Item -ItemType Directory (Join-Path $dir "appearance") | Out-Null
+    Copy-Item (Join-Path $Images "*") (Join-Path $dir "appearance")
+}
 $code = 1
 # the cases are typed with Caps Lock off: turn it off for the test, back on afterwards
 Add-Type -Namespace SzE2e -Name Keys -MemberDefinition '[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, IntPtr extra);'

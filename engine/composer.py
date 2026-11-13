@@ -310,7 +310,8 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
                 # My the y, u with the space are the word's last letter - NumPy 本身 read NumP資本身)
                 if prev[1][-1].raw[-1].isupper():
                     typed = tok.raw.rstrip(" ")
-                    acronym = len(prev[1][-1].raw) >= 2 and prev[1][-1].raw.isalpha() and prev[1][-1].raw.isupper()
+                    acronym = (len(prev[1][-1].raw) >= 2 and prev[1][-1].raw.isalpha() and prev[1][-1].raw.isupper()) \
+                        or bool(_AFTER_OPERATOR.search(prev[1][-1].raw))  # (A+B一樣 - 2026-11-13 user, #30)
                     if tok.raw[0].islower():
                         one = len(typed) == 1 and not (acronym and tok.kind == "zh" and
                                                        starts_phrase(j, tok.value, CASE_LETTER_WORD))
@@ -506,6 +507,9 @@ CASE_WORD_MAX = 4  # syllables of the word a digit-key syllable after capitals m
 CASE_LETTER_WORD = -4.4
 # the word being typed at the end of an English token: all of it, or the part after - / _ .
 _WORD_TAIL = re.compile(r"(?:^|[-/_.])([A-Za-z]+)$")
+# a capital right after an operator, a name of its own like an acronym (A+B, A=B: #30); not a hyphen: a name in
+# pinyin goes on in lower case (Pei-Yu 起床, not Pei-Y一起床 - review 2026-11-13; A-B一樣 was right already)
+_AFTER_OPERATOR = re.compile(r"[+=/*<>&|^%][A-Z]$")
 _RUN = re.compile(r"[A-Za-z]+(?:['-][A-Za-z]+)*|[0-9]+|.")
 
 

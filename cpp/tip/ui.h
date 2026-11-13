@@ -12,8 +12,10 @@ namespace sz {
 
 struct Theme {
     COLORREF bg, key, key_border, dim, text, label, accent, accent_text, border, hint, hint_border, hint_text;
+    COLORREF key_face;  // the symbol keyboard's keys (key, the list's background, too in the default look)
 };
-const Theme& current_theme();  // follows Windows' light / dark app setting
+// follows Windows' light / dark app setting; 自訂外觀 (appearance.h) while it is on
+const Theme& current_theme();
 
 class Popup {
 public:
@@ -140,6 +142,7 @@ public:
     // where what is typed next does not come out behind it (the 中／英 box)
     void show(const std::wstring& text, const RECT& text_rect, UINT ms = 0, bool follow_caret = false,
               bool below = false);
+    std::string look = "tip";  // its photo in 自訂外觀: "tip" (the Tab hint) or "mode" (the 中／英 box)
 
 protected:
     void draw(HDC dc, int w, int h) override;

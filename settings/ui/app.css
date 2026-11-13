@@ -278,6 +278,51 @@ table.list input::placeholder { color: var(--sub); }
 .icon-btn { width: 30px; height: 30px; border: 0; border-radius: 5px; background: transparent; cursor: pointer; color: var(--sub); }
 .icon-btn:hover { background: var(--nav-hover); color: var(--danger); }
 .error-line { color: var(--danger); font-size: 13px; min-height: 20px; }
+/* 自訂外觀 (#22) */
+.look-custom { overflow-anchor: none; }  /* (made again on a click: no scroll anchoring) */
+.look-swatches { display: flex; gap: 8px; flex-wrap: wrap; }
+.look-swatch { width: 60px; padding: 0; border: 2px solid transparent; border-radius: 8px; overflow: hidden; cursor: pointer; background: var(--control); }
+.look-swatch.on { border-color: var(--accent); }
+.look-swatch-top { display: flex; align-items: center; justify-content: center; height: 26px; font-size: 13px; }
+.look-swatch-top span { padding: 0 5px; border-radius: 3px; }
+.look-swatch-name { display: block; font-size: 11px; padding: 2px 0; color: var(--sub); }
+.look-colors { display: flex; gap: 14px; }
+.look-color { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.look-color input { width: 34px; height: 26px; padding: 0; border: 1px solid var(--control-line); border-radius: 4px; background: none; cursor: pointer; }
+.look-tabs-row { padding: 10px 16px 4px; }
+.look-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.look-tab { position: relative; height: 30px; padding: 0 12px; border: 1px solid var(--control-line); border-radius: 6px; background: var(--control); cursor: pointer; font-size: 13px; }
+.look-tab.on { border-color: var(--accent); background: var(--accent); color: var(--accent-text); }
+.look-dot { position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.look-tab.on .look-dot { background: var(--accent-text); }
+.look-slider { display: flex; align-items: center; gap: 8px; }
+.look-value { min-width: 40px; font-size: 13px; color: var(--sub); }
+.look-preview-wrap { padding: 4px 16px 16px; }
+.look-hint { font-size: 12px; color: var(--sub); margin-bottom: 6px; }
+.look-preview { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; padding: 16px; border-radius: 8px; background: #f4f4f4; }
+.lp-box { text-align: center; font-size: 11px; color: #666; }
+.lp-name { margin-top: 6px; }
+.lp-win { position: relative; overflow: hidden; border: 1px solid; border-radius: 8px; text-align: left; user-select: none; outline: 2px solid transparent; outline-offset: 2px; font-family: "Microsoft JhengHei UI", sans-serif; }
+.lp-win.lp-cur:has(.lp-photo) { outline-color: var(--accent); cursor: grab; }
+.lp-photo, .lp-veil { position: absolute; pointer-events: none; }
+.lp-photo { max-width: none; }
+.lp-veil { inset: 0; }
+.lp-in { position: relative; padding: 6px; pointer-events: none; }
+.lp-title { font-size: 12px; padding: 0 6px 2px; }
+.lp-c { padding: 2px 6px; border-radius: 4px; font-size: 15px; white-space: nowrap; }
+.lp-c b { font-weight: normal; margin-right: 6px; font-size: 12px; }
+.lp-big { font-size: 18px; text-align: center; }
+.lp-row { display: flex; justify-content: space-between; gap: 8px; }
+.lp-row span { font-size: 12px; }
+.lp-tabs { display: flex; gap: 8px; margin-bottom: 8px; font-size: 16px; }
+.lp-tabs span { padding: 3px 14px; border-radius: 8px; }
+.lp-keys { display: flex; gap: 6px; margin-bottom: 6px; }
+.lp-key { position: relative; width: 56px; height: 48px; border-radius: 6px; border: 1px solid var(--key-border); background: var(--key); display: flex; align-items: center; justify-content: center; font-size: 18px; }
+.lp-key i { position: absolute; left: 5px; top: 2px; font-size: 11px; font-style: normal; opacity: .7; }
+.lp-bar { display: flex; gap: 4px; padding: 2px; font-size: 16px; }
+.lp-bar span { padding: 4px 12px; border-radius: 6px; }
+.lp-zhuyin { padding: 3px 7px; font-size: 15px; border: 0; border-radius: 4px; }
+
 /* 快速填入 (#21) */
 .text-input { width: 100%; height: 32px; padding: 0 8px; border: 1px solid var(--control-line); border-radius: 5px; background: var(--control); color: var(--text); user-select: text; }
 .text-input::placeholder { color: var(--sub); }

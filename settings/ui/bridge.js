@@ -27,9 +27,10 @@ const api = (() => {
     preview: "keys_hint", shift_toggle: true, start_mode: "mixed", completion: true, remember_words: true,
     forget_words: 0, forget_emails: 0, lookup: true, lookup_size: "small", game_mode: false,
     cand_font: "Microsoft JhengHei UI", cand_font_size: 18, cand_per_row: 1,
-    cand_layout: "", cand_keys: "123456789", cand_columns: 0
+    cand_layout: "", cand_keys: "123456789", cand_columns: 0, appearance: {}
   };
   const dict = { words: [["華碩", "ㄏㄨㄚˊ ㄕㄨㄛˋ"]], shortcuts: [["addr", "台北市信義區…"]] };
+  const images = {};  // 自訂外觀's photos: file -> data: URL
   let quickFill = [["sample@example.com", "email"], ["王小明", "name1"], ["0912345678", "phone"], ["西元_年_月_日", "birth"]];
   const sys = { ok: true, default_ime: true, language_hk: false };
   const wait = (ms, v) => new Promise((r) => setTimeout(() => r(v), ms));
@@ -45,6 +46,20 @@ const api = (() => {
       case "dictionary": return dict;
       case "saveDictionary": dict[args.kind] = args.rows; return args.rows.length;
       case "quickFill": return quickFill.map((r) => [...r]);
+      case "pickImage": {  // (a made-up photo: a sunset of two gradients)
+        const c = document.createElement("canvas");
+        c.width = 600; c.height = 400;
+        const g = c.getContext("2d"), sky = g.createLinearGradient(0, 0, 0, 400);
+        sky.addColorStop(0, "#7ec8f2"); sky.addColorStop(0.5, "#ffb36b"); sky.addColorStop(1, "#8a5a9e");
+        g.fillStyle = sky; g.fillRect(0, 0, 600, 400);
+        g.fillStyle = "#fff1b8"; g.beginPath(); g.arc(420, 120, 40, 0, 7); g.fill();
+        g.fillStyle = "#3b2f4f"; g.fillRect(0, 300, 600, 100);
+        const file = args.slot + ".png";
+        images[file] = c.toDataURL();
+        return { file, url: images[file], name: "夕陽.png" };
+      }
+      case "imageUrl": return images[args.file] || null;
+      case "removeImage": delete images[args.slot + ".png"]; return true;
       case "saveQuickFill": quickFill = args.rows; return args.rows.length;
       case "hotkeys": return { language: "Ctrl+Shift", layout: "Left Alt+Shift" };
       case "readings": return args.words.map((w) => (w === "台灣" ? "ㄊㄞˊ ㄨㄢ" : ""));

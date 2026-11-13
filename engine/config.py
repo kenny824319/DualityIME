@@ -28,6 +28,7 @@ DEFAULTS = {
     "cand_layout": "",          # "column", "row", "grid"; "" = by cand_per_row (engine/candlayout.py, #23)
     "cand_keys": "123456789",   # the candidate keys, one of candlayout.KEY_SETS
     "cand_columns": 0,          # the grid's columns: 3, 4, 5, or 0 = by the keys
+    "appearance": {},           # 自訂外觀 (#22): colors and photos of the IME's windows; {} = the default look
 }
 
 

@@ -162,6 +162,8 @@ CASES = [
     # a term that ends in one lower-case letter, or a digit and a letter, stays as typed; PS5 是
     "RNAi {ENTER}SQLi {ENTER}DeFi {ENTER}USDt {ENTER}dBu {ENTER}mmHg g4{ENTER}MP5k {ENTER}D2l {ENTER}ji3RNAi {ENTER}"
     "PS5 g4{ENTER}PS5 2k7{ENTER}APIu ek4{ENTER}API1l {ENTER}AMIu u;4{ENTER}AMIu 2u03{ENTER}dBu u;4{ENTER}USDt 2k7{ENTER}",
+    # a capital right after an operator, then a syllable of one letter (A+B一樣, #30); Xu 樣 as typed
+    "A+Bu u;42k7ej/ s/6{ENTER}A=Bu u;4{ENTER}A/Bu u;4{ENTER}A+Bu {ENTER}Xu u;4{ENTER}A+B1l dji4{ENTER}",
     # a syllable only the personal dictionary has: of a word of one character (蹦 ㄅㄧㄤˋ, 掰 ㄅㄞ˙ = 197)
     # it is typed, and 注音自動校正 knows it (1i;4); of a longer word only (the ㄅㄧㄤˇ of 電餅, the ㄉㄞ˙ of
     # 呆呆 = 297) it is one inside that word (after its syllables before it; the first, before its next

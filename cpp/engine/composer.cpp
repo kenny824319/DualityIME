@@ -468,6 +468,10 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
                     bool acronym = before.size() >= 2;
                     for (char c : before)
                         if (c < 'A' || c > 'Z') acronym = false;
+                    // a capital right after an operator is a name of its own like an acronym (A+B一樣, #30); not a
+                    // hyphen (Pei-Yu 起床: see engine/composer.py _AFTER_OPERATOR)
+                    if (before.size() >= 2 && std::string("+=/*<>&|^%").find(before[before.size() - 2]) != std::string::npos)
+                        acronym = true;
                     if (first >= 'a' && first <= 'z')
                         // (unless it starts a common word with the next syllable: API一樣, not mmHg 是)
                         cost -= typed.size() == 1 &&

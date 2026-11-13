@@ -28,10 +28,11 @@ else()
     set(TIP_NAME DualityIME32)
 endif()
 add_library(${TIP_NAME} SHARED
-    tip/dllmain.cpp tip/text_service.cpp tip/langbar.cpp tip/ui.cpp tip/engine_client.cpp
+    tip/dllmain.cpp tip/text_service.cpp tip/langbar.cpp tip/ui.cpp tip/appearance.cpp tip/engine_client.cpp
     common/pipe.cpp tip/tip.def tip/tip.rc)
 target_include_directories(${TIP_NAME} PRIVATE common tip)
-target_link_libraries(${TIP_NAME} sz_engine ole32 oleaut32 uuid user32 gdi32 shell32 dwmapi advapi32 imm32)
+target_link_libraries(${TIP_NAME} sz_engine ole32 oleaut32 uuid user32 gdi32 shell32 dwmapi advapi32 imm32 msimg32
+                      windowscodecs)
 
 # end-to-end test against the registered input method
 add_executable(sz_tsftest tools/tsf_test.cpp)

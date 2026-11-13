@@ -6,6 +6,7 @@
 
 #include <algorithm>
 
+#include "appearance.h"
 #include "globals.h"
 #include "langbar.h"
 #include "pipe.h"
@@ -931,6 +932,7 @@ void TextService::read_reply(const Json& r) {
         cfg_.cand_font_size = number("cand_font_size", 18);
         cfg_.cand_per_row = number("cand_per_row", 1);
         cfg_.game_mode = flag("game_mode", false);
+        set_appearance_from(c->get("appearance"), wide(text("appearance_dir", "")));
     }
 }
 
@@ -1681,7 +1683,10 @@ void TextService::show_mode(const std::wstring& text) {
     }
     if (!found && !caret_rect(ctx.Get(), rc)) return;
     if (ctx) own_popups(ctx.Get());  // (Shift before anything was typed in the search box)
-    if (!mode_win_) mode_win_ = std::make_unique<HintWindow>();
+    if (!mode_win_) {
+        mode_win_ = std::make_unique<HintWindow>();
+        mode_win_->look = "mode";  // (自訂外觀: its own photo)
+    }
     // under the line: right after the caret, what is typed next came out behind it (beside the caret as
     // before while the candidates, the zhuyin under the keys or the symbol keyboard are there already)
     bool below = state_.candidates.empty() && state_.zhuyin_tip.empty() && state_.symbol_page < 0;

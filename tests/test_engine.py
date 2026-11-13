@@ -151,6 +151,21 @@ class MixedEnglishTest(Base):
                     self.assertEqual(self.type(typed), out)
         self.c.config.set(long_sentence=True)
 
+    def test_one_capital_after_an_operator_then_one_letter_syllable(self):
+        # A+B then 一樣的功能: the u (ㄧ) right after the B came out as a letter, A+Bu 樣的功能 (2026-11-13 user, #30);
+        # a capital right after + = / * is a name of its own like an acronym, Xu 樣 and dBu stay as typed
+        for typed, out in (("A+B" + keys("ㄧ ㄧㄤˋ ㄉㄜ˙ ㄍㄨㄥ ㄋㄥˊ"), "A+B一樣的功能"), ("A=B" + keys("ㄧ ㄧㄤˋ"), "A=B一樣"),
+                           ("A/B" + keys("ㄧ ㄧㄤˋ"), "A/B一樣"), ("A*B" + keys("ㄧ ㄉㄧㄢˇ"), "A*B一點"),
+                           ("Xu " + keys("ㄧㄤˋ"), "Xu 樣"), ("dBu ", "dBu "), ("RNAi ", "RNAi "), ("A+Bu ", "A+Bu "),
+                           # a hyphen is no operator: a name in pinyin keeps its last letter (review: Pei-Y一起床)
+                           ("Pei-Yu " + keys("ㄑㄧˇ ㄔㄨㄤˊ"), "Pei-Yu 起床"), ("Chia-Ju " + keys("ㄍㄜˋ ㄒㄧㄥˋ"), "Chia-Ju 個性")):
+            for lm in (True, False):
+                with self.subTest(out=out, lm=lm):
+                    self.c.config.set(long_sentence=lm)
+                    self.c.reset()
+                    self.assertEqual(self.type(typed), out)
+        self.c.config.set(long_sentence=True)
+
     def test_a_reading_people_type_is_no_obscure_syllable(self):
         # ㄏㄞ + space came out as its keys, c9: 嗨 is ㄏㄞˋ first in the source data, so ㄏㄞ had the
         # score of a reading nobody uses and counted as obscure (GitHub issue 1; tools/build_lexicon.py
@@ -2322,6 +2337,29 @@ class KnownHardTest(Base):
         self.c.config.set(long_sentence=False)
         self.c.settings_changed()
         self.assertEqual(self.type(keys("ㄨㄛˇ ㄗㄞˋ ㄧ ㄘˋ ㄕˋ ㄕˋ")), "我再一次試試")
+
+
+class AppearanceConfigTest(unittest.TestCase):
+    """自訂外觀 (#22, docs/superpowers/specs/2026-11-13-custom-appearance-design.md): one setting, an object; {} is
+    the default look. The engine only keeps it (the IME draws it)."""
+
+    def test_default_is_empty(self):
+        self.assertEqual(DEFAULTS["appearance"], {})
+
+    def test_kept_from_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "config.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"appearance": {"on": True, "bg": "#151515"}, "cand_font_size": 22}, f)
+            cfg = Config(path)
+            self.assertEqual(cfg.appearance, {"on": True, "bg": "#151515"})
+            self.assertEqual(cfg.cand_font_size, 22)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"appearance": "x", "cand_font_size": 14}, f)
+            os.utime(path, (2000000000, 2000000000))
+            cfg = Config(path)
+            self.assertEqual(cfg.appearance, {})
+            self.assertEqual(cfg.cand_font_size, 14)
 
 
 class QuickFillTest(unittest.TestCase):

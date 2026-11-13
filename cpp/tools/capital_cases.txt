@@ -43,3 +43,7 @@ i7{ENTER} => i7
 core i7{ENTER} => core i7
 o7{ENTER} => o7
 i5{ENTER} => i5
+# a capital right after an operator, then a syllable of one letter: zhuyin (it came out A+Bu 樣的功能, #30)
+A+Bu u;42k7ej/ s/6{ENTER} => A+B一樣的功能
+A=Bu u;4{ENTER} => A=B一樣
+Xu u;4{ENTER} => Xu 樣

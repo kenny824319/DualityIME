@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "appearance.h"
 #include "globals.h"
 #include "json.h"
 #include "symbols.h"
@@ -21,10 +22,11 @@ constexpr UINT_PTR TIMER_CARET = 2;
 
 const Theme kDark = {RGB(12, 12, 12), RGB(30, 30, 30), RGB(58, 58, 58), RGB(17, 17, 17), RGB(240, 240, 240),
                      RGB(130, 130, 130), RGB(0, 103, 192), RGB(255, 255, 255), RGB(70, 70, 70), RGB(64, 64, 64),
-                     RGB(64, 64, 64), RGB(245, 245, 245)};
+                     RGB(64, 64, 64), RGB(245, 245, 245), RGB(30, 30, 30)};
 const Theme kLight = {RGB(243, 243, 243), RGB(255, 255, 255), RGB(210, 210, 210), RGB(232, 232, 232),
                       RGB(26, 26, 26), RGB(125, 125, 125), RGB(0, 103, 192), RGB(255, 255, 255),
-                      RGB(190, 190, 190), RGB(255, 255, 255), RGB(200, 200, 200), RGB(30, 30, 30)};
+                      RGB(190, 190, 190), RGB(255, 255, 255), RGB(200, 200, 200), RGB(30, 30, 30),
+                      RGB(255, 255, 255)};
 
 std::wstring wide(const ustr& u) {
     std::wstring w;
@@ -50,6 +52,12 @@ RECT work_area(const RECT& near_rect) {
 }  // namespace
 
 const Theme& current_theme() {
+    const Appearance& a = appearance();
+    if (a.on) {
+        thread_local Theme custom;
+        custom = derive_theme(a.bg, a.text, a.select);
+        return custom;
+    }
     DWORD light = 1, size = sizeof light;
     RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
                  L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &light, &size);
@@ -340,7 +348,7 @@ void CandidateWindow::draw(HDC dc, int w, int h) {
     const Theme& th = current_theme();
     double s = scale();
     Canvas cv(dc, s);
-    cv.box(0, 0, w / s, h / s, th.key, th.border, 10);
+    if (!draw_background(dc, s, w, h, "cand", 10, th.border)) cv.box(0, 0, w / s, h / s, th.key, th.border, 10);
     HFONT f = cv.font(font_size_, font_.c_str());
     HFONT num = cv.font(std::max(11, font_size_ * 2 / 3), L"Segoe UI");
     int label_w = 0;  // (the labels in a column of the spread-out list as wide as the widest)
@@ -437,7 +445,7 @@ void FillWindow::draw(HDC dc, int w, int h) {
     const Theme& th = current_theme();
     double s = scale();
     Canvas cv(dc, s);
-    cv.box(0, 0, w / s, h / s, th.key, th.border, 10);
+    if (!draw_background(dc, s, w, h, "fill", 10, th.border)) cv.box(0, 0, w / s, h / s, th.key, th.border, 10);
     HFONT f = cv.font(font_size_, font_.c_str());
     HFONT minor = cv.font(std::max(11, font_size_ * 3 / 4), font_.c_str());
     HFONT title = cv.font(std::max(12, font_size_ * 3 / 4), L"Microsoft JhengHei UI");
@@ -509,7 +517,7 @@ void ReplacementBar::draw(HDC dc, int w, int h) {
     const Theme& th = current_theme();
     double s = scale();
     Canvas cv(dc, s);
-    cv.box(0, 0, w / s, h / s, th.key, th.border, 10);
+    if (!draw_background(dc, s, w, h, "bar", 10, th.border)) cv.box(0, 0, w / s, h / s, th.key, th.border, 10);
     HFONT f = cv.font(BAR_FONT, L"Microsoft JhengHei UI");
     for (size_t i = 0; i < items_.size() && i < hit_.size(); ++i) {
         const RECT& r = hit_[i];
@@ -588,7 +596,7 @@ void HintWindow::draw(HDC dc, int w, int h) {
     const Theme& th = current_theme();
     double s = scale();
     Canvas cv(dc, s);
-    cv.box(0, 0, w / s, h / s, th.hint, th.hint_border, 6);
+    if (!draw_background(dc, s, w, h, look.c_str(), 6, th.hint_border)) cv.box(0, 0, w / s, h / s, th.hint, th.hint_border, 6);
     cv.text(text_, 0, 0, w / s, h / s, th.hint_text, cv.font(HINT_FONT, L"Microsoft JhengHei UI"),
             DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
@@ -822,11 +830,28 @@ void SymbolKeyboard::draw(HDC dc, int w, int h) {
     Canvas cv(dc, s);
     HFONT sym_font = cv.font(19, L"Microsoft JhengHei UI"), sym_fallback = cv.font(19, L"Segoe UI Symbol");
     HFONT label_font = cv.font(11, L"Segoe UI");
-    cv.box(0, 0, w / s, h / s, th.bg, th.border, 14);
+    bool photo = draw_background(dc, s, w, h, "keyboard", 14, th.border);
+    if (!photo) cv.box(0, 0, w / s, h / s, th.bg, th.border, 14);
+    // over a photo a key is see-through: white, more of it under dark text (自訂外觀)
+    bool light_text = luminance(th.text) > 0.5;
+    auto key_box = [&](const Item& it, COLORREF face, COLORREF edge) {
+        if (!photo) return cv.box(it.x, it.y, it.w, it.h, face, edge);
+        int r = static_cast<int>(6 * s);
+        glass(dc, static_cast<int>(it.x * s), static_cast<int>(it.y * s), static_cast<int>(it.w * s),
+              static_cast<int>(it.h * s), RGB(255, 255, 255), light_text ? 36 : 140, r);
+        HPEN pen = CreatePen(PS_SOLID, std::max(1, static_cast<int>(s)), light_text ? RGB(120, 120, 120) : RGB(255, 255, 255));
+        HGDIOBJ op = SelectObject(dc, pen), ob = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        RoundRect(dc, static_cast<int>(it.x * s), static_cast<int>(it.y * s), static_cast<int>((it.x + it.w) * s),
+                  static_cast<int>((it.y + it.h) * s), r, r);
+        SelectObject(dc, op);
+        SelectObject(dc, ob);
+        DeleteObject(pen);
+    };
     for (auto& it : items_) {
         if (it.kind == Item::Key) {
             bool on = it.value == cursor_;
-            cv.box(it.x, it.y, it.w, it.h, on ? th.accent : th.key, on ? th.accent : th.key_border);
+            if (on) cv.box(it.x, it.y, it.w, it.h, th.accent, th.accent);
+            else key_box(it, th.key_face, th.key_border);
             wchar_t label[2] = {static_cast<wchar_t>(std::toupper(static_cast<unsigned char>(symbols::KEYS[it.value]))), 0};
             cv.text(label, it.x + 6, it.y + 2, it.w, 16, on ? th.accent_text : th.label, label_font,
                     DT_LEFT | DT_TOP | DT_SINGLELINE);
@@ -835,7 +860,7 @@ void SymbolKeyboard::draw(HDC dc, int w, int h) {
             cv.text(sym, it.x, it.y + 12, it.w, it.h - 12, on ? th.accent_text : th.text, f,
                     DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         } else if (it.kind == Item::Deco) {
-            cv.box(it.x, it.y, it.w, it.h, th.dim, th.key_border);
+            key_box(it, th.dim, th.key_border);
             cv.text(it.label, it.x + 6, it.y + 2, it.w, 20, th.label, label_font, DT_LEFT | DT_TOP | DT_SINGLELINE);
         } else if (it.kind == Item::Tab) {
             bool on = it.value == page_;

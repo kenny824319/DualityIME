@@ -213,7 +213,8 @@ public class Backend {
         { "completion", true }, { "remember_words", true }, { "forget_words", 0 }, { "forget_emails", 0 }, { "import_memory", 0 }, { "lookup", true },
         { "lookup_size", "small" }, { "game_mode", false }, { "cand_font", "Microsoft JhengHei UI" },
         { "cand_font_size", 18 }, { "cand_per_row", 1 }, { "cand_layout", "" }, { "cand_keys", "123456789" },
-        { "cand_columns", 0 }
+        { "cand_columns", 0 },
+        { "appearance", new Dictionary<string, object>() }  // 自訂外觀 (#22): {} = the default look (never changed in place)
     };
 
     public Backend(SettingsForm form, string data) {
@@ -261,6 +262,15 @@ public class Backend {
                     if (o.ShowDialog(form) != DialogResult.OK) return null;
                     return ReadBackup(o.FileName);
                 }
+            case "pickImage":  // 自訂外觀 (#22): {file, url} of the photo copied in, or null
+                using (var o = new OpenFileDialog { Filter = "圖片 (*.jpg;*.jpeg;*.png)|*.jpg;*.jpeg;*.png" }) {
+                    if (o.ShowDialog(form) != DialogResult.OK) return null;
+                    string file = ImportImage(o.FileName, Str(a, "slot"));
+                    // (name: the user's file as it was named, shown on the page)
+                    return new Dictionary<string, object> { { "file", file }, { "url", ImageUrl(file) }, { "name", Path.GetFileName(o.FileName) } };
+                }
+            case "imageUrl": return ImageUrl(Str(a, "file"));
+            case "removeImage": RemoveImage(Str(a, "slot")); return true;
             case "restoreBackup":
                 return RestoreBackup(Bool(a, "memory"), Bool(a, "words"), Bool(a, "shortcuts"), Bool(a, "config"), Bool(a, "quickFill"));
             case "setBeta":
@@ -503,6 +513,101 @@ public class Backend {
         return rows.Count;
     }
 
+    // ---- 自訂外觀 (#22): the photos, appearance\<slot>.jpg|png next to config.json ----------------------------
+    static readonly string[] ImageSlots = { "all", "cand", "tip", "mode", "fill", "keyboard", "bar" };
+    string AppearanceDir { get { return Path.Combine(dataDir, "appearance"); } }
+
+    // a file name of the folder: <slot>.jpg or <slot>.png, nothing else (a backup names them too)
+    static bool ImageName(string name) {
+        // (no path in it: ..\all.png or C:\x\all.png from a backup would be written outside the folder)
+        if (string.IsNullOrEmpty(name) || name.IndexOfAny(new[] { '\\', '/', ':' }) >= 0 || Path.GetFileName(name) != name) return false;
+        string ext = Path.GetExtension(name).ToLowerInvariant();
+        return (ext == ".jpg" || ext == ".png") && Array.IndexOf(ImageSlots, Path.GetFileNameWithoutExtension(name)) >= 0;
+    }
+
+    void MakeAppearanceDir() {
+        if (Directory.Exists(AppearanceDir)) return;
+        Directory.CreateDirectory(AppearanceDir);
+        // apps in an AppContainer (the Windows search box, Start, Store apps) draw the IME's windows in their own
+        // process: they may read this folder (ALL APPLICATION PACKAGES), not the rest of the data folder
+        try {
+            var acl = Directory.GetAccessControl(AppearanceDir);
+            acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+                new System.Security.Principal.SecurityIdentifier("S-1-15-2-1"),
+                System.Security.AccessControl.FileSystemRights.ReadAndExecute,
+                System.Security.AccessControl.InheritanceFlags.ContainerInherit | System.Security.AccessControl.InheritanceFlags.ObjectInherit,
+                System.Security.AccessControl.PropagationFlags.None, System.Security.AccessControl.AccessControlType.Allow));
+            Directory.SetAccessControl(AppearanceDir, acl);
+        } catch { }  // (then those apps show the colors only)
+    }
+
+    // copies a JPG or PNG in as <slot>.jpg|png (the other one of the slot goes), the long side 1200 at most
+    public string ImportImage(string source, string slot) {
+        if (Array.IndexOf(ImageSlots, slot) < 0) throw new Exception("unknown slot " + slot);
+        byte[] bytes = File.ReadAllBytes(source);
+        string ext;
+        System.Drawing.Imaging.ImageFormat format;
+        using (var ms = new MemoryStream(bytes)) {
+            Image img;
+            try { img = Image.FromStream(ms); } catch { throw new Exception("請選擇 JPG 或 PNG 圖片"); }
+            using (img) {
+                if (img.RawFormat.Equals(System.Drawing.Imaging.ImageFormat.Jpeg)) { ext = ".jpg"; format = System.Drawing.Imaging.ImageFormat.Jpeg; }
+                else if (img.RawFormat.Equals(System.Drawing.Imaging.ImageFormat.Png)) { ext = ".png"; format = System.Drawing.Imaging.ImageFormat.Png; }
+                else throw new Exception("請選擇 JPG 或 PNG 圖片");
+                // a photo taken upright on a phone has EXIF orientation: turned upright here (the IME does not read
+                // it), and saved again without it, so the page and the IME show the same
+                if (Array.IndexOf(img.PropertyIdList, 0x0112) >= 0) {
+                    byte[] o = img.GetPropertyItem(0x0112).Value;
+                    switch (o != null && o.Length > 0 ? o[0] : 1) {
+                        case 2: img.RotateFlip(RotateFlipType.RotateNoneFlipX); break;
+                        case 3: img.RotateFlip(RotateFlipType.Rotate180FlipNone); break;
+                        case 4: img.RotateFlip(RotateFlipType.Rotate180FlipX); break;
+                        case 5: img.RotateFlip(RotateFlipType.Rotate90FlipX); break;
+                        case 6: img.RotateFlip(RotateFlipType.Rotate90FlipNone); break;
+                        case 7: img.RotateFlip(RotateFlipType.Rotate270FlipX); break;
+                        case 8: img.RotateFlip(RotateFlipType.Rotate270FlipNone); break;
+                    }
+                }
+                int longSide = Math.Max(img.Width, img.Height);
+                int w = Math.Max(1, longSide > 1200 ? img.Width * 1200 / longSide : img.Width);
+                int h = Math.Max(1, longSide > 1200 ? img.Height * 1200 / longSide : img.Height);
+                using (var bmp = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb)) {
+                    using (var g = Graphics.FromImage(bmp)) {
+                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                        g.DrawImage(img, 0, 0, w, h);
+                    }
+                    using (var outMs = new MemoryStream()) {
+                        bmp.Save(outMs, format);
+                        bytes = outMs.ToArray();
+                    }
+                }
+            }
+        }
+        MakeAppearanceDir();
+        string name = slot + ext;
+        File.WriteAllBytes(Path.Combine(AppearanceDir, name), bytes);
+        string other = Path.Combine(AppearanceDir, slot + (ext == ".jpg" ? ".png" : ".jpg"));
+        if (File.Exists(other)) File.Delete(other);
+        return name;
+    }
+
+    // the photo as a data: URL for the page's preview, or null
+    string ImageUrl(string file) {
+        if (!ImageName(file)) return null;
+        string p = Path.Combine(AppearanceDir, file);
+        if (!File.Exists(p)) return null;
+        string mime = Path.GetExtension(file).ToLowerInvariant() == ".png" ? "image/png" : "image/jpeg";
+        return "data:" + mime + ";base64," + Convert.ToBase64String(File.ReadAllBytes(p));
+    }
+
+    void RemoveImage(string slot) {
+        if (Array.IndexOf(ImageSlots, slot) < 0) return;
+        foreach (string ext in new[] { ".jpg", ".png" }) {
+            string p = Path.Combine(AppearanceDir, slot + ext);
+            if (File.Exists(p)) File.Delete(p);
+        }
+    }
+
     // ---- 快速填入 (#21): quick_fill.json {"format": 1, "items": [["內容", "捷徑"]...]} -----------------------
     string QuickFillPath { get { return Path.Combine(dataDir, "quick_fill.json"); } }
 
@@ -625,7 +730,8 @@ public class Backend {
         var data = new Dictionary<string, object> {
             { "app", Migrate.AppName }, { "format", BackupFormat }, { "created", DateTime.Now.ToString("yyyy-MM-dd HH:mm") },
             { "memory", memory ?? new Dictionary<string, object>() }, { "dictionary", ReadDictionary() }, { "config", config },
-            { "quick_fill", ReadQuickFill() }  // (快速填入, #21: an older version reading the backup leaves it)
+            { "quick_fill", ReadQuickFill() },  // (快速填入, #21: an older version reading the backup leaves it)
+            { "appearance_images", BackupImages() }  // (自訂外觀's photos, #22: {file: base64}; restored with 設定)
         };
         File.WriteAllText(path, json.Serialize(data), new UTF8Encoding(false));
         return true;
@@ -671,6 +777,14 @@ public class Backend {
         };
     }
 
+    Dictionary<string, object> BackupImages() {
+        var images = new Dictionary<string, object>();
+        if (Directory.Exists(AppearanceDir))
+            foreach (string p in Directory.GetFiles(AppearanceDir))
+                if (ImageName(Path.GetFileName(p))) images[Path.GetFileName(p)] = Convert.ToBase64String(File.ReadAllBytes(p));
+        return images;
+    }
+
     List<object> BackupQuickFill() {
         var j = backup != null ? new Dictionary<string, object> { { "items", backup.ContainsKey("quick_fill") ? backup["quick_fill"] : null } } : null;
         return QuickFillRows(j);
@@ -701,6 +815,16 @@ public class Backend {
                 foreach (var k in new[] { "cand_layout", "cand_keys", "cand_columns" }) c[k] = Defaults[k];
             foreach (var kv in theirConfig)
                 if (Defaults.ContainsKey(kv.Key) && Array.IndexOf(Counters, kv.Key) < 0) c[kv.Key] = kv.Value;
+            // 自訂外觀's photos come with the settings (a backup of before #22 has none: those here stay)
+            var images = backup.ContainsKey("appearance_images") ? backup["appearance_images"] as Dictionary<string, object> : null;
+            if (images != null)
+                foreach (var kv in images) {
+                    if (!ImageName(kv.Key) || !(kv.Value is string)) continue;
+                    byte[] bytes;
+                    try { bytes = Convert.FromBase64String((string)kv.Value); } catch { continue; }
+                    MakeAppearanceDir();
+                    File.WriteAllBytes(Path.Combine(AppearanceDir, kv.Key), bytes);
+                }
         }
         int addedWords = 0, addedShortcuts = 0;
         if (words || shortcuts) {

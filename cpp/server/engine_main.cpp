@@ -32,6 +32,7 @@ struct Shared {
     std::unique_ptr<Config> config;
     std::mutex lock;             // one request at a time touches the engine
     unsigned config_gen = 0;     // bumped when config.json changed
+    std::wstring dir;            // the folder of user.json and config.json (ends in \)
 };
 Shared* g = nullptr;
 
@@ -91,12 +92,20 @@ bool migrate_user_data() {
     return ended && code <= 2;  // Nothing, Moved, KeptExisting
 }
 
+std::string wide_utf8(const std::wstring& w) {
+    int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
+    std::string s(n > 0 ? n : 0, '\0');
+    if (n > 0) WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), s.data(), n, nullptr, nullptr);
+    return s;
+}
+
 Json cfg_json(const Config& c) {
-    // what the IME needs to know of the settings
+    // what the IME needs to know of the settings; 自訂外觀 (#22) with the folder its photos are in
     Json o = Json::object();
     for (const char* k : {"shift_toggle", "start_mode", "lookup", "game_mode", "space", "full_width", "ctrl_full_punct",
-                          "cand_font", "cand_font_size", "cand_per_row", "theme"})
+                          "cand_font", "cand_font_size", "cand_per_row", "theme", "appearance"})
         if (auto* v = c.values().get(k)) o[k] = *v;
+    o["appearance_dir"] = Json(wide_utf8(g->dir + L"appearance"));
     return o;
 }
 
@@ -409,6 +418,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     g = new Shared{Resources::load(data)};
     g->user = std::make_unique<UserModel>(dir + L"user.json");
     g->config = std::make_unique<Config>(dir + L"config.json");
+    g->dir = dir;
     if (!may_save) {  // (the move not finished: what is learned or switched now lives in memory only)
         g->user->keep_files();
         g->config->keep_file();

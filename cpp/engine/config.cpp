@@ -28,6 +28,7 @@ const Json& Config::defaults() {
         j["cand_layout"] = Json("");         // "column", "row", "grid"; "" = by cand_per_row (candlayout.h, #23)
         j["cand_keys"] = Json("123456789");  // the candidate keys, one of cand_key_sets()
         j["cand_columns"] = Json(0);         // the grid's columns: 3, 4, 5, or 0 = by the keys
+        j["appearance"] = Json::object();    // 自訂外觀 (#22): the IME's colors and photos; {} = the default look
         return j;
     }();
     return d;

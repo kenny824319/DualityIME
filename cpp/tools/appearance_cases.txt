@@ -1,0 +1,9 @@
+# e2e-args: -Config cpp\tools\appearance_config.json
+# 自訂外觀 (#22) on (夜空's colors, no photo): typing, the candidate list, the bar, the hint and the symbol keyboard
+# work as ever with the custom look
+su3cl3{ENTER} => 你好
+su3{DOWN}2{ENTER} => 妳
+w96{TAB}{ENTER} => 台灣
+su3cl3{HOME}{UP}{ENTER}{ENTER} => ㄋㄧˇ好
+`q => 《
+{SHIFT}ab{SHIFT}cl3{ENTER} => ab好
