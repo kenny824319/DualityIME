@@ -208,6 +208,7 @@ public:
     // mochi真, not mochi5p). Cached: whatever changes words or custom_english bumps words_version_.
     const std::unordered_set<std::string>& sure_english() const;
     bool reload_custom();
+    unsigned custom_version = 0;  // bumped by every reload of 個人詞庫 (what is worked out from custom_entries is kept till then)
     // 快速填入 (#21): (text, shortcut) in the order given, quick_fill.json next to user.json
     std::vector<std::pair<ustr, ustr>> quick_fill;
     bool reload_quick_fill();  // re-read it if it changed (see engine/lexicon.py reload_quick_fill)

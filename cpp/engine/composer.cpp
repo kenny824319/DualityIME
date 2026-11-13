@@ -430,16 +430,19 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
     };
     // these syllables and the ones the keys from j spell make a word of the dictionary, of up to
     // CASE_WORD_MAX syllables (包 + 括, 中 + 文 + 字: longer than starts_phrase looks)
-    std::function<bool(size_t, std::vector<ustr>)> starts_word = [&](size_t j, std::vector<ustr> syllables) {
+    // (one vector, a syllable pushed and popped at each level: not copied at every branch - /code-review)
+    std::function<bool(size_t, std::vector<ustr>&)> starts_word = [&](size_t j, std::vector<ustr>& syllables) {
         if (!lexicon) return false;
         for (size_t k = j + 2; k <= std::min(j + MAX_SYL_KEYS, n); ++k) {
             auto nxt = table.parse_syllable(rv0.substr(j, k - j));
             if (!nxt) continue;
-            std::vector<ustr> more = syllables;
-            more.push_back(nxt->first);
-            for (auto& [p, s] : lexicon->lookup(more))
-                if (s >= CASE_LETTER_WORD) return true;  // (not 遮住 for MP5k 住)
-            if (more.size() < CASE_WORD_MAX && starts_word(k, more)) return true;
+            syllables.push_back(nxt->first);
+            bool found = false;
+            for (auto& [p, s] : lexicon->lookup(syllables))
+                if (s >= CASE_LETTER_WORD) found = true;  // (not 遮住 for MP5k 住)
+            if (!found && syllables.size() < CASE_WORD_MAX) found = starts_word(k, syllables);
+            syllables.pop_back();
+            if (found) return true;
         }
         return false;
     };
@@ -479,7 +482,7 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
                                     ? EN_CASE_LETTER
                                     : EN_CASE_SWITCH;
                     else if (acronym && is_digit(first) && !all_digit(typed) && tok.kind == Kind::Zh &&
-                             starts_word(j, {tok.value}))
+                             [&] { std::vector<ustr> one{tok.value}; return starts_word(j, one); }())
                         cost -= EN_CASE_SWITCH;
                 }
                 if (tok.kind == Kind::Zh && starts_phrase(j, tok.value)) cost -= EN_PHRASE;
@@ -2225,6 +2228,12 @@ int Composer::syl_offset(int c) const {
 // ---- Tab completion ------------------------------------------------------------------
 
 void Composer::suggest() {
+    // (next_char is asked by name_completion and again below: worked out once while this runs - /code-review)
+    struct Once {
+        Composer& c;
+        explicit Once(Composer& c) : c(c) { c.next_char_cache_.reset(); c.in_suggest_ = true; }
+        ~Once() { c.in_suggest_ = false; c.next_char_cache_.reset(); }
+    } once(*this);
     suggestions.clear();
     sugg_actions_.clear();
     sugg_index = 0;
@@ -2313,6 +2322,12 @@ void Composer::suggest() {
 }
 
 std::vector<Composer::Action> Composer::next_char() {
+    if (!in_suggest_) return next_char_now();
+    if (!next_char_cache_) next_char_cache_ = next_char_now();
+    return *next_char_cache_;
+}
+
+std::vector<Composer::Action> Composer::next_char_now() {
     // 神 -> 奇: the character most likely to come next, judged from the phrases
     // that start with what was just typed (longest context first); one Tab could not fix there comes
     // with the rest of its likeliest word (抹 is ㄇㄛˋ only in 拐彎抹角: see engine/composer.py _next_char)
@@ -2373,34 +2388,50 @@ std::optional<Composer::Action> Composer::custom_completion() {
     if (entries.empty() || raw.empty()) return std::nullopt;
     std::set<int> starts;
     for (auto& t : tokens) starts.insert(t.start);
+    std::map<int, std::string> typed_lower;  // (each start's keys in lower case, once)
+    for (int s : starts) typed_lower[s] = lower(raw.substr(s));
+    if (custom_prep_version_ != user.custom_version || custom_prep_.size() != entries.size()) {
+        // (what depends on the entries alone: once per reload of 個人詞庫, not on every key - /code-review 2026-11-13)
+        custom_prep_.assign(entries.size(), CustomPrep{});
+        for (size_t order = 0; order < entries.size(); ++order) {
+            const auto& units = entries[order].second;
+            CustomPrep& prep = custom_prep_[order];
+            bool writable = true;  // (a 注音 that is none - ？ from 框選查詢: Tab could not write the word)
+            for (auto& u : units) {
+                prep.keys.push_back(u.zh ? table_.reading_to_keys(u.reading) : std::string(1, static_cast<char>(u.ch)));
+                if (u.zh && prep.keys.back().find('?') != std::string::npos) writable = false;
+                prep.full += prep.keys.back();
+            }
+            prep.full = lower(prep.full);
+            std::vector<std::pair<std::vector<ustr>, std::vector<ustr>>> runs;  // the runs of Chinese characters
+            bool in_run = false;
+            for (auto& u : units) {
+                if (u.zh) {
+                    if (!in_run) runs.emplace_back();
+                    runs.back().first.push_back(u.reading);
+                    runs.back().second.push_back(ustr(1, u.ch));
+                }
+                in_run = u.zh;
+            }
+            bool pinnable = true;
+            for (auto& [rds, chars] : runs)
+                if (pin_way(rds, chars) == PinWay::None) pinnable = false;
+            prep.usable = writable && pinnable;
+        }
+        custom_prep_version_ = user.custom_version;
+    }
     std::optional<std::tuple<int, double, int>> best_rank;
     std::optional<Action> best;
     for (size_t order = 0; order < entries.size(); ++order) {
         const auto& [text, units] = entries[order];
-        std::vector<std::string> keys;
-        std::string full;
-        bool writable = true;  // (a 注音 that is none - ？ from 框選查詢: Tab could not write the word)
-        for (auto& u : units) {
-            keys.push_back(u.zh ? table_.reading_to_keys(u.reading) : std::string(1, static_cast<char>(u.ch)));
-            if (u.zh && keys.back().find('?') != std::string::npos) writable = false;
-            full += keys.back();
-        }
-        if (!writable) continue;
-        full = lower(full);
-        std::vector<std::pair<std::vector<ustr>, std::vector<ustr>>> runs;  // the runs of Chinese characters
-        bool in_run = false;
-        for (auto& u : units) {
-            if (u.zh) {
-                if (!in_run) runs.emplace_back();
-                runs.back().first.push_back(u.reading);
-                runs.back().second.push_back(ustr(1, u.ch));
-            }
-            in_run = u.zh;
-        }
+        const CustomPrep& prep = custom_prep_[order];
+        if (!prep.usable) continue;
+        const std::vector<std::string>& keys = prep.keys;
+        const std::string& full = prep.full;
         for (int s : starts) {
             if (best_rank && s > std::get<0>(*best_rank)) break;
-            std::string typed = raw.substr(s);
-            if (typed.empty() || typed.size() >= full.size() || !starts_with(full, lower(typed))) continue;
+            const std::string& typed = typed_lower[s];
+            if (typed.empty() || typed.size() >= full.size() || !starts_with(full, typed)) continue;
             size_t done = 0, pos = 0;
             while (done < units.size() && pos + keys[done].size() <= typed.size()) pos += keys[done++].size();
             int weight = 0;
@@ -2408,10 +2439,6 @@ std::optional<Composer::Action> Composer::custom_completion() {
                 weight += units[i].zh ? 2 : (is_alpha(units[i].ch) || is_digit(units[i].ch)) ? 1 : 0;
             if (weight < CUSTOM_MIN_WEIGHT) continue;
             if (units[0].zh && !shown_as(s, units, keys, static_cast<int>(done))) continue;
-            bool pinnable = true;
-            for (auto& [rds, chars] : runs)
-                if (pin_way(rds, chars) == PinWay::None) pinnable = false;
-            if (!pinnable) continue;
             std::tuple<int, double, int> rank{s, -user.custom_picks.count(text), static_cast<int>(order)};
             if (!best_rank || rank < *best_rank) {
                 best_rank = rank;
@@ -3793,8 +3820,10 @@ void Composer::open_fill() {
 }
 
 void Composer::close_fill() {
+    // (nothing when it is not open; else drawn again, the replacement bar too: see engine/composer.py close_fill)
+    if (!fill_) return;
     fill_.reset();
-    suggest();
+    render();
 }
 
 std::vector<std::pair<ustr, ustr>> Composer::fill_matches() const {

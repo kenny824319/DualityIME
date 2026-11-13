@@ -78,6 +78,8 @@ su3cl3{ESC} =>
 ji3, => 我,
 # Shift+Space: 全形 and back
 {SSPACE}ab{ENTER}{SSPACE}ab{ENTER} => ａｂab
+# ...in English too, the IME told at once (cfg after the engine's own save - review 2026-11-13)
+{SHIFT}{SSPACE}ab{SSPACE}cd{SHIFT} => ａｂcd
 # the symbol keyboard: ` then a key types the symbol on it
 `1 => 1
 `q => 《

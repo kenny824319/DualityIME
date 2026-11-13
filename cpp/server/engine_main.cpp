@@ -32,6 +32,9 @@ struct Shared {
     std::unique_ptr<Config> config;
     std::mutex lock;             // one request at a time touches the engine
     unsigned config_gen = 0;     // bumped when config.json changed
+    // bumped when the IME's settings change: config.json read again, or the engine saved one itself (Shift+Space:
+    // full width - its own save leaves config_gen as it was); each connection gets cfg again then (Session::cfg_sent)
+    unsigned cfg_gen = 0;
     std::wstring dir;            // the folder of user.json and config.json (ends in \)
 };
 Shared* g = nullptr;
@@ -103,7 +106,7 @@ Json cfg_json(const Config& c) {
     // what the IME needs to know of the settings; 自訂外觀 (#22) with the folder its photos are in
     Json o = Json::object();
     for (const char* k : {"shift_toggle", "start_mode", "lookup", "game_keys", "space", "full_width", "ctrl_full_punct",
-                          "cand_font", "cand_font_size", "cand_per_row", "theme", "appearance"})
+                          "cand_font", "cand_font_size", "theme", "appearance"})  // (the layout comes in cand_per_line, cand_labels)
         if (auto* v = c.values().get(k)) o[k] = *v;
     o["appearance_dir"] = Json(wide_utf8(g->dir + L"appearance"));
     return o;
@@ -112,6 +115,7 @@ Json cfg_json(const Config& c) {
 struct Session {
     std::unique_ptr<Composer> c;
     unsigned config_gen = 0;
+    unsigned cfg_sent = ~0u;  // the cfg_gen whose cfg this connection got (sent again only when it changes)
 };
 
 Json state(Session& s, bool handled) {
@@ -171,7 +175,12 @@ Json state(Session& s, bool handled) {
         o["fill"] = fill;
     }
     o["can_undo"] = Json(c.can_undo());
-    o["cfg"] = cfg_json(c.config);
+    // the settings the IME needs: on a connection's first reply and when config.json changed, not on every key
+    // (the IME keeps what it got; one connection per TextService - /code-review 2026-11-13)
+    if (s.cfg_sent != g->cfg_gen) {
+        o["cfg"] = cfg_json(c.config);
+        s.cfg_sent = g->cfg_gen;
+    }
     return o;
 }
 
@@ -184,7 +193,10 @@ std::optional<char32_t> one_char(const Json* v) {
 
 Json handle(Session& s, const Json& req) {
     std::lock_guard<std::mutex> guard(g->lock);
-    if (g->config->reload_if_changed()) ++g->config_gen;
+    if (g->config->reload_if_changed()) {
+        ++g->config_gen;
+        ++g->cfg_gen;
+    }
     Composer& c = *s.c;
     if (s.config_gen != g->config_gen) {
         s.config_gen = g->config_gen;
@@ -239,6 +251,7 @@ Json handle(Session& s, const Json& req) {
         c.close_fill();
     } else if (op == "full_width") {
         c.toggle_full_width();
+        ++g->cfg_gen;  // (saved by the engine: config_gen does not see it - review 2026-11-13)
     } else if (op == "flush") {
         // first key after switching to English with text still being typed:
         // send that text, plus the character of this key (快速填入 still open, e.g. switched from the

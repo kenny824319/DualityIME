@@ -2861,8 +2861,12 @@ class Composer:
         return self.fill["typed"], self._fill_matches(), self.fill["index"]
 
     def close_fill(self):
+        # (nothing when it is not open; else drawn again: the replacement bar is left out while it is open -
+        # closed with Esc in the middle of the text, the bar came back only on the next key, /code-review)
+        if self.fill is None:
+            return
         self.fill = None
-        self._suggest()
+        self._render()
 
     def pick_fill(self, i):
         """The text of item i of the list as shown goes out, after what was being typed."""

@@ -266,8 +266,9 @@ bool draw_background(HDC dc, double scale, int w, int h, const char* window, int
     double k = std::max(rw / p->w, rh / p->h) * l.zoom / 100;
     k = std::max({k, static_cast<double>(w) / p->w, static_cast<double>(h) / p->h});  // (still covers a bigger window)
     double dw = p->w * k, dh = p->h * k;
-    double left = std::clamp(rw / 2 - l.x * dw, w - dw, 0.0);
-    double top = std::clamp(rh / 2 - l.y * dh, h - dh, 0.0);
+    // (min of max, not std::clamp: w - dw may round to a hair above 0, and clamp's low above its high is undefined)
+    double left = std::min(0.0, std::max(w - dw, rw / 2 - l.x * dw));
+    double top = std::min(0.0, std::max(h - dh, rh / 2 - l.y * dh));
     int r = static_cast<int>(radius * scale);
     HRGN clip = CreateRoundRectRgn(0, 0, w + 1, h + 1, r, r);
     SelectClipRgn(dc, clip);

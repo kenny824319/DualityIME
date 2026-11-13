@@ -2483,6 +2483,29 @@ class QuickFillTest(unittest.TestCase):
         self.press("ENTER")
         self.assertEqual(c.commit, "")
 
+    def test_esc_in_the_middle_brings_the_bar_back(self):
+        # (the replacement bar is left out while the list is open; closed with Esc in the middle of the text it came
+        # back only on the next key - /code-review 2026-11-13)
+        c = self.c
+        for ch in keys("ㄨㄛˇ ㄏㄠˇ"):
+            c.key(ch)
+        c.key(special="LEFT")
+        bar = list(c.replacements)
+        self.assertTrue(bar)
+        self.press("`", " ")
+        self.assertIsNotNone(c.fill_shown())
+        # 個人詞庫 saved while the list is open: the next key reads it again and draws, the bar left out (review: without
+        # a draw the bar was never emptied, and the test passed on the old close_fill too)
+        path = os.path.join(self.tmp.name, "dictionary.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"words": [["測試", "ㄘㄜˋ ㄕˋ"]], "shortcuts": []}, f, ensure_ascii=False)
+        os.utime(path, (2100000000, 2100000000))
+        self.press("DOWN")
+        self.assertEqual(c.replacements, [])
+        self.press("ESC")
+        self.assertIsNone(c.fill_shown())
+        self.assertEqual(list(c.replacements), bar)
+
     def test_numpad_digit_narrows(self):
         # (a numpad key comes as a literal: it narrows the list too, also while typing Chinese)
         c = self.c

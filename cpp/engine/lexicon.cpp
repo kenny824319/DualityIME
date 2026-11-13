@@ -921,6 +921,7 @@ bool UserModel::reload_custom() {
     custom_words = std::move(cw);
     custom_english = std::move(ce);
     custom_entries = std::move(entries);
+    ++custom_version;
     ++words_version_;
     custom_zhuyin = std::move(cz);
     shortcuts = std::move(sc);

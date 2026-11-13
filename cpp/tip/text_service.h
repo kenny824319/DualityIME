@@ -115,7 +115,6 @@ private:
         bool ctrl_punct = true;  // Ctrl + a punctuation key types its full-width mark (the setting ctrl_full_punct)
         std::wstring cand_font = L"Microsoft JhengHei UI";
         int cand_font_size = 18;
-        int cand_per_row = 1;
     };
 
     bool test_key_down(ITfContext* ctx, WPARAM vk, LPARAM lp);

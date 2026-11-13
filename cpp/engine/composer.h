@@ -206,7 +206,10 @@ private:
     int tok_offset(int start) const;
     void splice(int p, int q, const std::string& text);
     void suggest();
-    std::vector<Action> next_char();
+    std::vector<Action> next_char();  // (once per suggest(): name_completion asks for it too)
+    std::vector<Action> next_char_now();
+    std::optional<std::vector<Action>> next_char_cache_;  // next_char's answer while suggest() runs
+    bool in_suggest_ = false;
     std::optional<Action> custom_completion();  // 自訂詞彙 typed to its start (#13): see engine/composer.py
     bool shown_as(int s, const std::vector<CustomUnit>& units, const std::vector<std::string>& keys, int done) const;
     void take_custom(const Action& action);
@@ -243,6 +246,14 @@ private:
         int index = 0;
     };
     std::optional<Fill> fill_;
+    // custom_completion's view of each 自訂詞彙 entry, worked out once per reload of 個人詞庫 (not on every key)
+    struct CustomPrep {
+        std::vector<std::string> keys;  // each unit's keys
+        std::string full;               // all of them, lower case
+        bool usable = false;            // Tab can write it (a 注音 for each character, every Chinese run fixable)
+    };
+    std::vector<CustomPrep> custom_prep_;
+    unsigned custom_prep_version_ = ~0u;
     bool symbol_fresh_ = false;  // the symbol keyboard just opened, nothing pressed in it (Space: 快速填入)
     void pick(int i, bool from_bar = false);
     void learn_overrides();

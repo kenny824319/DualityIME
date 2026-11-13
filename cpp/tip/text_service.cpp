@@ -336,9 +336,8 @@ STDMETHODIMP TextService::Deactivate() {
     try {
         if (composition_ && comp_context_) {
             ComPtr<ITfContext> ctx = comp_context_;
-            edit(ctx.Get(), [this](TfEditCookie ec) {
-                if (composition_) composition_->EndComposition(ec);  // what is on screen stays
-            });
+            ComPtr<ITfComposition> comp = composition_;  // (not the member: reset below, see leave_field)
+            edit(ctx.Get(), [comp](TfEditCookie ec) { comp->EndComposition(ec); });  // what is on screen stays
         }
         composition_.Reset();
         comp_context_.Reset();
@@ -426,9 +425,10 @@ void TextService::leave_field() {
     away_doc_.Reset();
     if (composition_ && comp_context_) {
         ComPtr<ITfContext> ctx = comp_context_;
-        edit(ctx.Get(), [this](TfEditCookie ec) {
-            if (composition_) composition_->EndComposition(ec);
-        });
+        // (the composition itself, not the member: a session TSF puts off runs after the member is reset below,
+        // and the text would stay underlined in the document - /code-review 2026-11-13)
+        ComPtr<ITfComposition> comp = composition_;
+        edit(ctx.Get(), [comp](TfEditCookie ec) { comp->EndComposition(ec); });
         composition_.Reset();
         comp_context_.Reset();
         reset_engine();
@@ -956,7 +956,6 @@ void TextService::read_reply(const Json& r) {
         cfg_.ctrl_punct = flag("ctrl_full_punct", true);
         cfg_.cand_font = wide(text("cand_font", "Microsoft JhengHei UI"));
         cfg_.cand_font_size = number("cand_font_size", 18);
-        cfg_.cand_per_row = number("cand_per_row", 1);
         cfg_.game_keys = flag("game_keys", true);
         set_appearance_from(c->get("appearance"), wide(text("appearance_dir", "")));
     }
@@ -968,9 +967,8 @@ bool TextService::call(ITfContext* ctx, Json request) {
         // the engine is gone: leave what is on screen and let keys through
         if (composition_ && comp_context_) {
             ComPtr<ITfContext> c = comp_context_;
-            edit(c.Get(), [this](TfEditCookie ec) {
-                if (composition_) composition_->EndComposition(ec);
-            });
+            ComPtr<ITfComposition> comp = composition_;  // (not the member: reset below, see leave_field)
+            edit(c.Get(), [comp](TfEditCookie ec) { comp->EndComposition(ec); });
         }
         composition_.Reset();
         comp_context_.Reset();
