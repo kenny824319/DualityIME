@@ -14,3 +14,5 @@
 ^(engine/lm\.py|cpp/engine/composer\.cpp)$	\blm\.bin\b  # the model of 長句選字加強, made by tools/lm/export.py, read only
 ^cpp/tip/text_service\.cpp$	^    if \(!GetKeyboardState\(ks\)\) return false;$  # Ctrl + punctuation: whether another real key is held, read once inside the IME's own key event (ctrl_punct_key)
 ^(engine/lexicon\.py|cpp/engine/lexicon\.cpp)$	\bnames\.txt\b  # 名人與角色的名單（tools/build_names.py 產生），引擎只讀不寫
+^(engine/(lexicon|composer)\.py|cpp/engine/lexicon\.cpp|installer/src/Settings\.cs)$	\bcustom_picks\.json\b  # Tab 補過的自訂詞次數（#13）
+^(engine/(lexicon|composer)\.py|cpp/engine/lexicon\.cpp|installer/src/Settings\.cs)$	\bquick_fill\.json\b  # quick fill (#21)
