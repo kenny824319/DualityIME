@@ -24,7 +24,7 @@ wj6ru041u04a04xk7{ENTER} => 圖鑑變慢了
 # ...nor what follows the family name when it is a word the dictionary writes with other tones (一個 is ㄧ ㄍㄜ˙
 # there): 齊 picked before 一個 twice taught 齊一個, and 星期一個 read 星齊一個. (Lines run one after another,
 # what was sent before is the context: 我 here, 他 read 她 after 了)
-ji3gji fu6u ek4xk7{HOME}{RIGHT}{RIGHT}{RIGHT}{RIGHT}{DOWN}{ENTER}{HOME}{RIGHT}{RIGHT}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER} => 我說齊一個了
-ji3gji fu6u ek4xk7{HOME}{RIGHT}{RIGHT}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER} => 我說齊一個了
-ji3gji fu6u ek4xk7{HOME}{RIGHT}{RIGHT}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER} => 我說齊一個了
+ji3gji fu6u ek4xk7{HOME}{RIGHT}{RIGHT}{RIGHT}{RIGHT}{DOWN}{ENTER}{HOME}{RIGHT}{RIGHT}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER} => 我說齊一個了
+ji3gji fu6u ek4xk7{HOME}{RIGHT}{RIGHT}{DOWN}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER} => 我說齊一個了
+ji3gji fu6u ek4xk7{HOME}{RIGHT}{RIGHT}{DOWN}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER} => 我說齊一個了
 vu/ fu6u ek4{ENTER} => 星期一個
