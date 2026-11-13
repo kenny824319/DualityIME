@@ -3,7 +3,7 @@
 // checks the text that comes out.
 //   sz_tsftest <script file> [--tsf]
 // Script lines:  keys => expected text
-// keys: characters as typed, {ENTER} {ESC} {BACK} {DOWN} {UP} {LEFT} {RIGHT} {TAB}
+// keys: characters as typed, {ENTER} {ESC} {BACK} {DOWN} {UP} {LEFT} {RIGHT} {TAB} {PGDN} {PGUP}
 // {#5} (a numpad key) {SPACE} {SHIFT} (a Shift tap) {SBACK} (Shift+Backspace) {SSPACE} (Shift+Space)
 // {WAIT} (half a second), {^,} (Ctrl + a key, with Shift if its character needs it), {^^,} (the same
 // with F13 held as well). Lines starting with # are comments.
@@ -76,7 +76,8 @@ static void send(std::vector<std::pair<WORD, bool>> events) {  // (vk, up)
         i.ki.wVk = vk;
         i.ki.wScan = static_cast<WORD>(MapVirtualKeyW(vk, MAPVK_VK_TO_VSC));
         i.ki.dwFlags = up ? KEYEVENTF_KEYUP : 0;
-        if (vk == VK_LEFT || vk == VK_RIGHT || vk == VK_UP || vk == VK_DOWN || vk == VK_RSHIFT)
+        if (vk == VK_LEFT || vk == VK_RIGHT || vk == VK_UP || vk == VK_DOWN || vk == VK_RSHIFT || vk == VK_NEXT ||
+            vk == VK_PRIOR)
             i.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
         in.push_back(i);
     }
@@ -340,7 +341,7 @@ int wmain(int argc, wchar_t** argv) {
                 static const std::pair<const char*, WORD> named[] = {
                     {"ENTER", VK_RETURN}, {"ESC", VK_ESCAPE}, {"BACK", VK_BACK}, {"DOWN", VK_DOWN}, {"UP", VK_UP},
                     {"LEFT", VK_LEFT}, {"RIGHT", VK_RIGHT}, {"TAB", VK_TAB}, {"SPACE", VK_SPACE}, {"HOME", VK_HOME},
-                    {"END", VK_END}};
+                    {"END", VK_END}, {"PGDN", VK_NEXT}, {"PGUP", VK_PRIOR}};
                 bool done = false;
                 for (auto& [n, vk] : named)
                     if (name == n) {

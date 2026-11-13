@@ -26,7 +26,8 @@ const api = (() => {
     autocorrect: false, long_sentence: true, punctuation: "half", space: "half", full_width: false, ctrl_full_punct: true,
     preview: "keys_hint", shift_toggle: true, start_mode: "mixed", completion: true, remember_words: true,
     forget_words: 0, forget_emails: 0, lookup: true, lookup_size: "small", game_mode: false,
-    cand_font: "Microsoft JhengHei UI", cand_font_size: 18, cand_per_row: 1
+    cand_font: "Microsoft JhengHei UI", cand_font_size: 18, cand_per_row: 1,
+    cand_layout: "", cand_keys: "123456789", cand_columns: 0
   };
   const dict = { words: [["華碩", "ㄏㄨㄚˊ ㄕㄨㄛˋ"]], shortcuts: [["addr", "台北市信義區…"]] };
   const sys = { ok: true, default_ime: true, language_hk: false };

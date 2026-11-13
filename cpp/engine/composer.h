@@ -92,7 +92,10 @@ struct Resources {
 
 class Composer {
 public:
-    static constexpr int PAGE = 9;
+    static constexpr int PAGE = 9;  // (the default page: cand_keys sets it - page_size())
+    int page_size() const;          // candidates on a page: as many as the candidate keys (#23)
+    std::string cand_labels() const;  // the candidate keys, a page's labels in order
+    int per_line() const;           // candidates side by side: 1 in a column, a page in a row, the grid's columns
     static constexpr int GRID_COLUMNS = 4;  // columns shown when the list is spread out
     static constexpr size_t BAR_ZHUYIN_KEYS = 4;  // ↑ offers the 注音文 of a word that spells no syllable up to this long
 
@@ -130,7 +133,7 @@ public:
     int cursor = 0;
     std::vector<ustr> candidates;
     int cand_index = 0;
-    bool cand_expanded = false;  // → spread the list out to the right: columns of PAGE, GRID_COLUMNS shown
+    bool cand_expanded = false;  // → spread the list out to the right: columns of a page, GRID_COLUMNS shown
     int cand_first = 0;          // the first column shown then
     std::vector<ustr> replacements;  // the bar above the text while the caret is before a character
     int repl_index = -1;             // -1: only shown; >= 0: in it (↑), this one highlighted
@@ -253,6 +256,7 @@ private:
     bool key_special(const std::string& special);
     bool key_candidates(std::optional<char32_t> ch, const std::string& special);
     void key_grid(const std::string& special);
+    void key_cand_grid(const std::string& special);
     bool known_zhuyin_text(const ustr& sym) const;  // 注音文 picked before, or in 個人詞庫
     bool may_be_zhuyin_text(int start, std::string_view keys) const;  // ↑ may offer these keys' 注音文
     void learn_zhuyin_text(const ustr& text);       // picked: ↓ offers it the next time its keys are typed

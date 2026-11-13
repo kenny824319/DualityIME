@@ -66,12 +66,13 @@ public:
     std::function<void(int)> on_pick_at;  // index in all the candidates, clicked in the spread-out list
     std::function<void()> on_expand;      // the → at the top of the list
     std::function<void()> on_fold;        // the ← at the top of the spread-out list
+    // a page: `labels` its keys in order, `per_line` side by side (1 a column, a page a row, else a grid, #23)
     void show(const std::vector<std::wstring>& items, int index, int page, int pages, const std::wstring& font,
-              int font_size, bool one_row, const RECT& text_rect);
-    // spread out to the right (like the ASUS IME): columns of 9 from column `first`, four shown,
-    // `columns` in all; numbers only in the column with the selection
+              int font_size, const std::wstring& labels, int per_line, const RECT& text_rect);
+    // spread out to the right (like the ASUS IME): columns of a page from column `first`, four shown,
+    // `columns` in all; labels only in the column with the selection
     void show_grid(const std::vector<std::wstring>& items, int index, int first, int columns,
-                   const std::wstring& font, int font_size, const RECT& text_rect);
+                   const std::wstring& font, int font_size, const std::wstring& labels, const RECT& text_rect);
 
 protected:
     void draw(HDC dc, int w, int h) override;
@@ -88,7 +89,11 @@ private:
     int index_ = 0, page_ = 0, pages_ = 1, font_size_ = 18;
     int first_ = 0, columns_ = 1;  // the spread-out list: first column shown, columns in all
     std::wstring font_ = L"Microsoft JhengHei UI";
+    std::wstring labels_ = L"123456789";  // a page's keys
+    int per_line_ = 1;                     // side by side on the page
+    int rows_ = 9;                         // the spread-out list's column: a page
     bool one_row_ = false, grid_ = false;
+    std::wstring label(size_t i) const;    // the key of item i on its page / column
     SIZE size_{};
 };
 

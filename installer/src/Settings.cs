@@ -212,7 +212,8 @@ public class Backend {
         { "full_width", false }, { "ctrl_full_punct", true }, { "preview", "keys_hint" }, { "shift_toggle", true }, { "start_mode", "mixed" },
         { "completion", true }, { "remember_words", true }, { "forget_words", 0 }, { "forget_emails", 0 }, { "import_memory", 0 }, { "lookup", true },
         { "lookup_size", "small" }, { "game_mode", false }, { "cand_font", "Microsoft JhengHei UI" },
-        { "cand_font_size", 18 }, { "cand_per_row", 1 }
+        { "cand_font_size", 18 }, { "cand_per_row", 1 }, { "cand_layout", "" }, { "cand_keys", "123456789" },
+        { "cand_columns", 0 }
     };
 
     public Backend(SettingsForm form, string data) {
@@ -633,9 +634,13 @@ public class Backend {
         if (backup == null) throw new Exception("no backup opened");
         var c = ReadConfig();
         var theirConfig = backup.ContainsKey("config") ? backup["config"] as Dictionary<string, object> : null;
-        if (config && theirConfig != null)
+        if (config && theirConfig != null) {
+            // a backup of before #23 has no candidate layout: its cand_per_row is the layout then, the keys 1-9
+            if (!theirConfig.ContainsKey("cand_layout"))
+                foreach (var k in new[] { "cand_layout", "cand_keys", "cand_columns" }) c[k] = Defaults[k];
             foreach (var kv in theirConfig)
                 if (Defaults.ContainsKey(kv.Key) && Array.IndexOf(Counters, kv.Key) < 0) c[kv.Key] = kv.Value;
+        }
         int addedWords = 0, addedShortcuts = 0;
         if (words || shortcuts) {
             var d = ReadDictionary();

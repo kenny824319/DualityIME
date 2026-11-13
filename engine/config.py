@@ -24,7 +24,10 @@ DEFAULTS = {
     "game_mode": False,         # 遊戲模式: in games (Windows' list, exclusive full screen) keys go straight through
     "cand_font": "Microsoft JhengHei UI",
     "cand_font_size": 18,
-    "cand_per_row": 1,          # 1 = vertical list, 9 = one row
+    "cand_per_row": 1,          # 1 = vertical list, 9 = one row (written on with cand_layout, for versions before it)
+    "cand_layout": "",          # "column", "row", "grid"; "" = by cand_per_row (engine/candlayout.py, #23)
+    "cand_keys": "123456789",   # the candidate keys, one of candlayout.KEY_SETS
+    "cand_columns": 0,          # the grid's columns: 3, 4, 5, or 0 = by the keys
 }
 
 

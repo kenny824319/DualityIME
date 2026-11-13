@@ -36,6 +36,16 @@ static class SettingsTest {
             Check("setConfig writes config.json", (string)saved["preview"] == "zhuyin" && (int)saved["cand_font_size"] == 22 &&
                   (bool)saved["game_mode"], json.Serialize(saved));
 
+            // the candidate list's layout and keys (#23): settings the tool knows, "" = by cand_per_row
+            Check("candidate layout defaults", (string)cfg["cand_layout"] == "" && (string)cfg["cand_keys"] == "123456789" &&
+                  (int)cfg["cand_columns"] == 0, json.Serialize(cfg));
+            call("setConfig", new Dictionary<string, object> { { "key", "cand_layout" }, { "value", "grid" } });
+            call("setConfig", new Dictionary<string, object> { { "key", "cand_keys" }, { "value", "1234qweras" } });
+            call("setConfig", new Dictionary<string, object> { { "key", "cand_columns" }, { "value", 5 } });
+            saved = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(Path.Combine(dir, "config.json"), Encoding.UTF8));
+            Check("setConfig writes the candidate layout", (string)saved["cand_layout"] == "grid" &&
+                  (string)saved["cand_keys"] == "1234qweras" && (int)saved["cand_columns"] == 5, json.Serialize(saved));
+
             File.WriteAllText(Path.Combine(dir, "config.json"), "{\"preview\": \"keys_hint\", \"theme\": \"x\"}", new UTF8Encoding(false));
             call("setConfig", new Dictionary<string, object> { { "key", "lookup" }, { "value", false } });
             saved = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(Path.Combine(dir, "config.json"), Encoding.UTF8));
@@ -171,6 +181,19 @@ static class SettingsTest {
             File.WriteAllText(file, "{\"app\": \"other\", \"format\": 1}", new UTF8Encoding(false));
             bad = (Dictionary<string, object>)b.ReadBackup(file);
             Check("a file of another app is refused with the message", (string)bad["error"] == "這不是兩儀輸入法匯出的檔案", json.Serialize(bad));
+
+            // a backup of before #23 (cand_per_row only) over a grid here: its row again, the keys 1-9 (review 2026-11-13)
+            call("setConfig", new Dictionary<string, object> { { "key", "cand_layout" }, { "value", "grid" } });
+            call("setConfig", new Dictionary<string, object> { { "key", "cand_keys" }, { "value", "qwerasdf" } });
+            File.WriteAllText(file,
+                "{\"app\":\"兩儀輸入法\",\"format\":1,\"created\":\"2026-11-01 10:00\",\"memory\":{\"phrases\":{}}," +
+                "\"dictionary\":{\"words\":[],\"shortcuts\":[]},\"config\":{\"cand_per_row\":9}}", new UTF8Encoding(false));
+            b.ReadBackup(file);
+            call("restoreBackup", new Dictionary<string, object> { { "config", true } });
+            saved = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(Path.Combine(dir, "config.json"), Encoding.UTF8));
+            Check("an older backup restores its candidate row (no layout of its own)",
+                  (string)saved["cand_layout"] == "" && (int)saved["cand_per_row"] == 9 && (string)saved["cand_keys"] == "123456789" &&
+                  (int)saved["cand_columns"] == 0, json.Serialize(saved));
 
             // the export is 3.0
             b.WriteBackup(file);

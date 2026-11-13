@@ -871,6 +871,8 @@ void TextService::read_reply(const Json& r) {
     s.cand_index = num("cand_index", 0);
     s.cand_page = num("cand_page", 0);
     s.cand_pages = num("cand_pages", 1);
+    if (std::string labels = str("cand_labels"); !labels.empty()) s.cand_labels = wide(labels);
+    s.cand_per_line = std::max(1, num("cand_per_line", 1));
     if (auto* e = r.get("cand_expanded"); e && e->is_bool() && e->as_bool()) {
         s.cand_expanded = true;
         if (auto* g = r.get("cand_grid"); g && g->is_array())
@@ -1435,10 +1437,10 @@ void TextService::place_ui(TfEditCookie ec, ITfContext* ctx) {
         }
         if (state_.cand_expanded)
             cand_win_->show_grid(state_.cand_grid, state_.cand_grid_index, state_.cand_first, state_.cand_pages,
-                                 cfg_.cand_font, cfg_.cand_font_size, comp_rc);
+                                 cfg_.cand_font, cfg_.cand_font_size, state_.cand_labels, comp_rc);
         else
             cand_win_->show(state_.candidates, state_.cand_index, state_.cand_page, state_.cand_pages,
-                            cfg_.cand_font, cfg_.cand_font_size, cfg_.cand_per_row > 1, comp_rc);
+                            cfg_.cand_font, cfg_.cand_font_size, state_.cand_labels, state_.cand_per_line, comp_rc);
     } else if (cand_win_) {
         cand_win_->hide();
     }
@@ -1511,10 +1513,11 @@ ComPtr<ITfContext> focused_context(ITfThreadMgr* tm) {
 
 void TextService::pick_candidate(int index) {
     ComPtr<ITfContext> ctx = comp_context_ ? comp_context_ : focused_context(thread_mgr_.Get());
-    if (!ctx || index < 0 || index > 8) return;
+    // (the key of that place on the page: the list's keys may be letters, ten of them - #23)
+    if (!ctx || index < 0 || index >= static_cast<int>(state_.cand_labels.size())) return;
     Json req = Json::object();
     req["op"] = Json("key");
-    req["ch"] = Json(std::string(1, static_cast<char>('1' + index)));
+    req["ch"] = Json(narrow(std::wstring(1, state_.cand_labels[index])));
     call(ctx.Get(), req);
 }
 

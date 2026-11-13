@@ -1,5 +1,7 @@
 #include "composer.h"
 
+#include "candlayout.h"
+
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -3182,7 +3184,7 @@ void Composer::chinese_alternatives(std::vector<ustr>& labels, std::vector<Actio
         if (!found) return;
         auto& [first, rds] = *found;
         auto cands = phrase_candidates(rds, lexicon_, &user);
-        for (size_t k = 0; k < cands.size() && k < static_cast<size_t>(PAGE - 1); ++k) {
+        for (size_t k = 0; k < cands.size() && k < static_cast<size_t>(page_size() - 1); ++k) {
             labels.push_back(cands[k].first);  // (what comes after the caret; the keys before it stay)
             Action a;
             a.type = "chinese";
@@ -3224,7 +3226,7 @@ void Composer::chinese_alternatives(std::vector<ustr>& labels, std::vector<Actio
     if (found) {
         auto& [first, rds] = *found;
         auto cands = phrase_candidates(rds, lexicon_, &user);
-        for (size_t k = 0; k < cands.size() && k < static_cast<size_t>(PAGE - 1); ++k) {
+        for (size_t k = 0; k < cands.size() && k < static_cast<size_t>(page_size() - 1); ++k) {
             labels.push_back(cands[k].first);
             Action a;
             a.type = "chinese";
@@ -4734,7 +4736,7 @@ void Composer::code_choices(const Token* tok, std::vector<ustr>& labels, std::ve
     actions.push_back(plain);
     if (auto parsed = table_.parse_syllable(keys)) {  // (one syllable: the other characters for it)
         for (auto& [p, _] : phrase_candidates({parsed->first}, lexicon_, &user)) {
-            if (labels.size() >= static_cast<size_t>(PAGE)) break;
+            if (labels.size() >= static_cast<size_t>(page_size())) break;
             if (std::find(labels.begin(), labels.end(), p) != labels.end()) continue;
             labels.push_back(p);
             Action act = plain;
@@ -4768,7 +4770,7 @@ void Composer::autocorrect_choices(const Token* tok, std::vector<ustr>& labels, 
         auto cands = phrase_candidates({reading}, lexicon_, &user);
         for (size_t k = 0; k < cands.size() && k < 3; ++k) {
             const ustr& p = cands[k].first;
-            if (labels.size() >= static_cast<size_t>(PAGE) || !seen.insert(p).second) continue;
+            if (labels.size() >= static_cast<size_t>(page_size()) || !seen.insert(p).second) continue;
             labels.push_back(p);
             Action act;
             act.type = "taken";
@@ -5112,33 +5114,65 @@ bool Composer::key_special(const std::string& special) {
     return true;
 }
 
+int Composer::page_size() const { return static_cast<int>(cand_keys(config).size()); }
+std::string Composer::cand_labels() const { return cand_keys(config); }
+int Composer::per_line() const { return cand_per_line(config); }
+
 bool Composer::key_candidates(std::optional<char32_t> ch, const std::string& special) {
-    int page = cand_index / PAGE * PAGE;
+    int size = page_size();
+    int page = cand_index / size * size;
     int count = static_cast<int>(candidates.size());
-    if (ch && *ch >= '1' && *ch <= '9') {
-        int i = page + static_cast<int>(*ch - '0') - 1;
-        if (i < count) pick(i);
-        if (candidates.empty()) {
-            cand_expanded = false;
-            cand_first = 0;
+    if (ch && *ch != U' ') {
+        // a candidate key picks its place on the page, a letter whatever its case (Caps Lock, Shift: ; as :);
+        // other keys do nothing (see engine/composer.py _key_candidates)
+        char32_t c = *ch == U':' ? U';' : (*ch >= U'A' && *ch <= U'Z') ? *ch - U'A' + U'a' : *ch;
+        std::string keys = cand_labels();
+        size_t k = c < 0x80 ? keys.find(static_cast<char>(c)) : std::string::npos;
+        if (k != std::string::npos) {
+            int i = page + static_cast<int>(k);
+            if (i < count) pick(i);
+            if (candidates.empty()) {
+                cand_expanded = false;
+                cand_first = 0;
+            }
+            return true;
         }
-        return true;
     }
+    std::string layout = cand_layout(config);
+    bool arrow = special == "UP" || special == "DOWN" || special == "LEFT" || special == "RIGHT";
     if (special == "ESC") close_candidates();
     else if (special == "ENTER" || (ch && *ch == ' ')) pick(cand_index);
     else if (cand_expanded) key_grid(special);
-    else if (special == "RIGHT" && count > PAGE && config.number("cand_per_row") <= 1) {
-        cand_expanded = true;  // (like the Windows 注音; one row of 9 keeps → for the next one)
-        cand_first = cand_index / PAGE;
+    else if (layout == "grid" && arrow) key_cand_grid(special);
+    else if (special == "RIGHT" && count > size && layout == "column") {
+        cand_expanded = true;  // (like the Windows 注音; one row keeps → for the next one)
+        cand_first = cand_index / size;
     } else if (special == "DOWN" || special == "RIGHT") cand_index = std::min(cand_index + 1, count - 1);
     else if (special == "UP" || special == "LEFT") cand_index = std::max(cand_index - 1, 0);
-    else if (special == "PGDN") cand_index = std::min(page + PAGE, count - 1);
-    else if (special == "PGUP") cand_index = std::max(page - PAGE, 0);
+    else if (special == "PGDN") cand_index = std::min(page + size, count - 1);
+    else if (special == "PGUP") cand_index = std::max(page - size, 0);
     if (candidates.empty()) {  // (picked: the list is gone, however it went)
         cand_expanded = false;
         cand_first = 0;
     }
     return true;
+}
+
+void Composer::key_cand_grid(const std::string& special) {
+    // arrow keys in the list laid out as a grid (see engine/composer.py _key_cand_grid)
+    int n = static_cast<int>(candidates.size()), i = cand_index, size = page_size(), cols = per_line();
+    int start = i / size * size, pos = i - start, length = std::min(size, n - start);
+    if (special == "RIGHT") i = std::min(i + 1, n - 1);
+    else if (special == "LEFT") i = std::max(i - 1, 0);
+    else if (special == "DOWN") {
+        if (pos + cols < length) i += cols;
+        else if (pos / cols < (length - 1) / cols) i = start + length - 1;
+        else if (start + size < n) i = start + size + std::min(pos % cols, std::min(size, n - start - size) - 1);
+    } else if (special == "UP") {
+        if (pos >= cols) i -= cols;
+        else if (start > 0) i = start - size + std::min((size - 1) / cols * cols + pos % cols, size - 1);
+    }
+    cand_index = i;
 }
 
 bool Composer::may_be_zhuyin_text(int start, std::string_view keys) const {
@@ -5171,34 +5205,34 @@ void Composer::key_grid(const std::string& special) {
     int n = static_cast<int>(candidates.size()), i = cand_index;
     if (special == "DOWN") i = std::min(i + 1, n - 1);
     else if (special == "UP") i = std::max(i - 1, 0);
-    else if (special == "RIGHT") i = i / PAGE < (n - 1) / PAGE ? std::min(i + PAGE, n - 1) : i;
+    else if (special == "RIGHT") i = i / page_size() < (n - 1) / page_size() ? std::min(i + page_size(), n - 1) : i;
     else if (special == "LEFT") {
-        if (i < PAGE) {
+        if (i < page_size()) {
             cand_expanded = false;
             cand_first = 0;
             return;
         }
-        i -= PAGE;
-    } else if (special == "PGDN") i = std::min(i + PAGE * GRID_COLUMNS, n - 1);
-    else if (special == "PGUP") i = std::max(i - PAGE * GRID_COLUMNS, 0);
+        i -= page_size();
+    } else if (special == "PGDN") i = std::min(i + page_size() * GRID_COLUMNS, n - 1);
+    else if (special == "PGUP") i = std::max(i - page_size() * GRID_COLUMNS, 0);
     cand_index = i;
-    int col = i / PAGE;
+    int col = i / page_size();
     if (col < cand_first) cand_first = col;
     else if (col >= cand_first + GRID_COLUMNS) cand_first = col - GRID_COLUMNS + 1;
 }
 
 std::pair<std::vector<ustr>, int> Composer::grid_candidates() const {
-    int start = cand_first * PAGE;
+    int start = cand_first * page_size();
     std::vector<ustr> out;
-    for (int i = start; i < start + PAGE * GRID_COLUMNS && i < static_cast<int>(candidates.size()); ++i)
+    for (int i = start; i < start + page_size() * GRID_COLUMNS && i < static_cast<int>(candidates.size()); ++i)
         out.push_back(candidates[i]);
     return {out, cand_index - start};
 }
 
 std::pair<std::vector<ustr>, int> Composer::page_candidates() const {
-    int page = cand_index / PAGE * PAGE;
+    int page = cand_index / page_size() * page_size();
     std::vector<ustr> out;
-    for (int i = page; i < page + PAGE && i < static_cast<int>(candidates.size()); ++i) out.push_back(candidates[i]);
+    for (int i = page; i < page + page_size() && i < static_cast<int>(candidates.size()); ++i) out.push_back(candidates[i]);
     return {out, cand_index - page};
 }
 

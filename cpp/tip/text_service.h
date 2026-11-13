@@ -88,6 +88,8 @@ private:
         int cursor = 0;  // in UTF-16 units
         std::vector<std::wstring> candidates;
         int cand_index = 0, cand_page = 0, cand_pages = 1;
+        std::wstring cand_labels = L"123456789";  // the list's keys, a page's labels (#23)
+        int cand_per_line = 1;                     // side by side: 1 a column, a page a row, else a grid
         bool cand_expanded = false;            // → spread the list out to the right
         std::vector<std::wstring> cand_grid;   // the columns shown then, from column cand_first
         int cand_grid_index = 0, cand_first = 0;

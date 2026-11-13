@@ -226,6 +226,16 @@ select.select { height: 32px; border: 1px solid var(--control-line); border-radi
 }
 .choice-key.show { opacity: 1; }
 .choice-label { display: flex; align-items: center; gap: 10px; padding: 8px 14px; }
+/* 候選字排列: a small candidate window, its keys as labels (#23) */
+.cand-preview { display: flex; align-items: center; justify-content: center; min-height: 128px; }
+.cand-mini {
+  display: grid; gap: 2px 6px; padding: 6px; border-radius: 6px; border: 1px solid var(--control-line); background: var(--control);
+  font-size: 14px; line-height: 22px;
+}
+.cand-mini-item { padding: 0 6px; border-radius: 4px; white-space: nowrap; }
+.cand-mini-item b { font-weight: 400; font-size: 11px; color: var(--sub); margin-right: 4px; }
+.cand-mini-item.on { background: var(--accent); color: var(--accent-text); }
+.cand-mini-item.on b { color: var(--accent-text); }
 .radio { width: 18px; height: 18px; flex-shrink: 0; border-radius: 50%; border: 1px solid var(--toggle-off); position: relative; transition: border-color .15s; }
 .radio::after { content: ""; position: absolute; inset: 4px; border-radius: 50%; background: var(--accent); transform: scale(0); transition: transform .18s cubic-bezier(.3, 1.4, .5, 1); }
 .choice.on .radio { border-color: var(--accent); border-width: 1px; }

@@ -464,6 +464,77 @@ function pageDict() {
   ];
 }
 
+// ---- 候選字排列與選字鍵 (#23; the IME's side: engine/candlayout.py) ----------------------------------
+const CAND_KEY_SETS = [["123456789", 3], ["1234567890", 5], ["1234qweras", 4], ["qwerasdf", 4],
+  ["asdfghjkl;", 5], ["asdfzxcv89", 4], ["asdfjkl789", 4], ["aoeuhtn789", 4]];
+const CAND_LAYOUTS = [["column", "垂直單欄"], ["row", "水平單排"], ["grid", "格子"]];
+const CAND_SAMPLE = "你妳擬禰祢昵薿抳旎坭";
+
+function candKeys() {
+  return CAND_KEY_SETS.some(([k]) => k === S.config.cand_keys) ? S.config.cand_keys : "123456789";
+}
+function candLayout() {
+  if (CAND_LAYOUTS.some(([v]) => v === S.config.cand_layout)) return S.config.cand_layout;
+  return S.config.cand_per_row === 9 ? "row" : "column";  // (a config.json of before: cand_per_row only)
+}
+function candPerLine(layout, keys) {
+  if (layout === "column") return 1;
+  if (layout === "row") return keys.length;
+  return [3, 4, 5].includes(S.config.cand_columns) ? S.config.cand_columns : CAND_KEY_SETS.find(([k]) => k === keys)[1];
+}
+
+function candLayoutRows() {
+  const tiles = [];
+  const columnsRow = row("格子每排", "排成格子時每排幾個；「自動」照選字鍵排整齊（例如 1234qweras 排成 1234／qwer／as）",
+    segments([[0, "自動"], [3, "3"], [4, "4"], [5, "5"]], [3, 4, 5].includes(S.config.cand_columns) ? S.config.cand_columns : 0,
+      (v) => { setConfig("cand_columns", v); draw(); }, "格子每排"));
+  function preview(layout) {
+    const keys = candKeys(), per = candPerLine(layout, keys);
+    const shown = layout === "grid" ? keys.length : 4;  // (a column or a row: its first four, to fit the tile)
+    const box = h("div", { class: "cand-mini", style: `grid-template-columns: repeat(${Math.min(per, shown)}, auto)` });
+    for (let i = 0; i < shown; i++)
+      box.append(h("span", { class: "cand-mini-item" + (i === 0 ? " on" : "") }, h("b", {}, keys[i]), CAND_SAMPLE[i]));
+    return box;
+  }
+  function draw() {
+    const layout = candLayout();
+    for (const t of tiles) {
+      const on = t.dataset.value === layout;
+      t.classList.toggle("on", on);
+      t.setAttribute("aria-checked", on);
+      t.querySelector(".choice-preview").replaceChildren(preview(t.dataset.value));
+    }
+    columnsRow.style.display = layout === "grid" ? "" : "none";  // (only for a grid)
+  }
+  for (const [v, label] of CAND_LAYOUTS) {
+    tiles.push(h("button", { class: "choice", type: "button", role: "radio", "data-value": v,
+      onclick: () => {
+        if (candLayout() !== v || S.config.cand_layout !== v) {
+          setConfig("cand_layout", v);
+          setConfig("cand_per_row", v === "row" ? 9 : 1);  // (what versions before #23 read)
+        }
+        draw();
+      } },
+      h("div", { class: "choice-preview cand-preview" }),
+      h("div", { class: "choice-label" }, h("span", { class: "radio", "aria-hidden": "true" }),
+        h("span", { class: "row-text" }, h("span", { class: "row-title" }, label)))));
+  }
+  const keys = h("select", { class: "select", "aria-label": "選字鍵",
+    onchange: (e) => { setConfig("cand_keys", e.target.value); draw(); } },
+    ...CAND_KEY_SETS.map(([k]) => h("option", { value: k }, k === "123456789" ? "123456789（預設）" : k)));
+  keys.value = candKeys();
+  draw();
+  return [
+    h("div", { class: "row column" },
+      h("div", { class: "row-text" },
+        h("div", { class: "row-title" }, "候選字排列"),
+        h("div", { class: "row-desc" }, "按 ↓ 選字時，候選字的排列方式")),
+      h("div", { class: "choices", role: "radiogroup", "aria-label": "候選字排列" }, ...tiles)),
+    row("選字鍵", "候選字視窗開著時，按這些鍵選字（一頁的字數跟著選字鍵的數量）", keys),
+    columnsRow
+  ];
+}
+
 function pageLook() {
   const sizes = [[14, "小"], [18, "中"], [22, "大"], [26, "特大"]];
   const near = sizes.reduce((a, b) => (Math.abs(b[0] - S.config.cand_font_size) < Math.abs(a[0] - S.config.cand_font_size) ? b : a))[0];
@@ -471,7 +542,7 @@ function pageLook() {
     h("h1", {}, "外觀"),
     card(
       row("候選字視窗大小", "調整按 ↓ 選字時，候選字視窗與字體的顯示尺寸", segments(sizes, near, (v) => setConfig("cand_font_size", v), "候選字視窗大小")),
-      row("候選字排列方向", "選擇垂直單欄列表，或水平單排列表（每排 9 字）", cfgSegments("cand_per_row", [[1, "垂直"], [9, "水平"]], "候選字排列方向")),
+      ...candLayoutRows(),
       row("符號鍵盤位置", "按「`」叫出的符號鍵盤可自由拖曳並記憶位置",
         h("button", { class: "btn", onclick: async () => { await api("resetKeyboard"); toast("已重設，符號鍵盤下次將跟隨游標顯示"); } }, "重設為跟隨游標"))),
     h("p", { class: "foot" }, "設定視窗、候選字視窗、符號鍵盤與補字提示框，皆會自動跟隨 Windows 系統的主題模式。")

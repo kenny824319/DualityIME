@@ -117,8 +117,12 @@ Json state(Session& s, bool handled) {
     for (auto& p : page) cands.push(Json(to_utf8(p)));
     o["candidates"] = cands;
     o["cand_index"] = Json(index);
-    o["cand_page"] = Json(c.cand_index / Composer::PAGE);
-    o["cand_pages"] = Json(static_cast<int>((c.candidates.size() + Composer::PAGE - 1) / Composer::PAGE));
+    int size = c.page_size();
+    o["cand_page"] = Json(c.cand_index / size);
+    o["cand_pages"] = Json(static_cast<int>((c.candidates.size() + size - 1) / size));
+    // the list's keys (a page's labels) and how many side by side: 1 a column, a page a row, else a grid (#23)
+    o["cand_labels"] = Json(c.cand_labels());
+    o["cand_per_line"] = Json(c.per_line());
     // → spread the list out: the columns shown (from column cand_first), the selection among them
     o["cand_expanded"] = Json(c.cand_expanded);
     if (c.cand_expanded) {

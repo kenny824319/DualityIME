@@ -209,7 +209,12 @@ LRESULT CALLBACK Popup::proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 namespace {
 constexpr int CAND_PAD = 6, ROW_GAP = 2, ITEM_PAD_X = 10, ITEM_PAD_Y = 3, TITLE_H = 30;
-constexpr int GRID_ROWS = 9, GRID_SHOWN = 4, COL_GAP = 4, SCROLL_H = 6, ARROW_W = 30;
+constexpr int GRID_SHOWN = 4, COL_GAP = 4, SCROLL_H = 6, ARROW_W = 30;
+}
+
+std::wstring CandidateWindow::label(size_t i) const {
+    size_t k = grid_ ? i % static_cast<size_t>(rows_) : i;
+    return k < labels_.size() ? std::wstring(1, labels_[k]) : std::to_wstring(k + 1);
 }
 
 void CandidateWindow::layout(HDC dc) {
@@ -217,27 +222,33 @@ void CandidateWindow::layout(HDC dc) {
     HFONT f = cv.font(font_size_, font_.c_str());
     HFONT num = cv.font(std::max(11, font_size_ * 2 / 3), L"Segoe UI");
     hit_.clear();
-    int x = CAND_PAD, y = CAND_PAD + TITLE_H, max_w = 0;
+    int top = CAND_PAD + TITLE_H;
     int row_h = cv.measure(L"中", f).cy + 2 * ITEM_PAD_Y;
+    std::vector<int> widths;
+    int max_w = 64;
     for (size_t i = 0; i < items_.size(); ++i) {
-        int w = cv.measure(std::to_wstring(i + 1), num).cx + 6 + cv.measure(items_[i], f).cx + 2 * ITEM_PAD_X;
-        if (one_row_) {
-            hit_.push_back(RECT{x, y, x + w, y + row_h});
-            x += w + ROW_GAP;
-        } else {
-            max_w = std::max(max_w, w);
-            hit_.push_back(RECT{x, y, x + w, y + row_h});
-            y += row_h + ROW_GAP;
-        }
+        widths.push_back(cv.measure(label(i), num).cx + 6 + cv.measure(items_[i], f).cx + 2 * ITEM_PAD_X);
+        max_w = std::max(max_w, widths.back());
     }
-    if (!one_row_) {
-        max_w = std::max(max_w, 64);
-        for (auto& r : hit_) r.right = r.left + max_w;
-        size_.cx = CAND_PAD * 2 + max_w;
-        size_.cy = y - ROW_GAP + CAND_PAD;
-    } else {
+    if (one_row_) {  // a row: each as wide as it is
+        int x = CAND_PAD;
+        for (size_t i = 0; i < items_.size(); ++i) {
+            hit_.push_back(RECT{x, top, x + widths[i], top + row_h});
+            x += widths[i] + ROW_GAP;
+        }
         size_.cx = x - ROW_GAP + CAND_PAD;
-        size_.cy = y + row_h + CAND_PAD;
+        size_.cy = top + row_h + CAND_PAD;
+    } else {  // a column (per_line 1) or a grid: cells as wide as the widest, per_line_ to a row
+        int cols = std::max(1, per_line_), rows = 0;
+        for (size_t i = 0; i < items_.size(); ++i) {
+            int col = static_cast<int>(i) % cols, row = static_cast<int>(i) / cols;
+            int x = CAND_PAD + col * (max_w + COL_GAP), y = top + row * (row_h + ROW_GAP);
+            hit_.push_back(RECT{x, y, x + max_w, y + row_h});
+            rows = row + 1;
+        }
+        int shown = std::max(1, std::min(cols, static_cast<int>(items_.size())));
+        size_.cx = CAND_PAD * 2 + shown * max_w + (shown - 1) * COL_GAP;
+        size_.cy = top + std::max(rows, 1) * (row_h + ROW_GAP) - ROW_GAP + CAND_PAD;
     }
     size_.cx = std::max<LONG>(size_.cx, 110);  // room for the title
     arrow_ = RECT{size_.cx - CAND_PAD - ARROW_W, CAND_PAD, size_.cx - CAND_PAD, CAND_PAD + TITLE_H};
@@ -249,20 +260,21 @@ void CandidateWindow::layout_grid(HDC dc) {
     HFONT f = cv.font(font_size_, font_.c_str());
     HFONT num = cv.font(std::max(11, font_size_ * 2 / 3), L"Segoe UI");
     hit_.clear();
-    // every column as wide as the widest candidate shown, with room for its number
-    int text_w = 0;
+    // every column as wide as the widest candidate shown, with room for its label
+    int text_w = 0, label_w = 0;
     for (auto& item : items_) text_w = std::max<int>(text_w, cv.measure(item, f).cx);
-    int col_w = std::max<int>(64, cv.measure(L"9", num).cx + 6 + text_w + 2 * ITEM_PAD_X);
+    for (size_t i = 0; i < static_cast<size_t>(rows_); ++i) label_w = std::max<int>(label_w, cv.measure(label(i), num).cx);
+    int col_w = std::max<int>(64, label_w + 6 + text_w + 2 * ITEM_PAD_X);
     int row_h = cv.measure(L"中", f).cy + 2 * ITEM_PAD_Y;
     int top = CAND_PAD + TITLE_H;
     for (size_t i = 0; i < items_.size(); ++i) {
-        int col = static_cast<int>(i) / GRID_ROWS, row = static_cast<int>(i) % GRID_ROWS;
+        int col = static_cast<int>(i) / rows_, row = static_cast<int>(i) % rows_;
         int x = CAND_PAD + col * (col_w + COL_GAP), y = top + row * (row_h + ROW_GAP);
         hit_.push_back(RECT{x, y, x + col_w, y + row_h});
     }
     int shown = std::max(1, std::min(GRID_SHOWN, columns_));
     size_.cx = CAND_PAD * 2 + shown * col_w + (shown - 1) * COL_GAP;
-    int bottom = top + GRID_ROWS * (row_h + ROW_GAP) - ROW_GAP;
+    int bottom = top + rows_ * (row_h + ROW_GAP) - ROW_GAP;
     track_ = RECT{};
     if (columns_ > GRID_SHOWN) {  // more columns than shown: a scroll bar under them
         track_ = RECT{CAND_PAD, bottom + CAND_PAD, size_.cx - CAND_PAD, bottom + CAND_PAD + SCROLL_H};
@@ -273,7 +285,8 @@ void CandidateWindow::layout_grid(HDC dc) {
 }
 
 void CandidateWindow::show(const std::vector<std::wstring>& items, int index, int page, int pages,
-                           const std::wstring& font, int font_size, bool one_row, const RECT& text_rect) {
+                           const std::wstring& font, int font_size, const std::wstring& labels, int per_line,
+                           const RECT& text_rect) {
     if (!create(L"DualityIMECandidates")) return;
     items_ = items;
     index_ = index;
@@ -281,7 +294,9 @@ void CandidateWindow::show(const std::vector<std::wstring>& items, int index, in
     pages_ = std::max(pages, 1);
     font_ = font.empty() ? L"Microsoft JhengHei UI" : font;
     font_size_ = std::clamp(font_size, 10, 48);
-    one_row_ = one_row;
+    labels_ = labels.empty() ? L"123456789" : labels;
+    per_line_ = std::max(1, per_line);
+    one_row_ = per_line_ > 1 && per_line_ >= static_cast<int>(labels_.size());
     grid_ = false;
     HDC dc = GetDC(hwnd_);
     layout(dc);
@@ -290,7 +305,8 @@ void CandidateWindow::show(const std::vector<std::wstring>& items, int index, in
 }
 
 void CandidateWindow::show_grid(const std::vector<std::wstring>& items, int index, int first, int columns,
-                                const std::wstring& font, int font_size, const RECT& text_rect) {
+                                const std::wstring& font, int font_size, const std::wstring& labels,
+                                const RECT& text_rect) {
     if (!create(L"DualityIMECandidates")) return;
     items_ = items;
     index_ = index;
@@ -298,6 +314,9 @@ void CandidateWindow::show_grid(const std::vector<std::wstring>& items, int inde
     columns_ = std::max(columns, 1);
     font_ = font.empty() ? L"Microsoft JhengHei UI" : font;
     font_size_ = std::clamp(font_size, 10, 48);
+    labels_ = labels.empty() ? L"123456789" : labels;
+    rows_ = static_cast<int>(labels_.size());
+    per_line_ = 1;
     one_row_ = false;
     grid_ = true;
     HDC dc = GetDC(hwnd_);
@@ -324,17 +343,19 @@ void CandidateWindow::draw(HDC dc, int w, int h) {
     cv.box(0, 0, w / s, h / s, th.key, th.border, 10);
     HFONT f = cv.font(font_size_, font_.c_str());
     HFONT num = cv.font(std::max(11, font_size_ * 2 / 3), L"Segoe UI");
-    int nine = cv.measure(L"9", num).cx;
-    int selected_col = index_ / GRID_ROWS;
+    int label_w = 0;  // (the labels in a column of the spread-out list as wide as the widest)
+    if (grid_)
+        for (size_t i = 0; i < static_cast<size_t>(rows_); ++i) label_w = std::max<int>(label_w, cv.measure(label(i), num).cx);
+    int selected_col = index_ / rows_;
     for (size_t i = 0; i < items_.size() && i < hit_.size(); ++i) {
         const RECT& r = hit_[i];
         bool on = static_cast<int>(i) == index_;
         if (on) cv.box(r.left, r.top, r.right - r.left, r.bottom - r.top, th.accent, th.accent, 6);
-        // the spread-out list numbers only the column with the selection (1-9 pick in it)
-        bool numbered = !grid_ || static_cast<int>(i) / GRID_ROWS == selected_col;
-        std::wstring n = std::to_wstring(grid_ ? static_cast<int>(i) % GRID_ROWS + 1 : static_cast<int>(i) + 1);
-        int nw = grid_ ? nine : cv.measure(n, num).cx;
-        if (numbered)
+        // the spread-out list labels only the column with the selection (its keys pick in it)
+        bool labelled = !grid_ || static_cast<int>(i) / rows_ == selected_col;
+        std::wstring n = label(i);
+        int nw = grid_ ? label_w : cv.measure(n, num).cx;
+        if (labelled)
             cv.text(n, r.left + ITEM_PAD_X, r.top, nw + 2, r.bottom - r.top, on ? th.accent_text : th.label, num,
                     DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         cv.text(items_[i], r.left + ITEM_PAD_X + nw + 6, r.top, r.right - r.left, r.bottom - r.top,
@@ -343,8 +364,8 @@ void CandidateWindow::draw(HDC dc, int w, int h) {
     HFONT title = cv.font(std::max(12, font_size_ * 3 / 4), L"Microsoft JhengHei UI");
     cv.text(L"候選字", CAND_PAD + ITEM_PAD_X, CAND_PAD, w / s, TITLE_H, th.label, title,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    // → more: click or press → to spread the list out; ←: back to the list
-    if (grid_ || page_ + 1 < pages_)
+    // → more: click or press → to spread the list out (a column only); ←: back to the list
+    if (grid_ || (per_line_ == 1 && page_ + 1 < pages_))
         cv.text(grid_ ? L"←" : L"→", arrow_.left, arrow_.top, arrow_.right - arrow_.left - ITEM_PAD_X / 2,
                 arrow_.bottom - arrow_.top, th.label, title, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
     if (grid_ && track_.right > track_.left) {  // which columns of all are shown
@@ -363,13 +384,13 @@ LRESULT CandidateWindow::message(UINT msg, WPARAM, LPARAM lp, bool& done) {
         POINT pt{static_cast<LONG>(GET_X_LPARAM(lp) / s), static_cast<LONG>(GET_Y_LPARAM(lp) / s)};
         if (PtInRect(&arrow_, pt)) {
             if (grid_ && on_fold) on_fold();
-            else if (!grid_ && !one_row_ && page_ + 1 < pages_ && on_expand) on_expand();  // (one row: → is the next one)
+            else if (!grid_ && per_line_ == 1 && page_ + 1 < pages_ && on_expand) on_expand();  // (a row, a grid: none)
             done = true;
             return 0;
         }
         for (size_t i = 0; i < hit_.size(); ++i)
             if (PtInRect(&hit_[i], pt)) {
-                if (grid_ && on_pick_at) on_pick_at(first_ * GRID_ROWS + static_cast<int>(i));
+                if (grid_ && on_pick_at) on_pick_at(first_ * rows_ + static_cast<int>(i));
                 else if (!grid_ && on_pick) on_pick(static_cast<int>(i));
                 break;
             }

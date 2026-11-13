@@ -24,7 +24,10 @@ const Json& Config::defaults() {
         j["game_mode"] = Json(false);        // 遊戲模式: in games (Windows' list, exclusive full screen) keys go straight through
         j["cand_font"] = Json("Microsoft JhengHei UI");
         j["cand_font_size"] = Json(18);
-        j["cand_per_row"] = Json(1);         // 1 = vertical list, 9 = one row
+        j["cand_per_row"] = Json(1);         // 1 = vertical list, 9 = one row (written on with cand_layout)
+        j["cand_layout"] = Json("");         // "column", "row", "grid"; "" = by cand_per_row (candlayout.h, #23)
+        j["cand_keys"] = Json("123456789");  // the candidate keys, one of cand_key_sets()
+        j["cand_columns"] = Json(0);         // the grid's columns: 3, 4, 5, or 0 = by the keys
         return j;
     }();
     return d;

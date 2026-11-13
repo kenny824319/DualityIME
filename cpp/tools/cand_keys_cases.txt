@@ -1,0 +1,11 @@
+# e2e-args: -Config cpp\tools\cand_keys_config.json
+# the candidate list with the keys 1234qweras laid out as a grid (#23): a page of 10, a key picks its place,
+# keys not in the set do nothing, the grid's arrows across rows and pages
+u4{DOWN}q{ENTER} => 易
+u4{DOWN}s{ENTER} => 亦
+u4{DOWN}5{ESC}{ENTER} => 亦
+u4{DOWN}{RIGHT}{RIGHT}{RIGHT}{RIGHT}{ENTER}{ENTER} => 議
+u4{DOWN}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER} => 譯
+u4{DOWN}{PGDN}w{ENTER} => 抑
+# with no list open, the letters type as ever
+ji3cp3{ENTER} => 我很

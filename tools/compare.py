@@ -226,6 +226,10 @@ CASES = [
     "94xu06u,4{HOME}" + "{DOWN}" * 45 + "{ENTER}{ENTER}94xu06{TAB}{LEFT}{LEFT}{LEFT}{UP}{ENTER}{ENTER}",
     # ...and any start of 2+ characters of a name in the list, people's too (我愛 -> 我愛羅, 田馥 -> 田馥甄)
     "ji394{HOME}" + "{DOWN}" * 40 + "{ENTER}{ENTER}wu06zj4{HOME}" + "{DOWN}" * 30 + "{ENTER}{ENTER}",
+    # the candidate list's keys and arrows (#23; 1234qweras and a grid in the last settings): a key picks its place,
+    # keys not in the set do nothing, the grid's arrows across rows and pages
+    "u4{DOWN}{RIGHT}{RIGHT}{RIGHT}{RIGHT}{DOWN}{DOWN}{DOWN}{UP}{LEFT}{ENTER}u4{DOWN}{PGDN}s{ENTER}"
+    "u4{DOWN}Q5z{ESC}{ENTER}u4{DOWN}{RIGHT}{RIGHT}{LEFT}w{ENTER}",
     # the particles of everyday talk, and the keys next to them
     "cl3xji7{ENTER}2jo4u,7{ENTER}c9 su3cl3{ENTER}i7 97 o7 core i7 {ENTER}",
 ]
@@ -288,6 +292,7 @@ CONFIGS = [
     {"import_memory": 1},  # a backup restored (備份與還原): IMPORTED is merged before typing
     {"autocorrect": True},  # 注音自動校正
     {"long_sentence": False},  # 長句選字加強 off ({} above: on, the default)
+    {"cand_keys": "1234qweras", "cand_layout": "grid"},  # other candidate keys, a grid (#23)
 ]
 DICTIONARY = {
     "words": [["華碩", "ㄏㄨㄚˊ ㄕㄨㄛˋ"], ["史芸", "ㄕˇㄩㄣˊ"], ["好", "ㄏㄠˇ"], ["ㄎㄎ", ""], ["Kazuma", ""],

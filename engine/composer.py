@@ -7,6 +7,7 @@ import re
 from . import lm as language_model
 from . import symbols
 from .config import Config
+from . import candlayout
 from .lexicon import AS_ENGLISH, MAX_PHRASE_LEN, ZHUYIN_TEXT, is_code, is_email, is_zhuyin_text
 from .zhuyin import FINALS
 
@@ -1468,7 +1469,7 @@ class Composer:
         commit        text to insert, set once then cleared on next key
     """
 
-    PAGE = 9
+    PAGE = 9  # (the default page: candlayout.cand_keys sets it - page_size())
     BAR_ZHUYIN_KEYS = 4  # ↑ offers the 注音文 of a word that spells no syllable up to this long (1j8: ㄅㄨㄚ)
     GRID_COLUMNS = 4  # columns shown when the list is spread out
     _simulating = False  # (a copy trying a pick out, for the label in the bar: no bar of its own)
@@ -1516,7 +1517,7 @@ class Composer:
         self.candidates = []
         self._cand_actions = []
         self.cand_index = 0
-        self.cand_expanded = False   # → spread the list out to the right: columns of PAGE, GRID_COLUMNS shown
+        self.cand_expanded = False   # → spread the list out to the right: columns of a page, GRID_COLUMNS shown
         self.cand_first = 0          # the first column shown then
         self.symbol_page = None      # symbol keyboard page while it is open
         self.symbol_cursor = symbols.KEYS.index("1")
@@ -2634,7 +2635,7 @@ class Composer:
                 return [], []
             first, readings = found
             labels, actions = [], []
-            for p, _ in phrase_candidates(readings, self.lexicon, self.user)[:self.PAGE - 1]:
+            for p, _ in phrase_candidates(readings, self.lexicon, self.user)[:self.page_size() - 1]:
                 labels.append(p)  # (what comes after the caret; the keys before it stay)
                 actions.append(("chinese", cut, first, tuple(readings), p, False, (), tuple(sorted(unforce)),
                                 tok.start, unchinese))
@@ -2660,7 +2661,7 @@ class Composer:
         labels, actions = [], []
         if found:
             first, readings = found
-            for p, _ in phrase_candidates(readings, self.lexicon, self.user)[:self.PAGE - 1]:
+            for p, _ in phrase_candidates(readings, self.lexicon, self.user)[:self.page_size() - 1]:
                 labels.append(p)
                 actions.append(("chinese", start, first, tuple(readings), p, start == tok.start, tuple(sorted(unlit)),
                                 tuple(sorted(unforce)), None, ()))
@@ -3479,7 +3480,7 @@ class Composer:
             parsed = self.table.parse_syllable(keys)
             if parsed:  # (one syllable: the other characters for it)
                 for p, _ in phrase_candidates([parsed[0]], self.lexicon, self.user):
-                    if p not in labels and len(labels) < self.PAGE:
+                    if p not in labels and len(labels) < self.page_size():
                         labels.append(p)
                         actions.append(("plain", tok.start, keys, p))
         return labels, actions
@@ -3523,7 +3524,7 @@ class Composer:
         labels, actions, seen = [], [], set(taken_labels)
         for keys, reading in found:
             for p, _ in phrase_candidates([reading], self.lexicon, self.user)[:3]:
-                if p not in seen and len(taken_labels) + len(labels) < self.PAGE:
+                if p not in seen and len(taken_labels) + len(labels) < self.page_size():
                     seen.add(p)
                     labels.append(p)
                     actions.append(("taken", tok.start, tok.start + len(keys), reading, p))
@@ -3767,35 +3768,80 @@ class Composer:
             return True
         return True
 
+    def page_size(self):
+        """Candidates on a page: as many as the candidate keys (#23)."""
+        return len(candlayout.cand_keys(self.config))
+
+    def cand_labels(self):
+        """The candidate keys, a page's labels in order."""
+        return candlayout.cand_keys(self.config)
+
+    def per_line(self):
+        """Candidates side by side: 1 in a column, a page in a row, the grid's columns."""
+        return candlayout.cand_per_line(self.config)
+
     def _key_candidates(self, ch, special):
-        page = self.cand_index // self.PAGE * self.PAGE
-        if ch and ch.isdigit() and ch != "0":
-            i = page + int(ch) - 1
-            if i < len(self.candidates):
-                self._pick(i)
-            if not self.candidates:
-                self.cand_expanded, self.cand_first = False, 0
-            return True
+        size = self.page_size()
+        page = self.cand_index // size * size
+        if ch:
+            # a candidate key picks its place on the page, a letter whatever its case (Caps Lock, Shift: ; as :);
+            # other keys do nothing (#23)
+            k = self.cand_labels().find(";" if ch == ":" else ch.lower())
+            if k >= 0 and ch != " ":
+                if page + k < len(self.candidates):
+                    self._pick(page + k)
+                if not self.candidates:
+                    self.cand_expanded, self.cand_first = False, 0
+                return True
+        layout = candlayout.cand_layout(self.config)
         if special == "ESC":
             self._close_candidates()
         elif special in ("ENTER",) or ch == " ":
             self._pick(self.cand_index)
         elif self.cand_expanded:
             self._key_grid(special)
-        elif special == "RIGHT" and len(self.candidates) > self.PAGE and self.config.cand_per_row <= 1:
-            self.cand_expanded = True  # (like the Windows 注音; one row of 9 keeps → for the next one)
-            self.cand_first = self.cand_index // self.PAGE
+        elif layout == "grid" and special in ("UP", "DOWN", "LEFT", "RIGHT"):
+            self._key_cand_grid(special)
+        elif special == "RIGHT" and len(self.candidates) > size and layout == "column":
+            self.cand_expanded = True  # (like the Windows 注音; one row keeps → for the next one)
+            self.cand_first = self.cand_index // size
         elif special in ("DOWN", "RIGHT"):
             self.cand_index = min(self.cand_index + 1, len(self.candidates) - 1)
         elif special in ("UP", "LEFT"):
             self.cand_index = max(self.cand_index - 1, 0)
         elif special == "PGDN":
-            self.cand_index = min(page + self.PAGE, len(self.candidates) - 1)
+            self.cand_index = min(page + size, len(self.candidates) - 1)
         elif special == "PGUP":
-            self.cand_index = max(page - self.PAGE, 0)
+            self.cand_index = max(page - size, 0)
         if not self.candidates:  # (picked: the list is gone, however it went)
             self.cand_expanded, self.cand_first = False, 0
         return True
+
+    def _key_cand_grid(self, special):
+        """Arrow keys in the list laid out as a grid (#23): ← → along the rows, on into the row before / after
+        (and the page); ↓ the row under, the page's last where nothing is under it, from the bottom row the
+        next page's top row in that column; ↑ the other way; the first and last candidates stay."""
+        n, i, size, cols = len(self.candidates), self.cand_index, self.page_size(), self.per_line()
+        start = i // size * size
+        pos = i - start
+        length = min(size, n - start)
+        if special == "RIGHT":
+            i = min(i + 1, n - 1)
+        elif special == "LEFT":
+            i = max(i - 1, 0)
+        elif special == "DOWN":
+            if pos + cols < length:
+                i += cols
+            elif pos // cols < (length - 1) // cols:
+                i = start + length - 1
+            elif start + size < n:
+                i = start + size + min(pos % cols, min(size, n - start - size) - 1)
+        elif special == "UP":
+            if pos >= cols:
+                i -= cols
+            elif start > 0:
+                i = start - size + min((size - 1) // cols * cols + pos % cols, size - 1)
+        self.cand_index = i
 
     def _key_grid(self, special):
         """Keys in the spread-out list: ↑ ↓ down the columns (on into the next), ← → the same row
@@ -3806,18 +3852,18 @@ class Composer:
         elif special == "UP":
             i = max(i - 1, 0)
         elif special == "RIGHT":
-            i = min(i + self.PAGE, n - 1) if i // self.PAGE < (n - 1) // self.PAGE else i
+            i = min(i + self.page_size(), n - 1) if i // self.page_size() < (n - 1) // self.page_size() else i
         elif special == "LEFT":
-            if i < self.PAGE:
+            if i < self.page_size():
                 self.cand_expanded, self.cand_first = False, 0
                 return
-            i -= self.PAGE
+            i -= self.page_size()
         elif special == "PGDN":
-            i = min(i + self.PAGE * self.GRID_COLUMNS, n - 1)
+            i = min(i + self.page_size() * self.GRID_COLUMNS, n - 1)
         elif special == "PGUP":
-            i = max(i - self.PAGE * self.GRID_COLUMNS, 0)
+            i = max(i - self.page_size() * self.GRID_COLUMNS, 0)
         self.cand_index = i
-        col = i // self.PAGE
+        col = i // self.page_size()
         if col < self.cand_first:
             self.cand_first = col
         elif col >= self.cand_first + self.GRID_COLUMNS:
@@ -3826,10 +3872,10 @@ class Composer:
     def grid_candidates(self):
         """The spread-out list as shown: the candidates of the columns shown, from column
         cand_first, and where the selection is among them."""
-        start = self.cand_first * self.PAGE
-        return self.candidates[start:start + self.PAGE * self.GRID_COLUMNS], self.cand_index - start
+        start = self.cand_first * self.page_size()
+        return self.candidates[start:start + self.page_size() * self.GRID_COLUMNS], self.cand_index - start
 
     def page_candidates(self):
         """Candidates on the current page (for drawing a 1-9 window)."""
-        page = self.cand_index // self.PAGE * self.PAGE
-        return self.candidates[page:page + self.PAGE], self.cand_index - page
+        page = self.cand_index // self.page_size() * self.page_size()
+        return self.candidates[page:page + self.page_size()], self.cand_index - page

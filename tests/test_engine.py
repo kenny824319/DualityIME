@@ -8,7 +8,7 @@ import unittest.mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from engine import DEFAULTS, Config, composer, create_composer  # noqa: E402
+from engine import DEFAULTS, Config, candlayout, composer, create_composer  # noqa: E402
 from engine.lexicon import FORGET_DAYS, Lexicon, UserModel  # noqa: E402
 from engine.zhuyin import KEYMAP, TONES, SyllableTable  # noqa: E402
 
@@ -2309,6 +2309,152 @@ class KnownHardTest(Base):
         self.c.config.set(long_sentence=False)
         self.c.settings_changed()
         self.assertEqual(self.type(keys("ㄨㄛˇ ㄗㄞˋ ㄧ ㄘˋ ㄕˋ ㄕˋ")), "我再一次試試")
+
+
+class CandKeysTest(unittest.TestCase):
+    """The candidate list with other keys and layouts (#23): a page as many as the keys, a key picks its place on
+    the page (letters whatever their case), keys not in the set do nothing; the grid's arrow keys."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.c = create_composer(os.path.join(self.tmp.name, "user.json"))
+        self.c.config.values = dict(DEFAULTS)
+
+    def open(self, **settings):
+        """ㄧˋ typed (many characters), the list opened at it."""
+        c = self.c
+        c.config.values.update(settings)
+        c.settings_changed()
+        c.reset()
+        for ch in keys("ㄧˋ"):
+            c.key(ch)
+        c.key(special="DOWN")
+        self.assertGreater(len(c.candidates), 25)
+        return c
+
+    def test_default_unchanged(self):
+        c = self.open()
+        self.assertEqual((c.page_size(), c.cand_labels(), c.per_line()), (9, "123456789", 1))
+        want = c.candidates[1]
+        c.key("2")
+        self.assertEqual(c.composition, want)
+
+    def test_ten_keys_page_and_expand(self):
+        c = self.open(cand_keys="1234qweras")
+        page, at = c.page_candidates()
+        self.assertEqual((len(page), at), (10, 0))
+        want = c.candidates[4]
+        c.key("q")
+        self.assertEqual(c.composition, want)
+        c = self.open(cand_keys="1234qweras")
+        want = c.candidates[9]
+        c.key("s")
+        self.assertEqual(c.composition, want)
+        c = self.open(cand_keys="1234qweras")
+        c.key(special="PGDN")
+        self.assertEqual(c.cand_index, 10)
+        c.key(special="RIGHT")  # (one column: → spreads it out, a column a page)
+        self.assertTrue(c.cand_expanded)
+        grid, _ = c.grid_candidates()
+        self.assertEqual(grid[:10], c.candidates[10:20])  # (from the page it was on, a column a page)
+
+    def test_keys_case_and_others(self):
+        c = self.open(cand_keys="1234qweras")
+        want = c.candidates[4]
+        c.key("Q", caps=True)
+        self.assertEqual(c.composition, want)
+        c = self.open(cand_keys="1234qweras")
+        before = c.composition
+        for ch in "5z0":
+            c.key(ch)
+            self.assertTrue(c.candidates, ch)
+            self.assertEqual(c.composition, before, ch)
+        c = self.open(cand_keys="asdfghjkl;")
+        want = c.candidates[9]
+        c.key(":")
+        self.assertEqual(c.composition, want)
+        c = self.open(cand_keys="qwerasdf")
+        self.assertEqual(len(c.page_candidates()[0]), 8)
+
+    def test_letters_type_when_no_list(self):
+        c = self.c
+        c.config.values.update(cand_keys="qwerasdf")
+        c.settings_changed()
+        for ch in keys("ㄨㄛˇ"):
+            c.key(ch)
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "我")
+
+    def test_grid_moves_short_rows(self):
+        c = self.open(cand_layout="grid", cand_keys="1234qweras")
+        self.assertEqual(c.per_line(), 4)
+        for _ in range(4):
+            c.key(special="RIGHT")
+        self.assertEqual(c.cand_index, 4)  # (on into the next row)
+        c.cand_index = 6  # e
+        c.key(special="DOWN")
+        self.assertEqual(c.cand_index, 9)  # (none under it: the page's last, s)
+        c.key(special="DOWN")
+        self.assertEqual(c.cand_index, 11)  # (the bottom row: the next page's first row, s's column)
+        c.key(special="UP")
+        self.assertEqual(c.cand_index, 9)  # (back up: the previous page's last row, that column)
+        c.cand_index = 1
+        c.key(special="UP")
+        self.assertEqual(c.cand_index, 1)  # (the first page's top row: stays)
+        c.cand_index = 0
+        c.key(special="LEFT")
+        self.assertEqual(c.cand_index, 0)
+        c.cand_index = len(c.candidates) - 1
+        c.key(special="RIGHT")
+        self.assertEqual(c.cand_index, len(c.candidates) - 1)
+        self.assertFalse(c.cand_expanded)
+
+    def test_row_layout(self):
+        c = self.open(cand_layout="row", cand_keys="qwerasdf")
+        self.assertEqual(c.per_line(), 8)
+        c.key(special="RIGHT")
+        self.assertEqual((c.cand_index, c.cand_expanded), (1, False))
+        c.key(special="PGDN")
+        self.assertEqual(c.cand_index, 8)
+
+
+class CandLayoutTest(unittest.TestCase):
+    """The candidate list's settings (#23, docs/superpowers/specs/2026-11-13-cand-grid-keys-design.md): its keys
+    (8 sets, 123456789 the default), one column / one row / a grid, the grid's columns (0 = by the keys)."""
+
+    def cfg(self, **values):
+        c = Config()
+        c.values = dict(DEFAULTS, **values)
+        return c
+
+    def test_defaults(self):
+        c = self.cfg()
+        self.assertEqual((candlayout.cand_keys(c), candlayout.cand_layout(c), candlayout.cand_per_line(c)),
+                         ("123456789", "column", 1))
+
+    def test_layout_from_old_setting(self):
+        # (a config.json of before: cand_per_row only)
+        self.assertEqual(candlayout.cand_layout(self.cfg(cand_per_row=9)), "row")
+        self.assertEqual(candlayout.cand_per_line(self.cfg(cand_per_row=9)), 9)
+        self.assertEqual(candlayout.cand_layout(self.cfg(cand_per_row=9, cand_layout="grid")), "grid")
+
+    def test_grid_auto_and_set(self):
+        self.assertEqual(candlayout.cand_per_line(self.cfg(cand_layout="grid")), 3)
+        self.assertEqual(candlayout.cand_per_line(self.cfg(cand_layout="grid", cand_keys="1234qweras")), 4)
+        self.assertEqual(candlayout.cand_per_line(self.cfg(cand_layout="grid", cand_keys="asdfghjkl;")), 5)
+        self.assertEqual(candlayout.cand_per_line(self.cfg(cand_layout="grid", cand_keys="1234qweras",
+                                                           cand_columns=5)), 5)
+        self.assertEqual(candlayout.cand_per_line(self.cfg(cand_layout="row", cand_keys="qwerasdf")), 8)
+
+    def test_unknown_values(self):
+        self.assertEqual(candlayout.cand_keys(self.cfg(cand_keys="abc")), "123456789")
+        self.assertEqual(candlayout.cand_layout(self.cfg(cand_layout="diagonal")), "column")
+        self.assertEqual(candlayout.cand_per_line(self.cfg(cand_layout="grid", cand_columns=7)), 3)
+
+    def test_key_sets(self):
+        self.assertEqual(list(candlayout.KEY_SETS), ["123456789", "1234567890", "1234qweras", "qwerasdf",
+                                                     "asdfghjkl;", "asdfzxcv89", "asdfjkl789", "aoeuhtn789"])
 
 
 class NameStartsTest(unittest.TestCase):
