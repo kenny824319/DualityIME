@@ -213,6 +213,19 @@ CASES = [
     "pqc{HOME}{UP}{ENTER}{END}{TAB}{ENTER}aiej/ {DOWN}{DOWN}{ENTER}{TAB}{ENTER}",
     # a word whose 注音 is none (？ from 框選查詢) is no hint
     "ji3ap7{TAB}{ENTER}tp6{TAB}{ENTER}",
+    # characters' names (#14): a part of one shown as written (艾連 picked over 愛憐) leads to the rest with Tab,
+    # remembered the next time; Tab and Backspace; 竈門 -> 炭治郎; letters (蒙其 -> ·D·魯夫); 我愛 of 我愛羅 and 時光 (a
+    # word of the dictionary) lead to none; the whole name picked from the list gets its ·, and the list ends
+    # with the names a part starts
+    "94xu06{HOME}{DOWN}{DOWN}{ENTER}{END}{TAB}{ENTER}94xu06{TAB}{ENTER}94xu06{TAB}{BACK}{BACK}{BACK}2k7{ENTER}",
+    "yl4ap6{TAB}{ENTER}a/6fu6{HOME}{DOWN}{ENTER}{END}{TAB}{ENTER}ji394{TAB}{ENTER}g6ej; {TAB}{ENTER}",
+    "94xu06u,4d83{HOME}{DOWN}{ENTER}{ENTER}94xu06{HOME}" + "{DOWN}" * 48 + "{ENTER}{ENTER}g6ej; {HOME}{UP}{ENTER}",
+    # (review 2026-11-13) the whole name picked keeps what follows as shown (艾連·葉卡和三立, not 河); typed over
+    # a · (洛琪希米格路迪亞 + Tab, 艾連葉 picked as 艾連·葉卡): every · written; the bar at a · offers nothing
+    "94xu06u,4d83ck6n0 xu4{HOME}{DOWN}{ENTER}{ENTER}xji4fu6vu au3ek6xj42u6u83{TAB}{ENTER}"
+    "94xu06u,4{HOME}" + "{DOWN}" * 45 + "{ENTER}{ENTER}94xu06{TAB}{LEFT}{LEFT}{LEFT}{UP}{ENTER}{ENTER}",
+    # ...and any start of 2+ characters of a name in the list, people's too (我愛 -> 我愛羅, 田馥 -> 田馥甄)
+    "ji394{HOME}" + "{DOWN}" * 40 + "{ENTER}{ENTER}wu06zj4{HOME}" + "{DOWN}" * 30 + "{ENTER}{ENTER}",
     # the particles of everyday talk, and the keys next to them
     "cl3xji7{ENTER}2jo4u,7{ENTER}c9 su3cl3{ENTER}i7 97 o7 core i7 {ENTER}",
 ]

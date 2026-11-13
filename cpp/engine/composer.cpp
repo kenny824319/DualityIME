@@ -84,6 +84,19 @@ static bool like_a_name(const Lexicon& lexicon, const std::vector<ustr>& reading
 // 自訂詞彙's words come whole as the Tab hint once this much of one is typed: a letter or digit 1, a Chinese
 // character 2 (PQC, 大谷, AI功, 阿Q - the user's call, #13)
 constexpr int CUSTOM_MIN_WEIGHT = 3;
+constexpr double NAME_SCORE = -7.0;  // names.txt's score: a word above it typed is no name's start (#14)
+constexpr size_t NAME_LIST_MAX = 30;  // names a start leads to at the end of the candidate list, at most
+
+// where a name's units go on past its first `typed` characters (see engine/composer.py _after_typed)
+static size_t after_typed(const std::vector<CustomUnit>& units, int typed) {
+    int n = 0;
+    for (size_t i = 0; i < units.size(); ++i) {
+        if (n == typed) return i;
+        if (units[i].zh) ++n;
+    }
+    return units.size();
+}
+constexpr char NAME_MARK_KEY = '=';  // the key a name written by Tab keeps for its · (shown as it: fixed_)
 constexpr double BIGRAM_WEIGHT = 0.6;
 const double UNSEEN_PAIR = std::log10(1 - BIGRAM_WEIGHT);
 const double LOG_BIGRAM_WEIGHT = std::log10(BIGRAM_WEIGHT);
@@ -2217,6 +2230,13 @@ void Composer::suggest() {
         sugg_actions_ = {*custom};
         return;
     }
+    if (auto name = name_completion()) {
+        ustr label;
+        for (size_t i = after_typed(name->units, name->l); i < name->units.size(); ++i) label.push_back(name->units[i].ch);
+        suggestions = {label};
+        sugg_actions_ = {*name};
+        return;
+    }
     std::vector<Action> actions;
     const Token* last = tokens.empty() ? nullptr : &tokens.back();
     // remembered e-mail addresses / English words: the word being typed is a prefix
@@ -2414,21 +2434,28 @@ void Composer::take_custom(const Action& action) {
                               [&](const auto& e) { return e.first == text; });
     if (entry == user.custom_entries.end()) return;
     const std::vector<CustomUnit> units = entry->second;
-    int start = action.start;
+    take_units(action.start, units);
+    user.custom_picks.record(text);
+}
+
+void Composer::take_units(int start, const std::vector<CustomUnit>& units, int name_typed) {
+    // the keys from raw offset start to the end replaced by those of units (see engine/composer.py _take_units):
+    // a lit unit (the · of a character's name) is NAME_MARK_KEY shown as it (fixed_)
     std::vector<std::string> keys;
     std::string all;
     for (auto& u : units) {
-        keys.push_back(u.zh ? table_.reading_to_keys(u.reading) : std::string(1, static_cast<char>(u.ch)));
+        keys.push_back(u.zh ? table_.reading_to_keys(u.reading)
+                            : u.lit ? std::string(1, NAME_MARK_KEY) : std::string(1, static_cast<char>(u.ch)));
         all += keys.back();
     }
     // (as an edit from start: what was picked or taken from the bar there goes - the word is written as it is)
     splice(start, static_cast<int>(raw.size()), all);
     int pos = start;
-    int prev = -1;  // 0 English, 1 space, 2 Chinese
+    int prev = -1;  // 0 English, 1 space, 2 Chinese, 3 lit
     std::vector<std::tuple<int, std::vector<ustr>, std::vector<ustr>>> runs;
     for (size_t i = 0; i < units.size(); ++i) {
         const auto& u = units[i];
-        int kind = u.zh ? 2 : u.ch == U' ' ? 1 : 0;
+        int kind = u.zh ? 2 : u.lit ? 3 : u.ch == U' ' ? 1 : 0;
         if (kind != prev) {
             if (prev >= 0) breaks_.insert(pos);
             if (kind == 0) forced_.insert(pos);
@@ -2438,24 +2465,207 @@ void Composer::take_custom(const Action& action) {
             chinese_.insert(pos);
             std::get<1>(runs.back()).push_back(u.reading);
             std::get<2>(runs.back()).push_back(ustr(1, u.ch));
+        } else if (kind == 3) {
+            fixed_[pos] = {pos + static_cast<int>(keys[i].size()), ustr(1, u.ch)};
         }
         pos += static_cast<int>(keys[i].size());
         prev = kind;
     }
     refresh();
+    if (name_typed >= 0) {
+        int s = 0;
+        for (auto& t : tokens)
+            if (t.kind == Kind::Zh && t.start < start) ++s;
+        pin_name(s, units, name_typed);
+        return;
+    }
     for (auto& [at, rds, chars] : runs) {
         int s = 0;
         for (auto& t : tokens)
             if (t.kind == Kind::Zh && t.start < at) ++s;
         pin(s, rds, chars);
     }
-    user.custom_picks.record(text);
+}
+
+void Composer::pin_name(int s, const std::vector<CustomUnit>& units, int typed) {
+    // a character's name written from syllable s: the part typed a pick, learned when sent; the rest kept with
+    // it, fixed but not learned (see engine/composer.py _pin_name)
+    std::vector<const CustomUnit*> zh;
+    for (auto& u : units)
+        if (u.zh) zh.push_back(&u);
+    int end = s + static_cast<int>(zh.size());
+    // what was typed of its first part (before its first ·) is the pick; what a pick there kept goes on with it
+    int head = 0;
+    for (auto& u : units) {
+        if (!u.zh || head == typed) break;
+        ++head;
+    }
+    std::pair<int, int> by{s, std::max(head, 1)};
+    Overrides kept;
+    for (auto& [sp, v] : overrides_) {
+        if (!(sp.first + sp.second <= s || sp.first >= end)) continue;
+        Pin w = v;
+        if (w.kept && !(w.by.first + w.by.second <= s || w.by.first >= end)) w.by = by;
+        kept[sp] = w;
+    }
+    overrides_ = std::move(kept);
+    Pin first;
+    for (int i = 0; i < by.second && i < static_cast<int>(zh.size()); ++i) {
+        first.first.push_back(zh[i]->reading);
+        first.second.push_back(zh[i]->ch);
+    }
+    overrides_[by] = first;
+    int idx = s, run_start = -1;
+    Pin run;
+    auto flush = [&]() {
+        if (run_start >= 0) {
+            run.kept = true;
+            run.by = by;
+            overrides_[{run_start, static_cast<int>(run.second.size())}] = run;
+        }
+        run = Pin();
+        run_start = -1;
+    };
+    for (auto& u : units) {
+        if (!u.zh) {
+            flush();
+            continue;
+        }
+        if (idx >= s + by.second) {
+            if (run_start < 0) run_start = idx;
+            run.first.push_back(u.reading);
+            run.second.push_back(u.ch);
+        }
+        ++idx;
+    }
+    flush();
+}
+
+std::optional<Composer::Action> Composer::name_completion() {
+    // a character's name whose first parts (2+ characters) end what is typed, shown as written there, from where
+    // a word starts on screen (see engine/composer.py _name_completion): Action{type "name", s its first syllable,
+    // text the name as written, units from s, l the units typed}
+    if (tokens.empty() || tokens.back().kind != Kind::Zh) return std::nullopt;
+    int b = static_cast<int>(readings.size());
+    // a word of the dictionary going on from where a part starts, or before it, keeps the next character
+    // (巴基斯 -> 坦 of 巴基斯坦, not 基斯·艾洛·溫德米爾)
+    std::vector<Action> nxt = next_char();
+    int since = nxt.empty() ? b : nxt[0].s;
+    std::optional<std::tuple<int, double, int>> best_rank;
+    std::optional<Action> best;
+    for (auto& seg : segments_) {
+        int s = seg.start;
+        if (b - s < 2 || since <= s) continue;
+        std::vector<ustr> rds(readings.begin() + s, readings.begin() + b);
+        const auto& starts = lexicon_.name_starts(rds);
+        if (starts.empty()) continue;
+        ustr typed;
+        for (int i = s; i < b; ++i) typed.push_back(composition[syl_offset(i)]);
+        bool word = false;
+        for (auto& [p, score] : lexicon_.lookup(rds))
+            if (p == typed && score > NAME_SCORE) word = true;
+        if (word) continue;
+        for (size_t order = 0; order < starts.size(); ++order) {
+            const NameStart& n = starts[order];
+            if (n.typed != typed) continue;
+            std::tuple<int, double, int> rank{s, -user.custom_picks.count(n.written), static_cast<int>(order)};
+            if (!best_rank || rank < *best_rank) {
+                best_rank = rank;
+                Action act;
+                act.type = "name";
+                act.s = s;
+                act.text = n.written;
+                act.units = n.rest;
+                act.l = static_cast<int>(n.typed.size());
+                best = act;
+            }
+        }
+    }
+    return best;
+}
+
+void Composer::dot_name(int s, int l, const ustr& written) {
+    // a character's name picked whole: written with its · (see engine/composer.py _dot_name): its first part a
+    // pick, the rest kept with it
+    std::vector<int> cuts;
+    std::vector<CustomUnit> units;
+    int at = s, first = -1;
+    for (char32_t c : written) {
+        CustomUnit u;
+        u.ch = c;
+        if (c == U'·') {
+            u.lit = true;
+            cuts.push_back(at);
+            if (first < 0) first = at - s;
+        } else {
+            u.zh = true;
+            u.reading = at < static_cast<int>(readings.size()) ? readings[at] : ustr();
+            ++at;
+        }
+        units.push_back(u);
+    }
+    // (as it was shown before the pick)
+    std::map<int, char32_t> shown;
+    for (auto& seg : segments_)
+        if (static_cast<int>(seg.phrase.size()) == seg.length)
+            for (int k = 0; k < seg.length; ++k) shown[seg.start + k] = seg.phrase[k];
+    int head = first < 0 ? at - s : first;
+    pin_name(s, units, head);
+    // what follows in the run stays as shown: after the · it is read anew (see engine/composer.py _dot_name)
+    int end = s + l, run_end = end;
+    for (auto& [a, b] : runs_)
+        if (a <= s && s < b) run_end = b;
+    std::pair<int, int> by{s, head};
+    for (int k = end; k < run_end; ++k) {
+        auto it = shown.find(k);
+        if (it == shown.end()) continue;
+        bool covered = false;
+        for (auto& [sp, v] : overrides_)
+            if (sp.first <= k && k < sp.first + sp.second) covered = true;
+        std::vector<ustr> rd{readings[k]};
+        if (covered || !lexicon_.has(rd, ustr(1, it->second))) continue;
+        Pin p;
+        p.first = rd;
+        p.second = ustr(1, it->second);
+        p.kept = true;
+        p.by = by;
+        overrides_[{k, 1}] = p;
+    }
+    // (a NAME_MARK_KEY is no syllable: the picks, numbered by syllable, stay as they are - splice would drop
+    // those after it)
+    const Overrides keep_overrides = overrides_;
+    const auto keep_replaced = replaced_;
+    std::vector<int> zh;
+    for (auto& t : tokens)
+        if (t.kind == Kind::Zh) zh.push_back(t.start);
+    for (auto it = cuts.rbegin(); it != cuts.rend(); ++it) {  // (from the right: an insertion moves what is after it)
+        int pos = zh[*it];
+        splice(pos, pos, std::string(1, NAME_MARK_KEY));
+        fixed_[pos] = {pos + 1, U"·"};
+    }
+    overrides_ = keep_overrides;
+    replaced_ = keep_replaced;
+}
+
+void Composer::take_name(const Action& action) {
+    // Tab on a character's name: written whole as the list writes it, counted
+    int k = 0, start = -1;
+    for (auto& t : tokens)
+        if (t.kind == Kind::Zh && k++ == action.s) {
+            start = t.start;
+            break;
+        }
+    if (start < 0) return;
+    take_units(start, action.units, action.l);
+    user.custom_picks.record(action.text);
 }
 
 void Composer::take_suggestion() {
     const Action action = sugg_actions_[sugg_index];
     if (action.type == "custom") {
         take_custom(action);
+    } else if (action.type == "name") {
+        take_name(action);
     } else if (action.type == "word") {
         int start = action.start;
         if (caps_lock_ && !user.custom_english.count(lower(action.word))) {
@@ -2711,7 +2921,8 @@ bool Composer::open_candidates() {
         std::vector<ustr> part(readings.begin() + s0, readings.begin() + s0 + l);
         for (auto& [p, _] : phrase_candidates(part, lexicon_, &user, true)) {
             if (seen.insert(p).second) {
-                labels.push_back(p);
+                const ustr* written = lexicon_.name_written(p);  // (a character's name with its ·: #14)
+                labels.push_back(written ? *written : p);
                 Action act;
                 act.type = "phrase";
                 act.s = s0;
@@ -2808,6 +3019,22 @@ bool Composer::open_candidates() {
         if (std::find(labels.begin(), labels.end(), text) == labels.end()) {
             labels.push_back(text);
             actions.push_back(*typed);
+        }
+    }
+    // names whose first 2+ characters read as those from the caret to the end (艾連 -> 艾連·葉卡, 我愛 -> 我愛羅),
+    // last, at most NAME_LIST_MAX: picked, written whole as Tab writes them (#14; the user's call 2026-11-13)
+    if (c < n && run && run->second == n && !tokens.empty() && tokens.back().kind == Kind::Zh) {
+        std::vector<ustr> rds(readings.begin() + t, readings.begin() + n);
+        for (const NameStart& ns : lexicon_.name_prefixes(rds, NAME_LIST_MAX)) {
+            if (std::find(labels.begin(), labels.end(), ns.written) != labels.end()) continue;
+            Action act;
+            act.type = "name";
+            act.s = t;
+            act.text = ns.written;
+            act.units = ns.rest;
+            act.l = static_cast<int>(ns.typed.size());
+            labels.push_back(ns.written);
+            actions.push_back(act);
         }
     }
     // 映射詞彙 with a Chinese shortcut (牛逼 -> nb): what it stands for comes first
@@ -3189,6 +3416,8 @@ void Composer::replacement_bar(std::vector<ustr>& out_labels, std::vector<Action
     int from = tok_offset(start), to = tok_offset(end);
     ustr shown = composition.substr(from, to - from);
     if (tok->kind == Kind::Fix) {
+        // (the · of a character's name: its key is none the user typed, #14)
+        if (tok->raw == std::string(1, NAME_MARK_KEY) && tok->value == U"·") return;
         // back to the character the keys read as (ㄧㄝˋ -> 頁: the ASUS IME offers only
         // that), else to the keys as typed
         auto found = reads_as_chinese(start, start, end, {}, {}, false, {}, start);
@@ -3535,7 +3764,9 @@ void Composer::pick(int i, bool from_bar) {
         ustr there;
         for (int k = s; k < s + l; ++k)
             if (auto it = shown.find(k); it != shown.end()) there += it->second;
-        if (there != action.text) {  // (what is there already: nothing to do)
+        const ustr* written = lexicon_.name_written(action.text);
+        // (what is there already: nothing to do - but a character's name shown without its ·, #14)
+        if (there != action.text || written) {
             Overrides kept;  // drop overrides overlapped by the new pick, and what an earlier pick there kept
             for (auto& [sp, v] : overrides_)
                 if ((sp.first + sp.second <= s || sp.first >= s + l) &&
@@ -3547,6 +3778,7 @@ void Composer::pick(int i, bool from_bar) {
             drop_orphans();
             keep_rest(s, l);
             keep_before(s, l, shown_then, false);
+            if (written && overrides_.count({s, l})) dot_name(s, l, *written);
         }
         picked = {s, l};
     } else if (action.type == "chinese") {
@@ -3635,6 +3867,11 @@ void Composer::pick(int i, bool from_bar) {
         cand_actions_.clear();
         pick_syllable(action);
         return;
+    } else if (action.type == "name") {  // (a character's name from the list: as Tab writes it)
+        candidates.clear();
+        cand_actions_.clear();
+        take_name(action);
+        caret_.reset();
     } else if (action.type == "bare" || action.type == "shortcut") {
         if (action.type == "bare") learn_zhuyin_text(action.text);
         int start = action.start;

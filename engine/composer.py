@@ -898,8 +898,24 @@ SPAN_MAX = 4              # characters from the first to the last pick learned a
 # an ordinary sentence the same picks taught pieces of it (鍵變慢, 語料裡常, 會用進 - and with 鍵變慢 a word,
 # 逐漸變慢 read 築鍵變慢; measured, docs/superpowers/items/19/odd_words.py and the review of 2026-11-12)
 SURNAMES = frozenset("陳林黃張李王吳劉蔡楊許鄭謝洪郭邱曾廖賴徐周葉蘇莊呂江何蕭羅高潘簡朱鍾游彭詹胡施沈余盧梁趙顏柯翁魏孫戴范方宋鄧杜傅侯曹薛丁卓阮馬董溫唐藍石蔣古紀姚連馮歐程湯田康姜白汪鄒尤巫鐘黎涂龔嚴韓袁金童陸夏柳邵錢伍倪于譚駱熊任甘秦顧毛章史萬俞雷饒闕凌崔尹孔辛武辜陶易段龍韋葛池孟褚殷麥賀賈莫文管關向包丘梅裴樊房佘左花魯安鮑郝穆翟常申岳齊喬祁談司諸上官令狐皇甫尉遲端木")
-CUSTOM_MIN_WEIGHT = 3     # 自訂詞彙's words come whole as the Tab hint once this much of one is typed: a letter or
+NAME_SCORE = -7.0         # names.txt's score (tools/build_names.py SCORE): a word scored above it typed is no name's
+                          # start for the Tab hint (時光 of 時光青志, #14)
+NAME_LIST_MAX = 30        # names a start leads to at the end of the candidate list, at most (田中 starts many)
+NAME_MARK_KEY = "="       # the key a character's name written by Tab keeps for its · (shown as it: fixed); no
+                          # zhuyin key (C++ keeps the keys in bytes)
+CUSTOM_MIN_WEIGHT = 3    # 自訂詞彙's words come whole as the Tab hint once this much of one is typed: a letter or
                           # digit 1, a Chinese character 2 (PQC, 大谷, AI功, 阿Q - the user's call, #13)
+
+
+def _after_typed(units, typed):
+    """Where a name's units (Lexicon.name_starts) go on past its first `typed` characters: the rest of the
+    name is units[_after_typed(...):] (·葉卡 of 艾連·葉卡, 2 typed)."""
+    n = 0
+    for i, u in enumerate(units):
+        if n == typed:
+            return i
+        n += u[0] == "zh"
+    return len(units)
 
 
 def phrase_candidates(readings, lexicon, user=None, names=False):
@@ -1762,6 +1778,12 @@ class Composer:
             self.suggestions = ["".join(u[1] if u[0] == "k" else u[2] for u in units[done:])]
             self._sugg_actions = [custom]
             return
+        name = self._name_completion()
+        if name:
+            _, _, _, units, done = name
+            self.suggestions = ["".join(u[2] if u[0] == "zh" else u[1] for u in units[_after_typed(units, done):])]
+            self._sugg_actions = [name]
+            return
         actions = []
         last = self.tokens[-1] if self.tokens else None
         # remembered e-mail addresses / English words: the word being typed is a prefix
@@ -1899,12 +1921,20 @@ class Composer:
         units = next((u for t, u in self.user.custom_entries if t == text), None)
         if units is None:
             return
-        keys = [u[1] if u[0] == "k" else self.table.reading_to_keys(u[1]) for u in units]
-        # (as an edit from start: what was picked or taken from the bar there goes - the word is written as it is)
+        self._take_units(start, units)
+        self.user.custom_picks.record(text)
+
+    def _take_units(self, start, units, name_typed=None):
+        """The keys from raw offset start to the end replaced by those of units (自訂詞彙's, and ("lit", ch) of a
+        character's name: a NAME_MARK_KEY shown as ch), its English kept English, its Chinese characters fixed as
+        written (as an edit from start: what was picked or taken from the bar there goes). name_typed: a character's
+        name, its first name_typed characters typed (_pin_name)."""
+        keys = [u[1] if u[0] == "k" else NAME_MARK_KEY if u[0] == "lit" else self.table.reading_to_keys(u[1])
+                for u in units]
         self._splice(start, len(self.raw), "".join(keys))
         pos, prev, runs = start, None, []
         for u, k in zip(units, keys):
-            kind = "zh" if u[0] == "zh" else "space" if u[1] == " " else "en"
+            kind = u[0] if u[0] in ("zh", "lit") else "space" if u[1] == " " else "en"
             if kind != prev:
                 if prev is not None:
                     self.breaks.add(pos)
@@ -1916,17 +1946,126 @@ class Composer:
                 self.chinese.add(pos)
                 runs[-1][1].append(u[1])
                 runs[-1][2].append(u[2])
+            elif kind == "lit":
+                self.fixed[pos] = (pos + len(k), u[1])
             pos += len(k)
             prev = kind
         self._refresh()
+        if name_typed is not None:
+            self._pin_name(sum(1 for t in self.tokens if t.kind == "zh" and t.start < start), units, name_typed)
+            return
         for at, readings, chars in runs:
             self._pin(sum(1 for t in self.tokens if t.kind == "zh" and t.start < at), readings, chars)
-        self.user.custom_picks.record(text)
+
+    def _pin_name(self, s, units, typed):
+        """A character's name written from syllable s (units as _take_units'): what was typed of its first part
+        (up to `typed` characters, before its first ·) a pick, learned when sent; the rest kept with it, fixed but
+        not learned (葉卡 of 艾連·葉卡: the user's call 2026-11-13 - only what was typed is remembered, and a pick
+        never reaches across a ·). What a pick there kept around it goes on, kept with this one."""
+        zh = [u for u in units if u[0] == "zh"]
+        end = s + len(zh)
+        first = 0
+        for u in units:
+            if u[0] != "zh" or first == typed:
+                break
+            first += 1
+        by = (s, max(first, 1))
+        self.overrides = {sp: v if len(v) == 2 or v[3][0] + v[3][1] <= s or v[3][0] >= end else v[:3] + (by,)
+                          for sp, v in self.overrides.items() if sp[0] + sp[1] <= s or sp[0] >= end}
+        self.overrides[by] = (tuple(u[1] for u in zh[:by[1]]), "".join(u[2] for u in zh[:by[1]]))
+        runs, run, idx = [], [], s
+        for u in units:
+            if u[0] != "zh":
+                run = []
+                continue
+            if idx >= s + by[1]:
+                if not run:
+                    runs.append(run)
+                run.append((idx, u))
+            idx += 1
+        for run in runs:
+            self.overrides[(run[0][0], len(run))] = (tuple(u[1] for _, u in run), "".join(u[2] for _, u in run),
+                                                     KEPT, by)
+
+    def _name_completion(self):
+        """A character's name whose first parts (2+ characters) end what is typed, shown as written there, from
+        where a word starts on screen (#14): ("name", first syllable, the name as written, units from that
+        syllable), or None. Not when those parts are a word of the dictionary scored above the names
+        (時光, 漩渦: the next character as ever - the user's call). Of several: the longest typed, then the most
+        taken with Tab, then names.txt's order."""
+        if not self.tokens or self.tokens[-1].kind != "zh":
+            return None
+        b = len(self.readings)
+        # a word of the dictionary going on from where a part starts, or before it, keeps the next character
+        # (巴基斯 -> 坦 of 巴基斯坦, not 基斯·艾洛·溫德米爾: measured 2026-11-13)
+        nxt = self._next_char()
+        since = nxt[0][1] if nxt else b
+        best = None
+        for s, _, _ in self.segments:
+            if b - s < 2 or since <= s:
+                continue
+            readings = self.readings[s:b]
+            starts = self.lexicon.name_starts(readings)
+            if not starts:
+                continue
+            typed = "".join(self.composition[self._syl_offset(i)] for i in range(s, b))
+            if any(p == typed and score > NAME_SCORE for p, score in self.lexicon.lookup(readings)):
+                continue
+            for order, (prefix, written, rest) in enumerate(starts):
+                if prefix != typed:
+                    continue
+                rank = (s, -self.user.custom_picks.count(written), order)
+                if best is None or rank < best[0]:
+                    units = list(rest)
+                    best = (rank, ("name", s, written, units, len(prefix)))
+        return best[1] if best else None
+
+    def _dot_name(self, s, l, written):
+        """A character's name picked whole (艾連葉卡, syllables s..s+l): written with its · (艾連·葉卡) - a
+        NAME_MARK_KEY shown as it between its parts (a pick never reaches across what is not a syllable): its
+        first part a pick, the rest kept with it (_pin_name: only that part is remembered, no ·)."""
+        parts, at = written.split("·"), s
+        cuts, units = [], []
+        for k, part in enumerate(parts):
+            units += [("zh", r, ch) for r, ch in zip(self.readings[at:at + len(part)], part)]
+            at += len(part)
+            if k + 1 < len(parts):
+                cuts.append(at)
+                units.append(("lit", "·"))
+        shown = _chars(self.segments)  # (as it was shown before the pick)
+        self._pin_name(s, units, len(parts[0]))
+        # what follows in the run stays as shown: after the · it is read anew, from the name's last part (艾連葉卡和三立
+        # picked as 艾連·葉卡 read 葉卡河三立)
+        end = s + l
+        run_end = next((b for a, b in self.runs if a <= s < b), end)
+        by = (s, len(parts[0]))
+        for k in range(end, run_end):
+            if k in shown and not any(a <= k < a + n for a, n in self.overrides) \
+                    and self.lexicon.has([self.readings[k]], shown[k]):
+                self.overrides[(k, 1)] = ((self.readings[k],), shown[k], KEPT, by)
+        # (a NAME_MARK_KEY is no syllable: the picks, numbered by syllable, stay as they are - _splice would drop
+        # those after it)
+        overrides, replaced = dict(self.overrides), dict(self.replaced)
+        zh = [t.start for t in self.tokens if t.kind == "zh"]
+        for c in reversed(cuts):  # (from the right: an insertion moves what is after it)
+            pos = zh[c]
+            self._splice(pos, pos, NAME_MARK_KEY)
+            self.fixed[pos] = (pos + len(NAME_MARK_KEY), "·")
+        self.overrides, self.replaced = overrides, replaced
+
+    def _take_name(self, action):
+        """Tab on a character's name (_name_completion): written whole as the list writes it, counted."""
+        _, s, written, units, typed = action
+        start = [t.start for t in self.tokens if t.kind == "zh"][s]
+        self._take_units(start, units, name_typed=typed)
+        self.user.custom_picks.record(written)
 
     def _take_suggestion(self):
         action = self._sugg_actions[self.sugg_index]
         if action[0] == "custom":
             self._take_custom(action)
+        elif action[0] == "name":
+            self._take_name(action)
         elif action[0] == "word":
             _, start, word = action
             if self.caps_lock and word.lower() not in self.user.custom_english:
@@ -2115,7 +2254,7 @@ class Composer:
             for p, _ in phrase_candidates(self.readings[s_:s_ + l], self.lexicon, self.user, names=True):
                 if p not in seen:
                     seen.add(p)
-                    labels.append(p)
+                    labels.append(self.lexicon.name_written.get(p, p))  # (a character's name with its ·: #14)
                     actions.append(("phrase", s_, l, p))
         tok = [x for x in self.tokens if x.kind == "zh"][t]
         if tok.corrected == "valid":
@@ -2158,6 +2297,15 @@ class Composer:
         if typed and self._as_typed(last.start, last.raw) not in labels:
             labels.append(self._as_typed(last.start, last.raw))
             actions.append(typed)
+        # names whose first 2+ characters read as those from the caret to the end (艾連 -> 艾連·葉卡, 我愛 -> 我愛羅),
+        # last, at most NAME_LIST_MAX: picked, written whole as Tab writes them (#14; the user's call 2026-11-13)
+        if c < n and b == n and self.tokens[-1].kind == "zh":
+            for prefix, written, rest in self.lexicon.name_prefixes(self.readings[t:b], NAME_LIST_MAX):
+                if written not in labels:
+                    labels.append(written)
+                    actions.append(("name", t, written,
+                                    list(rest),
+                                    len(prefix)))
         # 映射詞彙 with a Chinese shortcut (牛逼 -> nb): what it stands for comes first
         mapped = [(text, action) for text, action in zip(*self._chinese_shortcuts()) if text not in labels]
         labels = [text for text, _ in mapped] + labels
@@ -2186,6 +2334,8 @@ class Composer:
         end = tok.start + len(tok.raw)
         shown = self.composition[self._tok_offset(tok.start):self._tok_offset(end)]
         if tok.kind == "fix":
+            if tok.raw == NAME_MARK_KEY and tok.value == "·":
+                return labels, actions  # (the · of a character's name: its key is none the user typed, #14)
             # back to the character the keys read as (ㄧㄝˋ -> 頁: the ASUS IME offers only
             # that), else to the keys as typed
             found = self._reads_as_chinese(tok.start, tok.start, end, unfix=tok.start)
@@ -2674,7 +2824,8 @@ class Composer:
         if action[0] == "phrase":
             _, s, l, p = action
             there = {a + k: q[k] for a, b, q in self.segments if len(q) == b for k in range(b)}
-            if "".join(there.get(k, "") for k in range(s, s + l)) != p:  # (what is there already: nothing to do)
+            # (what is there already: nothing to do - but a character's name shown without its ·, #14)
+            if "".join(there.get(k, "") for k in range(s, s + l)) != p or p in self.lexicon.name_written:
                 # drop overrides overlapped by the new pick, and what an earlier pick there kept
                 self.overrides = {sp: v for sp, v in self.overrides.items()
                                   if (sp[0] + sp[1] <= s or sp[0] >= s + l)
@@ -2684,6 +2835,8 @@ class Composer:
                 self._drop_orphans()
                 self._keep_rest(s, l)
                 self._keep_before(s, l, shown)
+            if p in self.lexicon.name_written and (s, l) in self.overrides:
+                self._dot_name(s, l, self.lexicon.name_written[p])
             picked = (s, l)
         elif action[0] == "chinese":
             _, start, first, readings, p, whole, unlit, unforce, force, unchinese = action
@@ -2756,6 +2909,10 @@ class Composer:
             self.candidates, self._cand_actions = [], []
             self._pick_syllable(action)
             return
+        elif action[0] == "name":  # (a character's name from the list: as Tab writes it)
+            self.candidates, self._cand_actions = [], []
+            self._take_name(action)
+            self.caret = None
         elif action[0] in ("bare", "shortcut"):
             _, start, symbols_ = action
             if action[0] == "bare":

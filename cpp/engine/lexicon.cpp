@@ -48,21 +48,149 @@ Lexicon::Lexicon(const std::wstring& path) {
     // (phrase_candidates(..., names = true)); bigram.bin numbers the dictionary's words alone.
     std::wstring names_path = path.substr(0, path.find_last_of(L"\\/") + 1) + L"names.txt";
     std::string names_text;
-    if (read_file(names_path, names_text)) {
-        size_t at = 0;
-        while (at < names_text.size()) {
-            size_t nl = names_text.find('\n', at);
-            if (nl == std::string::npos) nl = names_text.size();
-            std::string_view line(names_text.data() + at, nl - at);
-            at = nl + 1;
-            size_t t1 = line.find('\t');
-            size_t t2 = t1 == std::string_view::npos ? t1 : line.find('\t', t1 + 1);
-            if (t2 == std::string_view::npos) continue;
-            names_[from_utf8(line.substr(0, t1))].emplace_back(
-                from_utf8(line.substr(t1 + 1, t2 - t1 - 1)), std::strtod(std::string(line.substr(t2 + 1)).c_str(), nullptr));
+    if (read_file(names_path, names_text)) add_names(names_text);
+    ok_ = true;
+}
+
+static bool name_han(char32_t c) { return (c >= 0x3400 && c <= 0x9FFF) || (c >= 0xF900 && c <= 0xFAFF); }
+
+// the units of a name as written in names.txt (#14): its characters with their readings, · (lit), letters; the |
+// between a Japanese family and given name is none (see engine/lexicon.py _name_units)
+static std::vector<CustomUnit> name_units(const std::vector<ustr>& syls, const ustr& written) {
+    std::vector<CustomUnit> units;
+    size_t n = 0;
+    for (char32_t c : written) {
+        if (c == U'|') continue;
+        CustomUnit u;
+        u.ch = c;
+        if (name_han(c)) {
+            u.zh = true;
+            u.reading = n < syls.size() ? syls[n] : ustr();
+            ++n;
+        } else {
+            u.lit = c == U'·';
+        }
+        units.push_back(u);
+    }
+    return units;
+}
+
+void Lexicon::add_names(std::string_view text) {
+    size_t at = 0;
+    while (at < text.size()) {
+        size_t nl = text.find('\n', at);
+        if (nl == std::string::npos) nl = text.size();
+        std::string_view line(text.data() + at, nl - at);
+        at = nl + 1;
+        if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+        size_t t1 = line.find('\t');
+        size_t t2 = t1 == std::string_view::npos ? t1 : line.find('\t', t1 + 1);
+        if (t2 == std::string_view::npos) continue;
+        size_t t3 = line.find('\t', t2 + 1);
+        ustr reading = from_utf8(line.substr(0, t1));
+        ustr name = from_utf8(line.substr(t1 + 1, t2 - t1 - 1));
+        double score = std::strtod(std::string(line.substr(t2 + 1, t3 == std::string_view::npos ? std::string_view::npos
+                                                                                               : t3 - t2 - 1)).c_str(), nullptr);
+        ustr written = t3 == std::string_view::npos ? name : from_utf8(line.substr(t3 + 1));
+        bool ascii = std::any_of(written.begin(), written.end(), [](char32_t c) {  // letters (蒙其·D·魯夫; | is none)
+            return (c >= U'A' && c <= U'Z') || (c >= U'a' && c <= U'z');
+        });
+        auto& lst = names_[reading];
+        if (!ascii && std::none_of(lst.begin(), lst.end(), [&](const Scored& s) { return s.first == name; }))
+            lst.emplace_back(name, score);
+        ustr shown;
+        for (char32_t c : written)
+            if (c != U'|') shown += c;
+        if (!ascii && written.find(U'·') != ustr::npos) name_written_.emplace(name, shown);
+        name_rows_.emplace_back(reading, written);
+        name_prefix_built_ = false;
+        // the parts and the marks between them
+        std::vector<ustr> parts(1);
+        std::vector<char32_t> marks;
+        for (char32_t c : written) {
+            if (c == U'·' || c == U'|') {
+                marks.push_back(c);
+                parts.emplace_back();
+            } else {
+                parts.back() += c;
+            }
+        }
+        if (parts.size() < 2) continue;
+        std::vector<ustr> syls = split(reading, U'-');
+        std::vector<CustomUnit> units = name_units(syls, written);
+        size_t done = 0;
+        ustr typed;
+        for (size_t k = 0; k + 1 < parts.size(); ++k) {  // the first k + 1 parts typed
+            const ustr& part = parts[k];
+            if (part.empty() || !std::all_of(part.begin(), part.end(), name_han)) break;
+            done += part.size();
+            typed += part;
+            if (typed.size() < 2) continue;
+            ustr key;
+            for (size_t i = 0; i < done && i < syls.size(); ++i) {
+                if (i) key += U'-';
+                key += syls[i];
+            }
+            auto& starts = name_starts_[key];
+            if (std::none_of(starts.begin(), starts.end(), [&](const NameStart& n) { return n.written == shown; }))
+                starts.push_back({typed, shown, units});
         }
     }
-    ok_ = true;
+}
+
+const std::vector<NameStart>& Lexicon::name_starts(const std::vector<ustr>& readings) const {
+    static const std::vector<NameStart> none;
+    ustr key;
+    for (size_t i = 0; i < readings.size(); ++i) {
+        if (i) key += U'-';
+        key += readings[i];
+    }
+    auto it = name_starts_.find(key);
+    return it == name_starts_.end() ? none : it->second;
+}
+
+std::vector<NameStart> Lexicon::name_prefixes(const std::vector<ustr>& readings, size_t limit) const {
+    std::vector<NameStart> out;
+    if (readings.size() < 2) return out;
+    auto key_of = [](const std::vector<ustr>& syls, size_t n) {
+        ustr key;
+        for (size_t i = 0; i < n; ++i) {
+            if (i) key += U'-';
+            key += syls[i];
+        }
+        return key;
+    };
+    if (!name_prefix_built_) {  // built on first use: a list opened at a name's start
+        name_prefix_.clear();
+        for (size_t row = 0; row < name_rows_.size(); ++row) {
+            std::vector<ustr> syls = split(name_rows_[row].first, U'-');
+            size_t han = std::count_if(name_rows_[row].second.begin(), name_rows_[row].second.end(), name_han);
+            for (size_t k = 2; k < std::min(han, syls.size()); ++k)
+                name_prefix_[key_of(syls, k)].emplace_back(static_cast<int>(row), static_cast<int>(k));
+        }
+        name_prefix_built_ = true;
+    }
+    auto it = name_prefix_.find(key_of(readings, readings.size()));
+    if (it == name_prefix_.end()) return out;
+    std::unordered_set<ustr> seen;
+    for (auto [row, k] : it->second) {
+        const auto& [reading, written] = name_rows_[row];
+        NameStart ns;
+        for (char32_t c : written)
+            if (c != U'|') ns.written += c;
+        if (!seen.insert(ns.written).second) continue;
+        ns.rest = name_units(split(reading, U'-'), written);
+        for (auto& u : ns.rest)
+            if (u.zh && static_cast<int>(ns.typed.size()) < k) ns.typed += u.ch;
+        out.push_back(std::move(ns));
+        if (out.size() >= limit) break;
+    }
+    return out;
+}
+
+const ustr* Lexicon::name_written(const ustr& name) const {
+    auto it = name_written_.find(name);
+    return it == name_written_.end() ? nullptr : &it->second;
 }
 
 const std::vector<Scored>* Lexicon::names_find(const ustr& key) const {

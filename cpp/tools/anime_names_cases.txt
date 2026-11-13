@@ -1,0 +1,31 @@
+# 動漫角色的名字 (#14): data/names.txt has the characters of Chinese Wikipedia's 角色列表 articles
+# typed whole, the name comes out (as candidates below the dictionary's words: 潔世一 is picked over 結識一)
+z/ xk4cjo6{ENTER} => 蜂樂迴
+53t/6g4x;6{ENTER} => 凪誠士郎
+m4u/3xu/6j;6{ENTER} => 御影玲王
+ji3fu g04u4{ENTER} => 我妻善逸
+yjo3qu/6u 5 5j4{ENTER} => 嘴平伊之助
+ru,6g4u {HOME}{DOWN}{ENTER}{ENTER} => 潔世一
+# a part of a name shown as written (艾連 picked over 愛憐) leads to the rest with Tab; the next time 艾連 comes
+# out at once (only the part typed is remembered); 竈門 -> 炭治郎; 宇智波 -> 佐助 (the family others of the list
+# share: うちはサスケ gives none); letters (蒙其 -> ·D·魯夫)
+94xu06{HOME}{DOWN}{DOWN}{ENTER}{END}{TAB}{ENTER} => 艾連·葉卡
+94xu06{TAB}{ENTER} => 艾連·葉卡
+yl4ap6{TAB}{ENTER} => 竈門炭治郎
+m354qi {TAB}{ENTER} => 宇智波佐助
+a/6fu6{HOME}{DOWN}{ENTER}{END}{TAB}{ENTER} => 蒙其·D·魯夫
+a/6fu6{TAB}{ENTER} => 蒙其·D·魯夫
+# 我愛 of 我愛羅 (no whole part) and 時光 (a word of the dictionary) lead to the next character as ever
+ji394{TAB}{ENTER} => 我愛你
+g6ej; {TAB}{ENTER} => 時光緒
+# a word of the dictionary going on from a part (巴基斯坦 over 基斯·艾洛·溫德米爾) keeps the next character
+18 ru n {TAB}{ENTER} => 巴基斯坦
+# the whole name picked from the list gets its ·; the list ends with the names a start of 2+ characters leads to
+94xu06u,4d83{HOME}{DOWN}{ENTER}{ENTER} => 艾連·葉卡
+ji394{HOME}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER} => 我愛羅
+# ...and keeps what follows as shown; typed over a ·, every · is written
+94xu06u,4d83ck6n0 xu4{HOME}{DOWN}{ENTER}{ENTER} => 艾連·葉卡和三立
+xji4fu6vu au3ek6xj42u6u83{TAB}{ENTER} => 洛琪希·米格路迪亞·格雷拉特
+# everyday sentences stay as they were
+ji3cp3vu3cj0 d042j/4cj84{ENTER} => 我很喜歡看動畫
+rup wu0 wu0 fu4cp3cl3{ENTER} => 今天天氣很好

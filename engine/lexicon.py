@@ -2,6 +2,7 @@
 import json
 import math
 import os
+import re
 import time
 
 MAX_PHRASE_LEN = 8
@@ -16,6 +17,21 @@ def _is_han(text):
 def _toneless(reading_key):
     """ㄒㄧㄚˋ-ㄗㄞˋ -> ㄒㄧㄚ-ㄗㄞ"""
     return "-".join(s.rstrip("ˊˇˋ˙") for s in reading_key.split("-"))
+
+
+def _name_units(syls, written):
+    """The units of a name as written in names.txt (#14): ("zh", reading, character), ("lit", "·"), ("k", letter);
+    the | between a Japanese family and given name is none."""
+    units, n = [], 0
+    for ch in written:
+        if ch == "|":
+            continue
+        if _is_han(ch):
+            units.append(("zh", syls[n] if n < len(syls) else "", ch))
+            n += 1
+        else:
+            units.append(("lit", ch) if ch == "·" else ("k", ch))
+    return units
 
 
 class Lexicon:
@@ -41,12 +57,84 @@ class Lexicon:
         # for converting only (phrase_candidates(..., names=True)), not words for the English / zhuyin
         # judgment, 注音自動校正 or completions, and bigram.bin numbers the dictionary's words alone.
         self.names = {}
+        # Characters' names come with the way they are written (a fourth column, #14): 艾連·葉卡, 竈門|炭治郎.
+        self.name_written = {}  # Han characters -> as written with its dots (艾連葉卡 -> 艾連·葉卡)
+        self._name_starts = {}  # reading key of a name's first parts -> [(those parts, written, rest units)]
+        self._name_rows = []  # (reading key, written) of every name, names.txt's order (name_prefixes)
+        self._name_prefix = None  # reading key of a name's first 2+ characters -> [(row, characters)], on first use
         names_path = os.path.join(os.path.dirname(path), "names.txt")
         if os.path.isfile(names_path):
             with open(names_path, encoding="utf-8") as f:
-                for line in f:
-                    reading, name, score = line.rstrip("\n").split("\t")
-                    self.names.setdefault(reading, []).append((name, float(score)))
+                self.add_names(f)
+
+    def add_names(self, lines):
+        """Lines of names.txt: "reading<TAB>name<TAB>score", a character's with "<TAB>written" too - its Han
+        characters as name, written with · between the parts of a foreign name (and letters: 蒙其·D·魯夫), | between
+        a Japanese family and given name. A name written with letters is no candidate (they are not typed as
+        its reading); one part or more of 2+ characters typed leads to the rest (name_starts)."""
+        for line in lines:
+            cols = line.rstrip("\n").split("\t")
+            reading, name, score = cols[0], cols[1], float(cols[2])
+            written = cols[3] if len(cols) > 3 else name
+            lst = self.names.setdefault(reading, [])
+            letters = any(c.isascii() and c.isalpha() for c in written)  # (蒙其·D·魯夫: | is no letter)
+            if not letters and all(p != name for p, _ in lst):
+                lst.append((name, score))
+            if "·" in written and not letters:
+                self.name_written.setdefault(name, written.replace("|", ""))
+            self._name_rows.append((reading, written))
+            self._name_prefix = None
+            parts = re.split(r"([·|])", written)  # parts and the marks between them
+            if len(parts) < 3:
+                continue
+            syls = reading.split("-")
+            shown = written.replace("|", "")
+            units = _name_units(syls, written)
+            done, typed = 0, ""
+            for k in range(0, len(parts) - 2, 2):  # the first k/2 + 1 parts typed
+                part = parts[k]
+                if not _is_han(part):
+                    break
+                done += len(part)
+                typed += part
+                if len(typed) < 2:
+                    continue
+                key = "-".join(syls[:done])
+                starts = self._name_starts.setdefault(key, [])
+                if all(w != shown for _, w, _ in starts):
+                    starts.append((typed, shown, units))
+
+    def name_starts(self, readings):
+        """[(the first parts of a name as typed, the name as written, its units)] for these readings being a
+        name's first parts (#14): units of the whole name as 自訂詞彙's (("zh", reading, character), ("k", letters))
+        and ("lit", "·"). In names.txt's order."""
+        return self._name_starts.get("-".join(readings), [])
+
+    def name_prefixes(self, readings, limit):
+        """[(the name's first characters, the name as written, its units)] of the names (people's and
+        characters') whose first 2+ characters read as these, at most `limit`, names.txt's order: for the
+        candidate list (我愛 -> 我愛羅; the user's call 2026-11-13 - any start, not only a whole part as for Tab)."""
+        if len(readings) < 2:
+            return []
+        if self._name_prefix is None:  # built on first use: a list opened at a name's start
+            self._name_prefix = {}
+            for row, (reading, written) in enumerate(self._name_rows):
+                syls = reading.split("-")
+                han = sum(1 for ch in written if _is_han(ch))
+                for k in range(2, min(han, len(syls))):
+                    self._name_prefix.setdefault("-".join(syls[:k]), []).append((row, k))
+        out, seen = [], set()
+        for row, k in self._name_prefix.get("-".join(readings), ()):
+            reading, written = self._name_rows[row]
+            shown = written.replace("|", "")
+            if shown in seen:
+                continue
+            seen.add(shown)
+            units = _name_units(reading.split("-"), written)
+            out.append(("".join(u[2] for u in units if u[0] == "zh")[:k], shown, units))
+            if len(out) >= limit:
+                break
+        return out
 
     def lookup(self, readings):
         return self.entries.get("-".join(readings), [])

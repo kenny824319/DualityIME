@@ -160,6 +160,7 @@ private:
         std::set<int> unchinese;  // "chinese": places cut at before, read across now
         std::string word;  // "word" suggestions (ASCII)
         ustr reading;      // "next": its reading
+        std::vector<CustomUnit> units;  // "name": the name's units from syllable s (#14)
     };
     struct Undo {
         std::string raw;
@@ -196,6 +197,11 @@ private:
     std::optional<Action> custom_completion();  // 自訂詞彙 typed to its start (#13): see engine/composer.py
     bool shown_as(int s, const std::vector<CustomUnit>& units, const std::vector<std::string>& keys, int done) const;
     void take_custom(const Action& action);
+    void take_units(int start, const std::vector<CustomUnit>& units, int name_typed = -1);
+    void pin_name(int s, const std::vector<CustomUnit>& units, int typed);
+    std::optional<Action> name_completion();  // a character's name typed to a part (#14): see engine/composer.py
+    void take_name(const Action& action);
+    void dot_name(int s, int l, const ustr& written);
     void take_suggestion();
     enum class PinWay { None, Chars, Phrase };
     PinWay pin_way(const std::vector<ustr>& rds, const std::vector<ustr>& chars) const;

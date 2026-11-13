@@ -4,11 +4,12 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from engine import DEFAULTS, Config, composer, create_composer  # noqa: E402
-from engine.lexicon import FORGET_DAYS, UserModel  # noqa: E402
+from engine.lexicon import FORGET_DAYS, Lexicon, UserModel  # noqa: E402
 from engine.zhuyin import KEYMAP, TONES, SyllableTable  # noqa: E402
 
 # The tests of other features run with 長句選字加強 off (LongSentenceTest turns it on itself):
@@ -2310,6 +2311,73 @@ class KnownHardTest(Base):
         self.assertEqual(self.type(keys("ㄨㄛˇ ㄗㄞˋ ㄧ ㄘˋ ㄕˋ ㄕˋ")), "我再一次試試")
 
 
+class NameStartsTest(unittest.TestCase):
+    """Characters' names with the way they are written (data/names.txt's fourth column, #14): the whole name a
+    candidate when it has no letters; its first parts (艾連 of 艾連·葉卡, 竈門 of 竈門|炭治郎) lead to the rest."""
+
+    @staticmethod
+    def bare():
+        """The dictionary with no names (data/names.txt has these characters too)."""
+        lex = Lexicon()
+        lex.names, lex.name_written, lex._name_starts = {}, {}, {}
+        return lex
+
+    @classmethod
+    def setUpClass(cls):
+        cls.lex = cls.bare()
+        cls.lex.add_names(["ㄞˋ-ㄌㄧㄢˊ-ㄧㄝˋ-ㄎㄚˇ\t艾連葉卡\t-7.0000\t艾連·葉卡",
+                           "ㄇㄥˊ-ㄑㄧˊ-ㄌㄨˇ-ㄈㄨ\t蒙其魯夫\t-7.0000\t蒙其·D·魯夫",
+                           "ㄗㄠˋ-ㄇㄣˊ-ㄊㄢˋ-ㄓˋ-ㄌㄤˊ\t竈門炭治郎\t-7.0000\t竈門|炭治郎",
+                           "ㄐㄧㄝˊ-ㄕˋ-ㄧ\t潔世一\t-7.0000\t潔|世一",
+                           "ㄨㄛˇ-ㄞˋ-ㄌㄨㄛˊ\t我愛羅\t-7.0000\t我愛羅",
+                           "ㄌㄨㄛˋ-ㄑㄧˊ-ㄒㄧ-ㄇㄧˇ-ㄍㄜˊ-ㄌㄨˋ-ㄉㄧˊ-ㄧㄚˋ\t洛琪希米格路迪亞\t-7.0000\t洛琪希·米格路迪亞",
+                           "ㄌㄨㄛˋ-ㄑㄧˊ-ㄒㄧ-ㄇㄧˇ-ㄍㄜˊ-ㄌㄨˋ-ㄉㄧˊ-ㄧㄚˋ-ㄍㄜˊ-ㄌㄟˊ-ㄌㄚ-ㄊㄜˋ\t洛琪希米格路迪亞格雷拉特"
+                           "\t-7.0000\t洛琪希·米格路迪亞·格雷拉特",
+                           "ㄞˋ-ㄌㄧㄢˊ\t艾連\t-7.0000\t艾連"])
+
+    def test_dotted(self):
+        (prefix, written, units), = self.lex.name_starts(["ㄞˋ", "ㄌㄧㄢˊ"])
+        self.assertEqual((prefix, written), ("艾連", "艾連·葉卡"))
+        self.assertEqual(units, [("zh", "ㄞˋ", "艾"), ("zh", "ㄌㄧㄢˊ", "連"), ("lit", "·"), ("zh", "ㄧㄝˋ", "葉"),
+                                 ("zh", "ㄎㄚˇ", "卡")])
+
+    def test_family_given(self):
+        (prefix, written, units), = self.lex.name_starts(["ㄗㄠˋ", "ㄇㄣˊ"])
+        self.assertEqual((prefix, written), ("竈門", "竈門炭治郎"))
+        self.assertEqual([u[2] for u in units], list("竈門炭治郎"))
+
+    def test_letters_in_rest_not_a_candidate(self):
+        (_, written, units), = self.lex.name_starts(["ㄇㄥˊ", "ㄑㄧˊ"])
+        self.assertEqual(written, "蒙其·D·魯夫")
+        self.assertEqual(units[2:5], [("lit", "·"), ("k", "D"), ("lit", "·")])
+        self.assertNotIn("蒙其魯夫", [p for p, _ in self.lex.names.get("ㄇㄥˊ-ㄑㄧˊ-ㄌㄨˇ-ㄈㄨ", [])])
+
+    def test_two_parts_typed(self):
+        starts = self.lex.name_starts("ㄌㄨㄛˋ ㄑㄧˊ ㄒㄧ ㄇㄧˇ ㄍㄜˊ ㄌㄨˋ ㄉㄧˊ ㄧㄚˋ".split())
+        self.assertEqual([(p, w) for p, w, _ in starts], [("洛琪希米格路迪亞", "洛琪希·米格路迪亞·格雷拉特")])
+        self.assertEqual([w for _, w, _ in self.lex.name_starts(["ㄌㄨㄛˋ", "ㄑㄧˊ", "ㄒㄧ"])],
+                         ["洛琪希·米格路迪亞", "洛琪希·米格路迪亞·格雷拉特"])
+
+    def test_not_a_part(self):
+        self.assertEqual(self.lex.name_starts(["ㄨㄛˇ", "ㄞˋ"]), [])      # 我愛 of 我愛羅
+        self.assertEqual(self.lex.name_starts(["ㄐㄧㄝˊ"]), [])           # 潔 of 潔|世一: one character
+        self.assertEqual(self.lex.name_starts(["ㄞˋ", "ㄌㄧㄢˊ", "ㄧㄝˋ", "ㄎㄚˇ"]), [])  # the whole name
+
+    def test_whole_names_are_candidates_once(self):
+        names = self.lex.names["ㄞˋ-ㄌㄧㄢˊ-ㄧㄝˋ-ㄎㄚˇ"]
+        self.assertEqual([p for p, _ in names].count("艾連葉卡"), 1)
+        self.assertIn(("艾連", -7.0), self.lex.names["ㄞˋ-ㄌㄧㄢˊ"])
+        self.assertIn(("竈門炭治郎", -7.0), self.lex.names["ㄗㄠˋ-ㄇㄣˊ-ㄊㄢˋ-ㄓˋ-ㄌㄤˊ"])
+        self.assertEqual(self.lex.name_written["艾連葉卡"], "艾連·葉卡")
+        self.assertNotIn("竈門炭治郎", self.lex.name_written)
+
+    def test_old_lines_unchanged(self):
+        lex = self.bare()
+        lex.add_names(["ㄨˇ-ㄊㄧㄠˊ-ㄨˋ\t五條悟\t-7.0000", "ㄨˇ-ㄊㄧㄠˊ-ㄨˋ\t五條悟\t-7.0000\t五條悟"])
+        self.assertEqual([p for p, _ in lex.names["ㄨˇ-ㄊㄧㄠˊ-ㄨˋ"]].count("五條悟"), 1)
+        self.assertEqual(lex.name_starts(["ㄨˇ", "ㄊㄧㄠˊ"]), [])
+
+
 class NamesTest(Base):
     """Names of well-known people and characters (data/names.txt, tools/build_names.py): candidates
     for converting only, the dictionary's words first (2026-11-09 design)."""
@@ -2426,6 +2494,279 @@ class NamesTest(Base):
         self.assertEqual(c.composition, "大谷")
         self.assertNotEqual(c.suggestions[:1], ["翔"])
         c.key(special="ESC")
+
+
+class NameCompletionTest(unittest.TestCase):
+    """A character's name (data/names.txt from the 角色列表 articles, #14) typed to one of its parts, shown as
+    written there, comes whole as the Tab hint (艾連 -> ·葉卡), not when that part is a word of the dictionary
+    (時光); picked whole from the list it is written with its · (docs/superpowers/specs/2026-11-13-anime-names-design.md)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.c = create_composer(os.path.join(self.tmp.name, "user.json"))
+        self.c.config.values = dict(DEFAULTS)
+        self.c.config.set(long_sentence=True)  # (as typed for real)
+        self.c.settings_changed()
+
+    def typed(self, zhuyin):
+        for ch in keys(zhuyin):
+            self.c.key(ch)
+        return self.c.suggestions
+
+    def pick_from(self, back, label):
+        """The caret `back` characters to the left, ↓, the candidate `label`."""
+        c = self.c
+        for _ in range(back):
+            c.key(special="LEFT")
+        c.key(special="DOWN")
+        self.assertIn(label, c.candidates)
+        c._pick(c.candidates.index(label))
+        c.key(special="END")
+
+    def shown(self, zhuyin, want):
+        """Typed, and want made to show (picked over the whole of it when it does not)."""
+        self.typed(zhuyin)
+        if self.c.composition != want:
+            self.pick_from(len(want), want)
+        self.assertEqual(self.c.composition, want)
+
+    def test_after_picking_the_part(self):
+        c = self.c
+        self.shown("ㄞˋ ㄌㄧㄢˊ", "艾連")
+        self.assertEqual(c.suggestions, ["·葉卡"])
+        c.key(special="TAB")
+        self.assertEqual(c.composition, "艾連·葉卡")
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "艾連·葉卡")
+
+    def test_remembered_next_time(self):
+        c = self.c
+        self.shown("ㄞˋ ㄌㄧㄢˊ", "艾連")
+        c.key(special="ENTER")
+        self.typed("ㄞˋ ㄌㄧㄢˊ")
+        self.assertEqual(c.composition, "艾連")
+        self.assertEqual(c.suggestions, ["·葉卡"])
+
+    def test_family_name(self):
+        c = self.c
+        self.shown("ㄗㄠˋ ㄇㄣˊ", "竈門")
+        self.assertEqual(c.suggestions, ["炭治郎"])
+        c.key(special="TAB")
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "竈門炭治郎")
+
+    def test_family_name_shared_in_the_list(self):
+        # (re-check 2026-11-13: うちはサスケ gives no split; 宇智波 is the family of 宇智波佐助, 宇智波鼬... in the list)
+        c = self.c
+        self.shown("ㄩˇ ㄓˋ ㄆㄛ", "宇智波")
+        self.assertEqual(c.suggestions, ["佐助"])  # (the well known first: 宇智波佐助 is among the Wikidata names)
+
+    def test_letters(self):
+        c = self.c
+        self.shown("ㄇㄥˊ ㄑㄧˊ", "蒙其")
+        self.assertEqual(c.suggestions, ["·D·魯夫"])
+        c.key(special="TAB")
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "蒙其·D·魯夫")
+
+    def test_not_a_part(self):
+        # (我愛羅 is one part: 我愛 typed leads to no name)
+        self.assertIn("ㄨㄛˇ-ㄞˋ-ㄌㄨㄛˊ", self.c.lexicon.names)
+        self.assertNotEqual(self.typed("ㄨㄛˇ ㄞˋ"), ["羅"])
+
+    def test_word_of_the_dictionary(self):
+        # (時光 of 時光青志, 田中 of 田中信玄: the next character as ever - the user's call)
+        for zhuyin, part in (("ㄕˊ ㄍㄨㄤ", "時光"), ("ㄊㄧㄢˊ ㄓㄨㄥ", "田中")):
+            with self.subTest(part=part):
+                self.assertTrue(self.c.lexicon.name_starts(zhuyin.split()))
+                self.c.reset()
+                got = self.typed(zhuyin)
+                self.assertEqual(self.c.composition, part)
+                with unittest.mock.patch.object(self.c.lexicon, "name_starts", return_value=[]):
+                    self.c.reset()
+                    self.assertEqual(self.typed(zhuyin), got)
+
+    def test_start_of_a_word_of_the_dictionary(self):
+        # (measured 2026-11-13: 巴基斯 of 巴基斯·艾洛·溫德米爾 took the Tab hint from 坦 of 巴基斯坦 - a word of the
+        # dictionary starting with what is typed keeps the next character)
+        c = self.c
+        self.assertTrue(c.lexicon.name_starts(["ㄐㄧ", "ㄙ"]))  # (基斯·艾洛·溫德米爾)
+        got = self.typed("ㄅㄚ ㄐㄧ ㄙ")
+        self.assertEqual(c.composition, "巴基斯")
+        self.assertEqual(got, ["坦"])
+
+    def test_from_where_a_word_starts(self):
+        # (a part that starts inside a word shown is none: 加藤 at the end of 增加藤 if 增加 is one word)
+        c = self.c
+        fake = [("加藤", "加藤·測試", [("lit", "·"), ("zh", "ㄘㄜˋ", "測"), ("zh", "ㄕˋ", "試")])]
+        lookup = c.lexicon.lookup  # (加藤 no word of the dictionary here: only where it starts counts)
+        with unittest.mock.patch.object(c.lexicon, "name_starts",
+                                        side_effect=lambda r: fake if r == ["ㄐㄧㄚ", "ㄊㄥˊ"] else []), \
+                unittest.mock.patch.object(c.lexicon, "lookup",
+                                           side_effect=lambda r: [] if r == ["ㄐㄧㄚ", "ㄊㄥˊ"] else lookup(r)):
+            self.typed("ㄗㄥ ㄐㄧㄚ ㄊㄥˊ")
+            self.assertEqual(c.composition, "增加藤")
+            self.assertTrue(all(s != 1 for s, _, _ in c.segments))
+            self.assertNotEqual(c.suggestions, ["·測試"])
+
+    def test_custom_word_first(self):
+        c = self.c
+        with open(os.path.join(self.tmp.name, "dictionary.json"), "w", encoding="utf-8") as f:
+            json.dump({"words": [["艾連老師", "ㄞˋ ㄌㄧㄢˊ ㄌㄠˇ ㄕ"]], "shortcuts": []}, f, ensure_ascii=False)
+        c.user.reload_custom()
+        self.shown("ㄞˋ ㄌㄧㄢˊ", "艾連")
+        self.assertEqual(c.suggestions, ["老師"])
+
+    def test_most_taken_first(self):
+        c = self.c
+        starts = c.lexicon.name_starts(["ㄞˋ", "ㄌㄧㄢˊ"])
+        self.assertGreater(len(starts), 1, [w for _, w, _ in starts])
+        second = starts[1]
+        c.user.custom_picks.record(second[1])
+        self.shown("ㄞˋ ㄌㄧㄢˊ", "艾連")
+        self.assertEqual(c.suggestions, ["".join(u[2] if u[0] == "zh" else u[1]
+                                                for u in second[2][composer._after_typed(second[2], 2):])])
+
+    def test_typed_on_differently(self):
+        c = self.c
+        self.shown("ㄞˋ ㄌㄧㄢˊ", "艾連")
+        self.typed("ㄉㄜ˙")
+        self.assertNotEqual(c.suggestions, ["·葉卡"])
+
+    def test_backspace_after_name_tab(self):
+        c = self.c
+        self.shown("ㄞˋ ㄌㄧㄢˊ", "艾連")
+        c.key(special="TAB")
+        for _ in range(3):
+            c.key(special="BACK")
+        self.assertEqual(c.composition, "艾連")
+        self.typed("ㄉㄜ˙")
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "艾連的")
+
+    def test_name_tab_memory_has_no_dot(self):
+        c = self.c
+        self.shown("ㄞˋ ㄌㄧㄢˊ", "艾連")
+        c.key(special="TAB")
+        c.key(special="ENTER")
+        c.user.save()
+        with open(os.path.join(self.tmp.name, "user.json"), encoding="utf-8") as f:
+            text = f.read()
+        self.assertNotIn("·", text)
+        # (only what was typed is remembered: the user's call 2026-11-13)
+        self.assertEqual(json.loads(text)["phrases"], {"ㄞˋ-ㄌㄧㄢˊ": {"艾連": 1}})
+
+    def memory(self):
+        self.c.user.save()
+        with open(os.path.join(self.tmp.name, "user.json"), encoding="utf-8") as f:
+            return json.load(f)["phrases"]
+
+    def test_pick_whole_dotted_name_keeps_the_rest(self):
+        # (review 2026-11-13: the · put in dropped every pick after it - 艾連葉卡和三立 became 艾連·葉卡河三立)
+        c = self.c
+        self.typed("ㄞˋ ㄌㄧㄢˊ ㄧㄝˋ ㄎㄚˇ ㄏㄜˊ ㄙㄢ ㄌㄧˋ")
+        before = c.composition
+        c.key(special="HOME")
+        c.key(special="DOWN")
+        c._pick(c.candidates.index("艾連·葉卡"))
+        self.assertEqual(c.composition, "艾連·葉卡" + before[4:])
+        self.assertIn((2, 2), c.overrides)  # (葉卡 fixed with 艾連)
+
+    def test_tab_over_two_parts(self):
+        # (洛琪希·米格路迪亞 typed: both dots written, only the first part remembered)
+        c = self.c
+        self.typed("ㄌㄨㄛˋ ㄑㄧˊ ㄒㄧ ㄇㄧˇ ㄍㄜˊ ㄌㄨˋ ㄉㄧˊ ㄧㄚˇ")
+        self.assertEqual(c.suggestions, ["·格雷拉特"])
+        c.key(special="TAB")
+        self.assertEqual(c.composition, "洛琪希·米格路迪亞·格雷拉特")
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "洛琪希·米格路迪亞·格雷拉特")
+        self.assertEqual(self.memory(), {"ㄌㄨㄛˋ-ㄑㄧˊ-ㄒㄧ": {"洛琪希": 1}})
+
+    def test_list_pick_across_a_dot(self):
+        c = self.c
+        self.typed("ㄞˋ ㄌㄧㄢˊ ㄧㄝˋ")
+        c.key(special="HOME")
+        c.key(special="DOWN")
+        c._pick(c.candidates.index("艾連·葉卡"))
+        self.assertEqual(c.composition, "艾連·葉卡")
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "艾連·葉卡")
+        self.assertEqual(self.memory(), {"ㄞˋ-ㄌㄧㄢˊ": {"艾連": 1}})
+
+    def test_bar_at_the_dot_offers_no_mark_key(self):
+        # (the key a name keeps for its · is no key the user typed: the bar has nothing for it)
+        c = self.c
+        self.shown("ㄞˋ ㄌㄧㄢˊ", "艾連")
+        c.key(special="TAB")
+        for _ in range(3):
+            c.key(special="LEFT")
+        self.assertEqual(c.replacements, [])
+
+    def test_whole_name_picked_remembers_its_first_part(self):
+        c = self.c
+        self.typed("ㄞˋ ㄌㄧㄢˊ ㄧㄝˋ ㄎㄚˇ")
+        self.pick_from(4, "艾連·葉卡")
+        c.key(special="ENTER")
+        c.user.save()
+        with open(os.path.join(self.tmp.name, "user.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["phrases"], {"ㄞˋ-ㄌㄧㄢˊ": {"艾連": 1}})
+
+    def test_list_has_whole_names(self):
+        # (the user's call 2026-11-13: 艾連 typed, the list has 艾連·葉卡 too, after all the rest)
+        c = self.c
+        self.typed("ㄞˋ ㄌㄧㄢˊ")
+        c.key(special="HOME")
+        c.key(special="DOWN")
+        self.assertIn("艾連·葉卡", c.candidates)
+        at = c.candidates.index("艾連·葉卡")
+        self.assertLess(c.candidates.index("艾連"), at)
+        self.assertTrue(all(a[0] == "name" for a in c._cand_actions[at:]))
+        c._pick(at)
+        self.assertEqual(c.composition, "艾連·葉卡")
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "艾連·葉卡")
+        self.typed("ㄞˋ ㄌㄧㄢˊ")
+        self.assertEqual(c.composition, "艾連")
+        self.assertEqual(c.suggestions, ["·葉卡"])
+
+    def test_list_any_start(self):
+        # (the list takes any start of 2+ characters, people's names too: 我愛 -> 我愛羅 - the user's call
+        # 2026-11-13; the Tab hint keeps to whole parts)
+        c = self.c
+        self.typed("ㄨㄛˇ ㄞˋ")
+        c.key(special="HOME")
+        c.key(special="DOWN")
+        self.assertIn("我愛羅", c.candidates)
+        self.assertEqual(c._cand_actions[c.candidates.index("我愛羅")][0], "name")
+        c._pick(c.candidates.index("我愛羅"))
+        self.assertEqual(c.composition, "我愛羅")
+        c.reset()
+        self.typed("ㄊㄧㄢˊ ㄈㄨˋ")  # (a person of names.txt; 周杰倫 is a word of the dictionary: not here)
+        c.key(special="HOME")
+        c.key(special="DOWN")
+        self.assertIn("田馥甄", c.candidates)
+        c.reset()
+        self.typed("ㄊㄧㄢˊ ㄓㄨㄥ")
+        c.key(special="HOME")
+        c.key(special="DOWN")
+        self.assertLessEqual(sum(1 for a in c._cand_actions if a[0] == "name"), composer.NAME_LIST_MAX)
+        c.reset()
+        c.reset()
+        self.typed("ㄕˊ ㄍㄨㄤ")
+        c.key(special="HOME")
+        c.key(special="DOWN")
+        self.assertIn("時光|青志".replace("|", ""), c.candidates)
+        self.assertEqual(c._cand_actions[-1][0], "name")
+
+    def test_pick_whole_dotted_name(self):
+        c = self.c
+        self.typed("ㄞˋ ㄌㄧㄢˊ ㄧㄝˋ ㄎㄚˇ")
+        self.pick_from(4, "艾連·葉卡")  # (the list shows it with its ·: the user's call 2026-11-13)
+        self.assertEqual(c.composition, "艾連·葉卡")
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "艾連·葉卡")
 
 
 class CustomPredictionTest(unittest.TestCase):

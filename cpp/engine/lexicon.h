@@ -24,6 +24,23 @@ struct Completion {
     double score;
 };
 
+// a unit of a Chinese or mixed word of 自訂詞彙: a key (letter, digit, space, - or ') or a Chinese character
+struct CustomUnit {
+    bool zh = false;
+    char32_t ch = 0;  // the key, or the character
+    ustr reading;     // the character's syllable
+    bool lit = false; // a character written as it is, typed by no key (the · of a character's name, #14)
+    bool operator==(const CustomUnit& o) const {
+        return zh == o.zh && ch == o.ch && reading == o.reading && lit == o.lit;
+    }
+};
+// A character's name whose first parts are typed (#14): see engine/lexicon.py name_starts
+struct NameStart {
+    ustr typed;                    // those parts (艾連)
+    ustr written;                  // the name as written (艾連·葉卡)
+    std::vector<CustomUnit> rest;  // the units of the whole name: 艾, 連, ·, 葉, 卡
+};
+
 class Lexicon {
 public:
     explicit Lexicon(const std::wstring& path);
@@ -51,11 +68,26 @@ public:
     // Names of well-known people (names.txt beside the dictionary) for a reading key, or nullptr:
     // not in entries(), for converting only
     const std::vector<Scored>* names_find(const ustr& key) const;
+    // Lines of names.txt (a character's with the way it is written as a fourth column, #14): see
+    // engine/lexicon.py add_names
+    void add_names(std::string_view text);
+    // the names whose first parts are these readings (艾連 of 艾連·葉卡), names.txt's order
+    const std::vector<NameStart>& name_starts(const std::vector<ustr>& readings) const;
+    // a name's Han characters -> as written with its dots (艾連葉卡 -> 艾連·葉卡), or nullptr
+    const ustr* name_written(const ustr& name) const;
+    // the names whose first 2+ characters read as these (我愛 -> 我愛羅), at most limit, names.txt's order: for the
+    // candidate list (see engine/lexicon.py name_prefixes)
+    std::vector<NameStart> name_prefixes(const std::vector<ustr>& readings, size_t limit) const;
 
 private:
     bool ok_ = false;
     std::unordered_map<ustr, std::vector<Scored>> entries_;
     std::unordered_map<ustr, std::vector<Scored>> names_;
+    std::unordered_map<ustr, ustr> name_written_;
+    std::unordered_map<ustr, std::vector<NameStart>> name_starts_;
+    std::vector<std::pair<ustr, ustr>> name_rows_;  // (reading key, written) of every name, names.txt's order
+    mutable bool name_prefix_built_ = false;
+    mutable std::unordered_map<ustr, std::vector<std::pair<int, int>>> name_prefix_;  // -> (row, characters)
     std::vector<ustr> order_;
     std::unordered_map<ustr, double> reading_mass_;
     mutable bool by_start_built_ = false;
@@ -91,13 +123,7 @@ bool is_one_key(const std::string& raw);  // one letter or digit key, with or wi
 bool is_custom_english(const std::string& word);  // an English word the user can add to 自訂詞彙 (iPhone15 too)
 // a word of 自訂詞彙 mixing Chinese with English letters or digits (PQC技法的ABC功能): see engine/lexicon.py
 bool is_custom_mixed(const ustr& word);
-// a unit of a Chinese or mixed word of 自訂詞彙: a key (letter, digit, space, - or ') or a Chinese character
-struct CustomUnit {
-    bool zh = false;
-    char32_t ch = 0;  // the key, or the character
-    ustr reading;     // the character's syllable
-    bool operator==(const CustomUnit& o) const { return zh == o.zh && ch == o.ch && reading == o.reading; }
-};
+// (CustomUnit: above Lexicon)
 // zhuyin symbols (and tone marks), at least one symbol: ㄅㄨㄚ, ㄏㄏ, ㄍㄢˋ
 bool is_zhuyin_text(const ustr& text);
 inline const ustr ZHUYIN_TEXT = U"~";  // phrases["~ㄅㄨㄚ"]: 注音文 picked (its keys spell no syllable), counted
