@@ -102,7 +102,7 @@ std::string wide_utf8(const std::wstring& w) {
 Json cfg_json(const Config& c) {
     // what the IME needs to know of the settings; 自訂外觀 (#22) with the folder its photos are in
     Json o = Json::object();
-    for (const char* k : {"shift_toggle", "start_mode", "lookup", "game_mode", "space", "full_width", "ctrl_full_punct",
+    for (const char* k : {"shift_toggle", "start_mode", "lookup", "game_keys", "space", "full_width", "ctrl_full_punct",
                           "cand_font", "cand_font_size", "cand_per_row", "theme", "appearance"})
         if (auto* v = c.values().get(k)) o[k] = *v;
     o["appearance_dir"] = Json(wide_utf8(g->dir + L"appearance"));

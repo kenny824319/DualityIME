@@ -21,7 +21,8 @@ DEFAULTS = {
     "import_memory": 0,         # bumped by the settings tool after it put import-memory.json next to user.json
     "lookup": True,             # 框選查詢: select text, tap Ctrl twice
     "lookup_size": "small",     # its window: "small", "medium", "large"
-    "game_mode": False,         # 遊戲模式: in games (Windows' list, exclusive full screen) keys go straight through
+    "game_keys": True,          # 遊戲中 Shift 交給遊戲 (#31): in games (Windows' list, exclusive full screen) keys go straight
+                                # through unless the focus has a caret; off: games are typed in like any program
     "cand_font": "Microsoft JhengHei UI",
     "cand_font_size": 18,
     "cand_per_row": 1,          # 1 = vertical list, 9 = one row (written on with cand_layout, for versions before it)

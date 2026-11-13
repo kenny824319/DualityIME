@@ -12,7 +12,9 @@
 # -QuickFill quick_fill_sample.json: the test engine's quick_fill.json (快速填入; else none)
 # -Images folder: its files become the test engine's appearance folder (自訂外觀's photos; else none)
 param($Script = "$PSScriptRoot\tsf_test.txt", $Mode = "", $SaveTo = "", $Config = "", $User = "", $Dictionary = "", $QuickFill = "",
-      $Images = "")
+      $Images = "", [switch]$Game)
+# -Game: the test window counts as a game for the run (遊戲中 Shift 交給遊戲, #31): the test program is put in Windows'
+#   list of games (HKCU\System\GameConfigStore\Children\DualityIME-e2e) and taken out of it again afterwards
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $build = Join-Path $PSScriptRoot "..\build"
 $installed = Join-Path $env:ProgramFiles "DualityIME\DualityIMEEngine.exe"
@@ -43,6 +45,12 @@ if ($Images) {
     Copy-Item (Join-Path $Images "*") (Join-Path $dir "appearance")
 }
 $code = 1
+$gameKey = "HKCU:\System\GameConfigStore\Children\DualityIME-e2e"
+if ($Game) {
+    $tester = (Resolve-Path (Join-Path $build "x64-Release\sz_tsftest.exe")).Path
+    New-Item -Path $gameKey -Force | Out-Null
+    New-ItemProperty -Path $gameKey -Name MatchedExeFullPath -Value $tester -PropertyType String -Force | Out-Null
+}
 # the cases are typed with Caps Lock off: turn it off for the test, back on afterwards
 Add-Type -Namespace SzE2e -Name Keys -MemberDefinition '[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, IntPtr extra);'
 function Press-CapsLock { [SzE2e.Keys]::keybd_event(0x14, 0x3A, 0, [IntPtr]::Zero); [SzE2e.Keys]::keybd_event(0x14, 0x3A, 2, [IntPtr]::Zero); Start-Sleep -Milliseconds 100 }
@@ -74,6 +82,7 @@ try {
     if ($ours.HasExited -or $others.Count) { "WARNING: another engine ran during the test: results are not valid" }
     else { $code = $p.ExitCode }
 } finally {
+    if ($Game) { Remove-Item -Path $gameKey -Recurse -Force -ErrorAction SilentlyContinue }  # (out of the list again)
     Get-Process DualityIMEEngine -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Milliseconds 300
     Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue

@@ -2339,6 +2339,22 @@ class KnownHardTest(Base):
         self.assertEqual(self.type(keys("ㄨㄛˇ ㄗㄞˋ ㄧ ㄘˋ ㄕˋ ㄕˋ")), "我再一次試試")
 
 
+class GameKeysConfigTest(unittest.TestCase):
+    """#31: 遊戲中 Shift 交給遊戲 is one setting, on as it comes (a new name: game_mode false is in many config files,
+    a default under that name would reach nobody); game_mode is gone."""
+
+    def test_default_on_and_the_old_one_gone(self):
+        self.assertIs(DEFAULTS["game_keys"], True)
+        self.assertNotIn("game_mode", DEFAULTS)
+
+    def test_an_old_config_keeps_it_on(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "config.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"game_mode": False}, f)
+            self.assertIs(Config(path).game_keys, True)
+
+
 class AppearanceConfigTest(unittest.TestCase):
     """自訂外觀 (#22, docs/superpowers/specs/2026-11-13-custom-appearance-design.md): one setting, an object; {} is
     the default look. The engine only keeps it (the IME draws it)."""

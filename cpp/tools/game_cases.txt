@@ -1,0 +1,14 @@
+# e2e-args: -Game
+# 遊戲中 Shift 交給遊戲 (#31), the test window counting as a game: where there is no text box (a plain window, no caret)
+# every key is the game's - a Shift tap too (a dash or a skill key: it switched to typing and the keys after it were
+# composed, the game looked frozen); in the text box (a caret) it is typed in as ever, Shift switching.
+# Each line fails without the fix (a run without -Game): keys that spell zhuyin (su3 你, cl3 好) would be composed, and
+# the Shift taps before the text box are odd in number, so it would be left in English
+{PLAIN}su3 => su3
+{PLAIN}{SHIFT}{SHIFT}su3 => su3
+{PLAIN}{SHIFT}su3{SHIFT}cl3 => su3cl3
+# a page with no text box (a TSF context marked empty, as a browser's): the game's too, a Shift tap switching nothing
+{PAGE}{SHIFT}jkl => jkl
+# ...so the text box is still in 中英混打 after those Shift taps
+su3cl3{ENTER} => 你好
+{SHIFT}ab{SHIFT}cl3{ENTER} => ab好

@@ -109,7 +109,7 @@ private:
         bool shift_toggle = true;
         std::string start_mode = "mixed";  // switching to the IME starts in "mixed" or "english"
         bool lookup = true;
-        bool game_mode = false;  // 遊戲模式: in games, keys go straight through
+        bool game_keys = true;  // 遊戲中 Shift 交給遊戲 (#31): in games, keys go straight through (not in a text box)
         std::string space = "half";
         bool full_width = false;
         bool ctrl_punct = true;  // Ctrl + a punctuation key types its full-width mark (the setting ctrl_full_punct)
@@ -127,7 +127,9 @@ private:
     bool wants_undo(WPARAM vk) const;
     bool is_width_key(WPARAM vk) const;
     bool other_modifier() const;
-    bool direct();   // 遊戲模式 and in a game (and not typing in its chat)
+    bool direct(ITfContext* ctx);   // 遊戲中 Shift 交給遊戲: in a game, not in a text box (nor typing there)
+    bool tsf_text_box(ITfContext* ctx);  // the focus is a text box of an app that talks TSF itself
+    bool caret_here() const;  // this thread's focus shows a caret (a text box Windows knows)
     bool in_game();  // this program is a game: one Windows knows (Game Bar), or exclusive full screen
     bool just_started() const;  // this program started under 2 minutes ago
     wchar_t char_of(WPARAM vk, LPARAM lp) const;
@@ -190,13 +192,12 @@ private:
 
     // Shift / Ctrl taps
     bool shift_alone_ = false, ctrl_alone_ = false;
-    // 遊戲模式
+    // 遊戲中 Shift 交給遊戲 (#31)
     std::wstring exe_path_;           // this program, lower case
     bool known_game_ = false;         // Windows lists it as a game
     ULONGLONG games_read_at_ = 0;     // ...when that list was last read
     bool full_screen_ = false;        // a Direct3D game in exclusive full screen
     ULONGLONG full_screen_at_ = 0;
-    bool game_typing_ = false;        // Shift tapped in a game: composing again (its chat)
     ULONGLONG shift_down_at_ = 0, ctrl_down_at_ = 0, ctrl_tapped_at_ = 0;
 
     // 拿回重選: what was sent last, where

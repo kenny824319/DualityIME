@@ -530,9 +530,48 @@ bool TextService::wants_undo(WPARAM) const {
     return false;
 }
 
-bool TextService::direct() {
-    // 遊戲模式: in a game keys go straight through, unless Shift was tapped to type in its chat
-    return in_game() && !game_typing_;
+bool TextService::direct(ITfContext* ctx) {
+    // 遊戲中 Shift 交給遊戲 (#31): in a game keys go straight through - Shift too, often a game's own key (dash, a
+    // skill: tapped, it switched to typing and the keys after it were composed, the game looked frozen) - unless
+    // the focus is a text box: there the game is typed in like any program. Not while something is being typed,
+    // the symbol keyboard or 快速填入 is open (it would stay on screen, nothing able to close it)
+    if (!state_.composition.empty() || state_.symbol_page >= 0 || state_.fill_open) return false;
+    return in_game() && !caret_here() && !tsf_text_box(ctx);
+}
+
+bool TextService::tsf_text_box(ITfContext* ctx) {
+    // a text box of an app that talks TSF itself (Chromium: a game's launcher, LoL's client - no caret of Windows'
+    // there, measured): a context not made for an older program (transitory) and not marked disabled or empty (a
+    // page, no text box). A game's own screen goes through the older layer: transitory, so not one
+    ComPtr<ITfContext> top;
+    if (!ctx) {
+        ComPtr<ITfDocumentMgr> doc;
+        if (!thread_mgr_ || FAILED(thread_mgr_->GetFocus(&doc)) || !doc || FAILED(doc->GetTop(&top)) || !top) return false;
+        ctx = top.Get();
+    }
+    // Chromium marks its text box transitory too, with "no hidden text" (TS_SS_NOHIDDENTEXT, 8): static 12 measured
+    // in Chrome's search box; an older program's window (a game's screen) is transitory alone (4, WinForms measured)
+    constexpr DWORD NO_HIDDEN_TEXT = 0x8;
+    TF_STATUS status{};
+    if (FAILED(ctx->GetStatus(&status))) return false;
+    if ((status.dwStaticFlags & TF_SS_TRANSITORY) && !(status.dwStaticFlags & NO_HIDDEN_TEXT)) return false;
+    ComPtr<ITfCompartmentMgr> mgr;
+    if (FAILED(ctx->QueryInterface(IID_PPV_ARGS(&mgr)))) return true;
+    for (const GUID* g : {&GUID_COMPARTMENT_KEYBOARD_DISABLED, &GUID_COMPARTMENT_EMPTYCONTEXT}) {
+        ComPtr<ITfCompartment> comp;
+        VARIANT v;
+        VariantInit(&v);
+        if (SUCCEEDED(mgr->GetCompartment(*g, &comp)) && SUCCEEDED(comp->GetValue(&v)) && v.vt == VT_I4 && v.lVal)
+            return false;
+    }
+    return true;
+}
+
+bool TextService::caret_here() const {
+    // (a caret of this thread: a classic text box; a game's own chat box or Chromium's draw theirs - measured
+    // 2026-11-13, docs/superpowers/items/31-game-shift.md)
+    GUITHREADINFO gti{sizeof gti};
+    return GetGUIThreadInfo(GetCurrentThreadId(), &gti) && gti.hwndCaret;
 }
 
 bool TextService::just_started() const {
@@ -545,7 +584,7 @@ bool TextService::just_started() const {
 }
 
 bool TextService::in_game() {
-    if (!cfg_.game_mode) return false;
+    if (!cfg_.game_keys) return false;
     ULONGLONG now = GetTickCount64();
     // the games Windows knows (Game Bar's list: HKCU\System\GameConfigStore\Children\*\MatchedExeFullPath).
     // Read on a key press, never on a timer: once, and again only while this program has just started
@@ -676,16 +715,8 @@ bool TextService::test_key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
     // a key while the focus is nowhere: not Excel's move into the cell (it is back before the next key),
     // so what was being typed ends there, as before
     if (away_doc_) leave_field();
-    if (direct()) {
-        // in a game: only a Shift tap matters (it starts typing in the game's chat, see key_up)
-        if (vk == VK_SHIFT && cfg_.shift_toggle && !other_modifier()) {
-            if (!shift_alone_) {
-                shift_alone_ = true;
-                shift_down_at_ = GetTickCount64();
-            }
-        } else {
-            shift_alone_ = false;
-        }
+    if (direct(ctx)) {
+        shift_alone_ = false;  // (in a game, not in a text box: every key is the game's, a Shift tap too)
         return false;
     }
     if (!get_compartment(GUID_COMPARTMENT_KEYBOARD_OPENCLOSE)) return false;  // keyboard turned off
@@ -707,7 +738,9 @@ bool TextService::test_key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
     if (vk != VK_SHIFT) state_.can_undo = false;  // the caret may have moved on
     // a Shift tap (down and quickly up, nothing else pressed) switches Chinese/English
     if (vk == VK_SHIFT && cfg_.shift_toggle && !other_modifier()) {
-        if (!shift_alone_) {  // ignore auto-repeat while Shift is held
+        // ignore auto-repeat while Shift is held (lp bit 30: held already - also when the tap's start was the
+        // game's: Shift held from a game's screen into its text box is no tap there)
+        if (!shift_alone_ && !(lp & (1 << 30))) {
             shift_alone_ = true;
             shift_down_at_ = now;
         }
@@ -831,14 +864,7 @@ void TextService::key_up(WPARAM vk) {
     // switch right here and let the Shift key-up go on to the app
     if (vk == VK_SHIFT && shift_alone_ && now - shift_down_at_ < SHIFT_TAP_MS && !other_modifier()) {
         shift_alone_ = false;
-        if (in_game() && state_.composition.empty() && state_.symbol_page < 0 && !state_.fill_open) {
-            // in a game: typing in its chat, or keys straight through again. Nothing shown at
-            // the caret: a window over a full-screen game can make it flicker or drop out of full screen
-            game_typing_ = !game_typing_;
-            debug(std::string("game mode: ") + (game_typing_ ? "typing" : "keys straight through"));
-        } else {
-            toggle_mode();
-        }
+        toggle_mode();  // (in a game only in a text box: elsewhere there it is the game's key, see direct)
     }
     shift_alone_ = false;
     if (vk == VK_CONTROL && ctrl_alone_ && cfg_.lookup) {
@@ -931,7 +957,7 @@ void TextService::read_reply(const Json& r) {
         cfg_.cand_font = wide(text("cand_font", "Microsoft JhengHei UI"));
         cfg_.cand_font_size = number("cand_font_size", 18);
         cfg_.cand_per_row = number("cand_per_row", 1);
-        cfg_.game_mode = flag("game_mode", false);
+        cfg_.game_keys = flag("game_keys", true);
         set_appearance_from(c->get("appearance"), wide(text("appearance_dir", "")));
     }
 }

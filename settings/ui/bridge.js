@@ -25,7 +25,7 @@ const api = (() => {
   const config = {
     autocorrect: false, long_sentence: true, punctuation: "half", space: "half", full_width: false, ctrl_full_punct: true,
     preview: "keys_hint", shift_toggle: true, start_mode: "mixed", completion: true, remember_words: true,
-    forget_words: 0, forget_emails: 0, lookup: true, lookup_size: "small", game_mode: false,
+    forget_words: 0, forget_emails: 0, lookup: true, lookup_size: "small", game_keys: true,
     cand_font: "Microsoft JhengHei UI", cand_font_size: 18, cand_per_row: 1,
     cand_layout: "", cand_keys: "123456789", cand_columns: 0, appearance: {}
   };

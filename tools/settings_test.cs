@@ -31,10 +31,12 @@ static class SettingsTest {
 
             call("setConfig", new Dictionary<string, object> { { "key", "preview" }, { "value", "zhuyin" } });
             call("setConfig", new Dictionary<string, object> { { "key", "cand_font_size" }, { "value", 22 } });
-            call("setConfig", new Dictionary<string, object> { { "key", "game_mode" }, { "value", true } });
+            call("setConfig", new Dictionary<string, object> { { "key", "game_keys" }, { "value", false } });
             var saved = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(Path.Combine(dir, "config.json"), Encoding.UTF8));
             Check("setConfig writes config.json", (string)saved["preview"] == "zhuyin" && (int)saved["cand_font_size"] == 22 &&
-                  (bool)saved["game_mode"], json.Serialize(saved));
+                  (bool)saved["game_keys"] == false, json.Serialize(saved));
+            Check("遊戲中 Shift 交給遊戲 is on as it comes, game_mode is gone (#31)",
+                  (bool)cfg["game_keys"] && !cfg.ContainsKey("game_mode"), json.Serialize(cfg));
 
             // the candidate list's layout and keys (#23): settings the tool knows, "" = by cand_per_row
             Check("candidate layout defaults", (string)cfg["cand_layout"] == "" && (string)cfg["cand_keys"] == "123456789" &&

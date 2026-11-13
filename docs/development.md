@@ -24,8 +24,9 @@
   分數的參數用 `tools/tune_english.py` 在英文單字、純注音句子與實測華碩的混打例子上調出來
 - **整句選字**：小麥注音的詞庫（約 14 萬個詞），加上從約 2 億字的維基百科與網頁文章統計出的「哪個詞後面常接哪個詞」（300 萬組詞對）
 - **框選查詢**與終端機裡的補字小框用 UI Automation 讀取選取的文字、找出游標所在的格子
-- **遊戲模式**認得的遊戲：遊戲列記得的（`HKCU\System\GameConfigStore`）和全螢幕獨佔執行的程式\
-  在遊戲裡輸入法不處理按鍵、也不切換模式（`cpp/tip/text_service.cpp` 的 `test_key_down`）；單按 Shift 只切換能不能在遊戲聊天框組字
+- **遊戲中 Shift 交給遊戲**認得的遊戲：遊戲列記得的（`HKCU\System\GameConfigStore`）和全螢幕獨佔執行的程式\
+  在遊戲裡輸入法不處理按鍵、單按 Shift 也不切換（`cpp/tip/text_service.cpp` 的 `direct`），除非焦點是文字框：有 Windows 的輸入游標（`caret_here`），
+  或是自己用 TSF 的程式的文字框（`tsf_text_box`：不是給舊程式的暫時文字框、沒標停用或空的，例如 LoL 客戶端）；打字中途、符號鍵盤或快速填入開著時也照常處理
 
 ## 檔案
 | 位置 | 內容 |

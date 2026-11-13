@@ -21,7 +21,7 @@ const Json& Config::defaults() {
         j["import_memory"] = Json(0);        // bumped by the settings tool after it put import-memory.json next to user.json
         j["lookup"] = Json(true);            // 框選查詢: select text, tap Ctrl twice
         j["lookup_size"] = Json("small");    // its window: "small", "medium", "large"
-        j["game_mode"] = Json(false);        // 遊戲模式: in games (Windows' list, exclusive full screen) keys go straight through
+        j["game_keys"] = Json(true);         // 遊戲中 Shift 交給遊戲 (#31): in games keys go straight through, but in a text box
         j["cand_font"] = Json("Microsoft JhengHei UI");
         j["cand_font_size"] = Json(18);
         j["cand_per_row"] = Json(1);         // 1 = vertical list, 9 = one row (written on with cand_layout)
