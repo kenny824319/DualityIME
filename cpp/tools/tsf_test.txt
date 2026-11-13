@@ -48,6 +48,8 @@ su3cl3{LEFT}{UP}{RIGHT}{ENTER}{ENTER} => 你c襖
 up {LEFT}{UP}{RIGHT}{RIGHT}{ENTER}{ENTER} => up 
 # Tab takes the hint
 w96{TAB}{ENTER} => 台灣
+# a next character only the word has under that reading (抹 is ㄇㄛˋ only in 拐彎抹角): Tab writes the word
+ej93j0 {TAB}{ENTER} => 拐彎抹角
 # English words go out with the space
 hello  => hello 
 # Shift tap: English, then Chinese again

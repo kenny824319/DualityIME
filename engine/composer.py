@@ -1836,7 +1836,10 @@ class Composer:
 
     def _next_char(self):
         """神 -> 奇: the character most likely to come next, judged from the
-        phrases that start with what was just typed (longest context first)."""
+        phrases that start with what was just typed (longest context first):
+        ("next", s, the characters, their readings). A character Tab could not fix there - its reading is
+        the dictionary's only inside the word (抹 is ㄇㄛˋ only in 拐彎抹角) - comes with the rest of the
+        likeliest of those words, Tab writing it whole (2026-11-13 user)."""
         run = self.runs[-1] if self.runs else None
         if not run or run[1] != len(self.readings):
             return []
@@ -1846,13 +1849,20 @@ class Composer:
             s = b - k
             typed = self.composition[self._syl_offset(s):self._syl_offset(s) + k]
             weight = {}  # (next char, its reading) -> summed probability of the phrases
+            likeliest = {}  # (next char, its reading) -> (probability, phrase, syllables) of its likeliest phrase
             for syls, p, score in self.lexicon.completions(self.readings[s:b]):
                 if p.startswith(typed) and len(p) == len(syls):
                     key = (p[k], syls[k])
-                    weight[key] = weight.get(key, 0.0) + 10 ** corpus_unigram(self.bigram, self.lexicon, p, score)
+                    add = 10 ** corpus_unigram(self.bigram, self.lexicon, p, score)
+                    weight[key] = weight.get(key, 0.0) + add
+                    if key not in likeliest or add > likeliest[key][0]:
+                        likeliest[key] = (add, p, syls)
             if weight:
                 (char, reading), _ = max(weight.items(), key=lambda kv: kv[1])
-                return [("next", s, char, reading)]
+                if self._pin_way(list(self.readings[s:b]) + [reading], list(typed) + [char]) is None:
+                    _, p, syls = likeliest[(char, reading)]
+                    return [("next", s, p[k:], tuple(syls[k:]))]
+                return [("next", s, char, (reading,))]
         return []
 
     def _custom_completion(self):
@@ -2088,13 +2098,13 @@ class Composer:
             self.exact = {i for i in self.exact if i < start}
             self.literal = {i for i in self.literal if i < start}
         else:
-            _, s, char, reading = action
+            _, s, chars, rds = action
             b = len(self.readings)
             shown = [self.composition[self._syl_offset(i)] for i in range(s, b)]
-            self.raw += self.table.reading_to_keys(reading)
-            # Tab accepts what is on screen as well as the new character: pin
+            self.raw += "".join(self.table.reading_to_keys(r) for r in rds)
+            # Tab accepts what is on screen as well as the new character(s): pin
             # them all, or the next conversion may swap one (量子力 -> 量子利)
-            self._pin(s, self.readings[s:b] + [reading], shown + [char])
+            self._pin(s, self.readings[s:b] + list(rds), shown + list(chars))
         self.caret = None
         self._refresh()
 

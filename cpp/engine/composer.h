@@ -172,7 +172,7 @@ private:
         int force = -1;         // "chinese": a cut syllable, its first part kept as typed from here
         std::set<int> unchinese;  // "chinese": places cut at before, read across now
         std::string word;  // "word" suggestions (ASCII)
-        ustr reading;      // "next": its reading
+        ustr reading;      // a candidate's reading (the "next" suggestion: readings, one a character of text)
         std::vector<CustomUnit> units;  // "name": the name's units from syllable s (#14)
     };
     struct Undo {

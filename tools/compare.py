@@ -83,6 +83,8 @@ CASES = [
     "claude claude{ENTER}cla", "ji3claude{ENTER}ji3claude{ENTER}ji3cla{TAB}",
     "abcc12345678@example.com{ENTER}gmai", "gpt4 python3 don't{ENTER}gpt4 python3 don't{ENTER}don",
     "{CAPS}cla{CAPS}{TAB}", "claud{TAB}",
+    # (a next character whose reading is the dictionary's only inside its word: the rest of the word)
+    "ej93j0 {TAB}{ENTER}ej93j0 {TAB}{BACK}{ENTER}",
     "kaz{TAB}", "kazuma ", "su3kazuma{ENTER}", "KAZ{TAB}", "dd{DOWN}1", "1j8{HOME}{UP}{ENTER}{ENTER}1j8{DOWN}1", "cc{HOME}{UP}{ENTER}{ENTER}su3cc{DOWN}{ENTER}", "1j84{HOME}{UP}{ENTER}", "hello{HOME}{UP}", "ok{HOME}{UP}", "lol{HOME}{UP}", "187", "ji318", "2026 ", "5j", "OK{HOME}{UP}", "dd{HOME}{UP}",
     # an unfinished syllable back to its keys where it shows as zhuyin (preview zhuyin: ↓ and the bar have su,
     # this once: su is ㄋㄧ again after it); the other previews offer ㄋㄧ only

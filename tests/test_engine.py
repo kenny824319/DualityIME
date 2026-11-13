@@ -1005,6 +1005,19 @@ class CompletionTest(Base):
         c.key(special="ENTER")
         self.assertEqual(c.commit, "台灣")
 
+    def test_next_character_only_inside_its_word_offers_the_word(self):
+        # 抹 is ㄇㄛˋ only in 拐彎抹角 (alone it is ㄇㄛˇ), and 拐彎抹 is no word: Tab could not fix it and the
+        # next conversion wrote 莫 (2026-11-13 user). The hint is the rest of the word, Tab writes it whole.
+        c = self.c
+        for ch in keys("ㄍㄨㄞˇ ㄨㄢ"):
+            c.key(ch)
+        self.assertEqual(c.composition, "拐彎")
+        self.assertEqual(c.suggestions, ["抹角"])
+        c.key(special="TAB")
+        self.assertEqual(c.composition, "拐彎抹角")
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "拐彎抹角")
+
     def test_next_character_keeps_going(self):
         c = self.c
         for ch in keys("ㄉㄧㄢˋ ㄋㄠˇ"):

@@ -2310,7 +2310,8 @@ void Composer::suggest() {
 
 std::vector<Composer::Action> Composer::next_char() {
     // 神 -> 奇: the character most likely to come next, judged from the phrases
-    // that start with what was just typed (longest context first)
+    // that start with what was just typed (longest context first); one Tab could not fix there comes
+    // with the rest of its likeliest word (抹 is ㄇㄛˋ only in 拐彎抹角: see engine/composer.py _next_char)
     if (runs_.empty() || runs_.back().second != static_cast<int>(readings.size())) return {};
     auto [a, b] = runs_.back();
     // (個人詞庫's words come whole before this: custom_completion)
@@ -2319,14 +2320,21 @@ std::vector<Composer::Action> Composer::next_char() {
         int off = syl_offset(s);
         ustr typed = composition.substr(off, k);
         std::vector<std::pair<std::pair<ustr, ustr>, double>> wv;  // (char, reading) -> summed probability
+        std::vector<std::pair<double, const Completion*>> likeliest;  // wv's order: its likeliest phrase
         std::vector<ustr> part(readings.begin() + s, readings.begin() + b);
         for (auto* c : lexicon_.completions(part)) {
             if (starts_with(c->phrase, typed) && c->phrase.size() == c->syls.size()) {
                 std::pair<ustr, ustr> key{ustr(1, c->phrase[k]), c->syls[k]};
                 double add = std::pow(10.0, corpus_unigram(bigram_, lexicon_, c->phrase, c->score));
                 auto it = std::find_if(wv.begin(), wv.end(), [&](auto& e) { return e.first == key; });
-                if (it == wv.end()) wv.emplace_back(key, 0.0 + add);
-                else it->second = it->second + add;
+                if (it == wv.end()) {
+                    wv.emplace_back(key, 0.0 + add);
+                    likeliest.emplace_back(add, c);
+                } else {
+                    it->second = it->second + add;
+                    auto& l = likeliest[it - wv.begin()];
+                    if (add > l.first) l = {add, c};
+                }
             }
         }
         if (!wv.empty()) {
@@ -2337,7 +2345,16 @@ std::vector<Composer::Action> Composer::next_char() {
             act.type = "next";
             act.s = s;
             act.text = top->first.first;
-            act.reading = top->first.second;
+            act.readings = {top->first.second};
+            std::vector<ustr> rds(part), chars;
+            for (char32_t ch : typed) chars.push_back(ustr(1, ch));
+            rds.push_back(top->first.second);
+            chars.push_back(top->first.first);
+            if (pin_way(rds, chars) == PinWay::None) {  // the rest of its likeliest word, Tab writes it whole
+                const Completion* c = likeliest[top - wv.begin()].second;
+                act.text = c->phrase.substr(k);
+                act.readings.assign(c->syls.begin() + k, c->syls.end());
+            }
             return {act};
         }
     }
@@ -2709,11 +2726,11 @@ void Composer::take_suggestion() {
         int b = static_cast<int>(readings.size());
         std::vector<ustr> shown;
         for (int i = s; i < b; ++i) shown.push_back(ustr(1, composition[syl_offset(i)]));
-        raw += table_.reading_to_keys(action.reading);
-        // Tab accepts what is on screen as well as the new character: pin them all
+        for (auto& r : action.readings) raw += table_.reading_to_keys(r);
+        // Tab accepts what is on screen as well as the new character(s): pin them all
         std::vector<ustr> rds(readings.begin() + s, readings.begin() + b);
-        rds.push_back(action.reading);
-        shown.push_back(action.text);
+        rds.insert(rds.end(), action.readings.begin(), action.readings.end());
+        for (char32_t ch : action.text) shown.push_back(ustr(1, ch));
         pin(s, rds, shown);
     }
     caret_.reset();
