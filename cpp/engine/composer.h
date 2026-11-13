@@ -120,6 +120,16 @@ public:
     // and where the selection is among them
     std::pair<std::vector<ustr>, int> grid_candidates() const;
     void close_symbols();
+    // 快速填入 (#21): see engine/composer.py open_fill
+    struct FillShown {
+        std::string typed;                          // what was typed to narrow it
+        std::vector<std::pair<ustr, ustr>> items;   // (text, shortcut) of the shortcuts starting so
+        int index = 0;                              // the highlighted one
+    };
+    void open_fill();
+    void close_fill();
+    std::optional<FillShown> fill_shown() const;
+    void pick_fill(int i);  // item i of the list as shown goes out
     bool can_undo() const { return raw.empty() && last_commit_.has_value(); }
     // 英文字母＋注音提示 (preview keys_hint, like the ASUS IME): the unfinished syllable being
     // typed at the end as zhuyin, and the character offset its keys start at in the text, for a
@@ -225,6 +235,15 @@ private:
     void open_symbols();
     void type_symbol(const ustr& sym);
     bool key_symbols(std::optional<char32_t> ch, const std::string& special);
+    bool key_fill(std::optional<char32_t> ch, const std::string& special);
+    std::vector<std::pair<ustr, ustr>> fill_matches() const;
+    struct Fill {
+        std::vector<std::pair<ustr, ustr>> items;  // as it was opened
+        std::string typed;
+        int index = 0;
+    };
+    std::optional<Fill> fill_;
+    bool symbol_fresh_ = false;  // the symbol keyboard just opened, nothing pressed in it (Space: 快速填入)
     void pick(int i, bool from_bar = false);
     void learn_overrides();
     // before: the conversion without the picks

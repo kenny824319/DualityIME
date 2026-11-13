@@ -146,6 +146,21 @@ Json state(Session& s, bool handled) {
     o["repl_index"] = Json(c.repl_index);
     o["symbol_page"] = Json(c.symbol_page ? *c.symbol_page : -1);
     o["symbol_cursor"] = Json(c.symbol_cursor);
+    // 快速填入 while open (#21): what was typed, the items of the shortcuts starting so, the highlighted one
+    if (auto f = c.fill_shown()) {
+        Json fill = Json::object();
+        fill["typed"] = Json(f->typed);
+        Json items = Json::array();
+        for (auto& [text, shortcut] : f->items) {
+            Json row = Json::array();
+            row.push(Json(to_utf8(text)));
+            row.push(Json(to_utf8(shortcut)));
+            items.push(row);
+        }
+        fill["items"] = items;
+        fill["index"] = Json(f->index);
+        o["fill"] = fill;
+    }
     o["can_undo"] = Json(c.can_undo());
     o["cfg"] = cfg_json(c.config);
     return o;
@@ -182,6 +197,11 @@ Json handle(Session& s, const Json& req) {
     } else if (op == "ctrl_punct") {
         // Ctrl + a punctuation key (the setting ctrl_full_punct): its full-width mark
         if (auto ch = one_char(req.get("ch"))) handled = c.type_full_punct(*ch);
+    } else if (op == "pick_fill") {
+        // clicked in 快速填入: that one
+        auto* v = req.get("index");
+        if (v && v->is_number()) c.pick_fill(static_cast<int>(v->as_number()));
+        handled = true;
     } else if (op == "pick_at") {
         // clicked in the spread-out list: that one, as Enter would take it
         auto* v = req.get("index");
@@ -205,13 +225,16 @@ Json handle(Session& s, const Json& req) {
         c.reset();
     } else if (op == "forget_undo") {
         c.forget_undo();
-    } else if (op == "close_symbols") {
+    } else if (op == "close_symbols") {  // (the symbol keyboard, or 快速填入 opened from it)
         c.close_symbols();
+        c.close_fill();
     } else if (op == "full_width") {
         c.toggle_full_width();
     } else if (op == "flush") {
         // first key after switching to English with text still being typed:
-        // send that text, plus the character of this key
+        // send that text, plus the character of this key (快速填入 still open, e.g. switched from the
+        // taskbar: closed first, or the Enter below would send its first item)
+        c.close_fill();
         if (!c.candidates.empty()) c.key(std::nullopt, "ESC");
         ustr out;
         if (!flag("esc")) {

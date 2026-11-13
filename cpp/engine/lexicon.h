@@ -208,6 +208,9 @@ public:
     // mochi真, not mochi5p). Cached: whatever changes words or custom_english bumps words_version_.
     const std::unordered_set<std::string>& sure_english() const;
     bool reload_custom();
+    // 快速填入 (#21): (text, shortcut) in the order given, quick_fill.json next to user.json
+    std::vector<std::pair<ustr, ustr>> quick_fill;
+    bool reload_quick_fill();  // re-read it if it changed (see engine/lexicon.py reload_quick_fill)
     double bonus(const ustr& reading_key, const ustr& phrase) const;
     void learn_phrase(const ustr& reading_key, const ustr& phrase);
     bool learned(const ustr& reading_key, const ustr& phrase) const;  // a whole pick at least (faded or not), not a half
@@ -261,7 +264,9 @@ public:
 private:
     double faded(double count, const int* day) const;
     void prune();
-    std::wstring path_, custom_path_;
+    std::wstring path_, custom_path_, quick_fill_path_;
+    bool quick_fill_exists_ = false;
+    long long quick_fill_mtime_ = 0;
     std::function<int()> today_;
     bool keep_files_ = false;
     bool custom_seen_ = false;

@@ -431,6 +431,8 @@ void TextService::leave_field() {
         composition_.Reset();
         comp_context_.Reset();
         reset_engine();
+    } else if (state_.symbol_page >= 0 || state_.fill_open) {
+        close_symbols();  // (opened with nothing typed: no composition to end)
     }
     sent_range_.Reset();
     sent_context_.Reset();
@@ -445,7 +447,7 @@ STDMETHODIMP TextService::OnKillThreadFocus() {
               (composition_ ? "1" : "0") + " foreground=" + (ours ? "ours" : "other"));
         if (away_doc_) leave_field();  // the user went to another program while the focus was nowhere
         hide_ui();
-        if (state_.symbol_page >= 0) close_symbols();  // the user went to another window
+        if (state_.symbol_page >= 0 || state_.fill_open) close_symbols();  // the user went to another window
     } catch (...) {
     }
     return S_OK;
@@ -718,7 +720,7 @@ bool TextService::test_key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
                !(state_.composition.empty() && state_.symbol_page < 0 && no_text_field(ctx));
     }
     // (a Shift tap still switches Chinese/English there)
-    if (state_.composition.empty() && state_.symbol_page < 0 && no_text_field(ctx)) return false;
+    if (state_.composition.empty() && state_.symbol_page < 0 && !state_.fill_open && no_text_field(ctx)) return false;
     if (is_width_key(vk)) return true;
     bool composing = !state_.composition.empty();
     if (english_) {
@@ -727,6 +729,7 @@ bool TextService::test_key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
         return vk != VK_SHIFT && (composing || (cfg_.full_width && printable(char_of(vk, lp))));
     }
     if (state_.symbol_page >= 0) return vk != VK_SHIFT;  // every key means a symbol while the keyboard is up
+    if (state_.fill_open) return vk != VK_SHIFT;          // ...and every key is 快速填入's while it is up (#21)
     if (composing) return vk != VK_SHIFT;
     if (is_numpad(vk)) return false;  // numpad always types plain digits
     wchar_t ch = char_of(vk, lp);
@@ -764,6 +767,9 @@ bool TextService::ctrl_punct_key(ITfContext* ctx, WPARAM vk, LPARAM lp) {
 
 bool TextService::key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
     if (!test_key_down(ctx, vk, lp)) return false;
+    // ` held down: Windows repeats it; with the symbol keyboard up a second ` would type a ` (` then Space,
+    // held or not, opens 快速填入 - #21)
+    if (vk == VK_OEM_3 && (lp & 0x40000000) && state_.symbol_page >= 0) return true;
     if (ctrl_punct_key(ctx, vk, lp)) {
         Json req = Json::object();
         req["op"] = Json("ctrl_punct");
@@ -824,7 +830,7 @@ void TextService::key_up(WPARAM vk) {
     // switch right here and let the Shift key-up go on to the app
     if (vk == VK_SHIFT && shift_alone_ && now - shift_down_at_ < SHIFT_TAP_MS && !other_modifier()) {
         shift_alone_ = false;
-        if (in_game() && state_.composition.empty() && state_.symbol_page < 0) {
+        if (in_game() && state_.composition.empty() && state_.symbol_page < 0 && !state_.fill_open) {
             // in a game: typing in its chat, or keys straight through again. Nothing shown at
             // the caret: a window over a full-screen game can make it flicker or drop out of full screen
             game_typing_ = !game_typing_;
@@ -889,6 +895,15 @@ void TextService::read_reply(const Json& r) {
             if (item.is_string()) s.replacements.push_back(wide(item.as_string()));
     s.repl_index = num("repl_index", -1);
     s.symbol_page = num("symbol_page", -1);
+    if (auto* f = r.get("fill"); f && f->is_object()) {
+        s.fill_open = true;
+        if (auto* t = f->get("typed"); t && t->is_string()) s.fill_typed = wide(t->as_string());
+        if (auto* items = f->get("items"); items && items->is_array())
+            for (auto& row : items->items())
+                if (row.is_array() && row.items().size() == 2 && row.items()[0].is_string() && row.items()[1].is_string())
+                    s.fill_items.emplace_back(wide(row.items()[0].as_string()), wide(row.items()[1].as_string()));
+        if (auto* i = f->get("index"); i && i->is_number()) s.fill_index = static_cast<int>(i->as_number());
+    }
     s.symbol_cursor = num("symbol_cursor", 0);
     auto* u = r.get("can_undo");
     s.can_undo = u && u->is_bool() && u->as_bool();
@@ -1489,6 +1504,16 @@ void TextService::place_ui(TfEditCookie ec, ITfContext* ctx) {
     } else if (keyboard_) {
         keyboard_->hide();
     }
+    if (state_.fill_open) {  // 快速填入 (#21): where the candidates would be
+        if (!fill_win_) {
+            fill_win_ = std::make_unique<FillWindow>();
+            fill_win_->on_pick = [this](int i) { pick_fill(i); };
+        }
+        fill_win_->show(state_.fill_typed, state_.fill_items, state_.fill_index, cfg_.cand_font, cfg_.cand_font_size,
+                        comp_rc);
+    } else if (fill_win_) {
+        fill_win_->hide();
+    }
 }
 
 void TextService::hide_ui() {
@@ -1497,6 +1522,7 @@ void TextService::hide_ui() {
     if (hint_win_) hint_win_->hide();
     if (tip_win_) tip_win_->hide();
     if (keyboard_) keyboard_->hide();
+    if (fill_win_) fill_win_->hide();
 }
 
 // ---- mouse and menu -----------------------------------------------------------------------
@@ -1518,6 +1544,15 @@ void TextService::pick_candidate(int index) {
     Json req = Json::object();
     req["op"] = Json("key");
     req["ch"] = Json(narrow(std::wstring(1, state_.cand_labels[index])));
+    call(ctx.Get(), req);
+}
+
+void TextService::pick_fill(int index) {
+    ComPtr<ITfContext> ctx = comp_context_ ? comp_context_ : focused_context(thread_mgr_.Get());
+    if (!ctx || index < 0) return;
+    Json req = Json::object();
+    req["op"] = Json("pick_fill");
+    req["index"] = Json(index);
     call(ctx.Get(), req);
 }
 
@@ -1594,6 +1629,7 @@ void TextService::close_symbols() {
     Json reply;
     if (ask(req, reply)) read_reply(reply);
     if (keyboard_) keyboard_->hide();
+    if (fill_win_) fill_win_->hide();
 }
 
 void TextService::show_menu(POINT pt) {
@@ -1653,7 +1689,7 @@ void TextService::show_mode(const std::wstring& text) {
 }
 
 void TextService::toggle_mode() {
-    if (state_.symbol_page >= 0) close_symbols();
+    if (state_.symbol_page >= 0 || state_.fill_open) close_symbols();
     english_ = !english_;
     update_mode_ui();
     show_mode(english_ ? L"英" : L"中");

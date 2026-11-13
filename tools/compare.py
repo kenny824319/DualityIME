@@ -230,6 +230,12 @@ CASES = [
     # keys not in the set do nothing, the grid's arrows across rows and pages
     "u4{DOWN}{RIGHT}{RIGHT}{RIGHT}{RIGHT}{DOWN}{DOWN}{DOWN}{UP}{LEFT}{ENTER}u4{DOWN}{PGDN}s{ENTER}"
     "u4{DOWN}Q5z{ESC}{ENTER}u4{DOWN}{RIGHT}{RIGHT}{LEFT}w{ENTER}",
+    # 快速填入 (#21): ` then Space opens it, ↑↓ Enter send one, letters and digits narrow it (whatever the case),
+    # Backspace, Esc; while typing (sent with what was typed); moved in the symbol keyboard, Space is a symbol
+    "` {DOWN}{DOWN}{UP}{DOWN}{ENTER}` em{ENTER}` NAME2{ENTER}` x{BACK}{BACK}{BACK}` {ESC}{ENTER}"
+    "ji3` {ENTER}ji3` {ESC}{ENTER}`{RIGHT} `1` z{ENTER}"
+    # (a numpad digit narrows it, also while typing; Ctrl + a mark closes it)
+    "ji3` em{#1}{ENTER}` {^,}ji3` {^.}",
     # the particles of everyday talk, and the keys next to them
     "cl3xji7{ENTER}2jo4u,7{ENTER}c9 su3cl3{ENTER}i7 97 o7 core i7 {ENTER}",
 ]
@@ -305,6 +311,10 @@ DICTIONARY = {
     "shortcuts": [["addr", "台北市信義區"], ["sig", "祝 順心"], ["cl3", "你好嗎"], ["台灣", "Taiwan"], ["KFC", "肯德基"]],
 }
 
+# 快速填入 (quick_fill.json, #21): ` then Space lists them
+QUICK_FILL = {"format": 1, "items": [["sample@example.com", "email"], ["王小明", "name1"], ["John", "name2"],
+                                    ["(*'∀')~♥", "em1"], ["感謝您的幫忙", "tks"]]}
+
 # 校正記憶 and 代碼記憶 (keys.json), for every setting: si3 is 你, 817 and qu0  as typed (注音自動校正 on);
 # mp3 English (on or off); an "eten" part is read by neither and dropped
 AUTOCORRECT = {"format": 1, "standard": {"picks": {"si3": {"ㄋㄧˇ": 3}, "817": {"": 2}, "qu0 ": {"": 2}, "mp3": {"en": 2}},
@@ -331,7 +341,7 @@ def compare(cases, config, tmp):
         for name in ("user.json", "keys.json", "custom_picks.json"):
             if os.path.exists(os.path.join(tmp, side, name)):
                 os.remove(os.path.join(tmp, side, name))
-        files = [("config.json", config), ("dictionary.json", DICTIONARY)]
+        files = [("config.json", config), ("dictionary.json", DICTIONARY), ("quick_fill.json", QUICK_FILL)]
         if config.get("import_memory"):
             files.append(("import-memory.json", IMPORTED))
         files.append(("keys.json", AUTOCORRECT))

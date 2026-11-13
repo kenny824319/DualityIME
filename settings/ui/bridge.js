@@ -30,23 +30,26 @@ const api = (() => {
     cand_layout: "", cand_keys: "123456789", cand_columns: 0
   };
   const dict = { words: [["華碩", "ㄏㄨㄚˊ ㄕㄨㄛˋ"]], shortcuts: [["addr", "台北市信義區…"]] };
+  let quickFill = [["sample@example.com", "email"], ["王小明", "name1"], ["0912345678", "phone"], ["西元_年_月_日", "birth"]];
   const sys = { ok: true, default_ime: true, language_hk: false };
   const wait = (ms, v) => new Promise((r) => setTimeout(() => r(v), ms));
   const demo = new URLSearchParams(location.search).get("update") || "";
   return async (op, args = {}) => {
     switch (op) {
       case "state": return { config, version: "2.1.0", dataDir: "C:\\Users\\you\\AppData\\Roaming\\DualityIME",
-        remembered: 12, rememberedEmails: 2, words: dict.words.length, shortcuts: dict.shortcuts.length, beta: false, canUpdate: true, hasPime: false, dark: false };
+        remembered: 12, rememberedEmails: 2, words: dict.words.length, shortcuts: dict.shortcuts.length, quickFill: quickFill.length, beta: false, canUpdate: true, hasPime: false, dark: false };
       case "setConfig": config[args.key] = args.value; return config;
       case "forgetWords": return 0;
       case "system": return wait(400, sys);
       case "setSystem": sys[args.action] = args.on; return wait(300, sys);
       case "dictionary": return dict;
       case "saveDictionary": dict[args.kind] = args.rows; return args.rows.length;
+      case "quickFill": return quickFill.map((r) => [...r]);
+      case "saveQuickFill": quickFill = args.rows; return args.rows.length;
       case "hotkeys": return { language: "Ctrl+Shift", layout: "Left Alt+Shift" };
       case "readings": return args.words.map((w) => (w === "台灣" ? "ㄊㄞˊ ㄨㄢ" : ""));
       case "exportBackup": return wait(200, true);
-      case "openBackup": return wait(200, { created: "2026-10-27 10:30", memory: 128, words: 3, shortcuts: 2, config: true });
+      case "openBackup": return wait(200, { created: "2026-10-27 10:30", memory: 128, words: 3, shortcuts: 2, quickFill: 4, config: true });
       case "restoreBackup": return wait(300, { words: 1, shortcuts: 0 });
       case "checkUpdate": return wait(900, { code: demo === "available" || demo === "fail" ? 10 : 0, version: "2.2.0", stable: "2.2.0", beta: "2.3.0" });
       case "runUpdate": return wait(1500, { code: demo === "fail" ? 301 : 0, version: "2.2.0" });

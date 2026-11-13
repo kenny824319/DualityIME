@@ -248,6 +248,8 @@ public class Backend {
                 return true;
             case "dictionary": return ReadDictionary();
             case "saveDictionary": return SaveDictionary(a);
+            case "quickFill": return ReadQuickFill();
+            case "saveQuickFill": return SaveQuickFill(a);
             case "readings": return Readings(a);
             case "exportBackup":
                 using (var s = new SaveFileDialog { Filter = "兩儀輸入法資料 (*.json)|*.json", FileName = "兩儀輸入法資料-" + DateTime.Now.ToString("yyyyMMdd") + ".json" }) {
@@ -259,7 +261,8 @@ public class Backend {
                     if (o.ShowDialog(form) != DialogResult.OK) return null;
                     return ReadBackup(o.FileName);
                 }
-            case "restoreBackup": return RestoreBackup(Bool(a, "memory"), Bool(a, "words"), Bool(a, "shortcuts"), Bool(a, "config"));
+            case "restoreBackup":
+                return RestoreBackup(Bool(a, "memory"), Bool(a, "words"), Bool(a, "shortcuts"), Bool(a, "config"), Bool(a, "quickFill"));
             case "setBeta":
                 using (var k = Registry.CurrentUser.CreateSubKey(OurKey)) k.SetValue("UpdateBranch", Bool(a, "on") ? "develop" : "main");
                 return true;
@@ -332,6 +335,7 @@ public class Backend {
             { "rememberedEmails", remembered[1] },
             { "words", ((List<object>)dict["words"]).Count },
             { "shortcuts", ((List<object>)dict["shortcuts"]).Count },
+            { "quickFill", ReadQuickFill().Count },
             { "beta", (Registry.GetValue(@"HKEY_CURRENT_USER\" + OurKey, "UpdateBranch", "") as string) == "develop" },
             { "canUpdate", File.Exists(Updater.InstalledPath()) },
             { "hasPime", HasPime() },
@@ -499,6 +503,56 @@ public class Backend {
         return rows.Count;
     }
 
+    // ---- 快速填入 (#21): quick_fill.json {"format": 1, "items": [["內容", "捷徑"]...]} -----------------------
+    string QuickFillPath { get { return Path.Combine(dataDir, "quick_fill.json"); } }
+
+    List<object> ReadQuickFill() { return QuickFillRows(ReadJson(QuickFillPath)); }
+
+    Dictionary<string, object> ReadJson(string path) {
+        try { return json.DeserializeObject(File.ReadAllText(path, Encoding.UTF8)) as Dictionary<string, object>; } catch { return null; }
+    }
+
+    static List<object> QuickFillRows(Dictionary<string, object> j) {
+        var rows = new List<object>();
+        object[] items = j != null && j.ContainsKey("items") ? j["items"] as object[] : null;
+        if (items != null)
+            foreach (object r in items) {
+                object[] pair = r as object[];
+                if (pair != null && pair.Length == 2 && pair[0] is string && pair[1] is string && (string)pair[0] != "")
+                    rows.Add(new object[] { pair[0], pair[1] });
+            }
+        return rows;
+    }
+
+    // what is wrong with a row of 快速填入, or null: 內容 1-255 characters on one line, 捷徑 1-8 letters and digits
+    public static string QuickFillProblem(string text, string shortcut) {
+        if (string.IsNullOrEmpty(text)) return "請輸入內容";
+        if (text.Length > 255) return "內容最多 255 個字";
+        if (text.IndexOf('\n') >= 0 || text.IndexOf('\r') >= 0) return "內容不能換行";
+        if (string.IsNullOrEmpty(shortcut) || shortcut.Length > 8 || !shortcut.All(ch => ch < 128 && char.IsLetterOrDigit(ch)))
+            return "捷徑請用 1 到 8 個英文字母或數字";
+        return null;
+    }
+
+    object SaveQuickFill(Dictionary<string, object> a) {
+        // the page checked the rows; checked again here (a bad one, or the same 捷徑 twice: nothing written)
+        var rows = new List<object>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (object r in (a["rows"] as object[]) ?? new object[0]) {
+            object[] pair = r as object[];
+            if (pair == null || pair.Length != 2) continue;
+            string text = "" + pair[0], shortcut = "" + pair[1];
+            string problem = QuickFillProblem(text, shortcut);
+            if (problem != null) throw new Exception(problem);
+            if (!seen.Add(shortcut)) throw new Exception("捷徑「" + shortcut + "」重複了");
+            rows.Add(new object[] { text, shortcut });
+        }
+        Directory.CreateDirectory(dataDir);
+        var data = new Dictionary<string, object> { { "format", 1 }, { "items", rows } };
+        File.WriteAllText(QuickFillPath, json.Serialize(data), new UTF8Encoding(false));
+        return rows.Count;
+    }
+
     static bool IsHan(char c) { return c >= 0x3400 && c <= 0x9FFF || c >= 0xF900 && c <= 0xFAFF; }  // (as Lookup.IsHan)
 
     object Readings(Dictionary<string, object> a) {
@@ -570,7 +624,8 @@ public class Backend {
         }
         var data = new Dictionary<string, object> {
             { "app", Migrate.AppName }, { "format", BackupFormat }, { "created", DateTime.Now.ToString("yyyy-MM-dd HH:mm") },
-            { "memory", memory ?? new Dictionary<string, object>() }, { "dictionary", ReadDictionary() }, { "config", config }
+            { "memory", memory ?? new Dictionary<string, object>() }, { "dictionary", ReadDictionary() }, { "config", config },
+            { "quick_fill", ReadQuickFill() }  // (快速填入, #21: an older version reading the backup leaves it)
         };
         File.WriteAllText(path, json.Serialize(data), new UTF8Encoding(false));
         return true;
@@ -611,8 +666,14 @@ public class Backend {
         return new Dictionary<string, object> {
             { "created", Str(data, "created") }, { "memory", learned },
             { "words", ((List<object>)dict["words"]).Count }, { "shortcuts", ((List<object>)dict["shortcuts"]).Count },
+            { "quickFill", BackupQuickFill().Count },
             { "config", data.ContainsKey("config") && data["config"] is Dictionary<string, object> }
         };
+    }
+
+    List<object> BackupQuickFill() {
+        var j = backup != null ? new Dictionary<string, object> { { "items", backup.ContainsKey("quick_fill") ? backup["quick_fill"] : null } } : null;
+        return QuickFillRows(j);
     }
 
     Dictionary<string, object> BackupDictionary() {
@@ -630,7 +691,7 @@ public class Backend {
     }
 
     // Merged into what is here: nothing here is removed, and a row already here is kept as it is
-    public object RestoreBackup(bool memory, bool words, bool shortcuts, bool config) {
+    public object RestoreBackup(bool memory, bool words, bool shortcuts, bool config, bool quickFill = false) {
         if (backup == null) throw new Exception("no backup opened");
         var c = ReadConfig();
         var theirConfig = backup.ContainsKey("config") ? backup["config"] as Dictionary<string, object> : null;
@@ -657,6 +718,21 @@ public class Backend {
             Directory.CreateDirectory(dataDir);
             File.WriteAllText(DictPath, json.Serialize(d), new UTF8Encoding(false));
         }
+        int addedQuickFill = 0;
+        if (quickFill) {  // 快速填入: a 捷徑 already here is kept as it is
+            var mine = ReadQuickFill();
+            foreach (object r in BackupQuickFill()) {
+                object[] pair = (object[])r;
+                string text = "" + pair[0], shortcut = "" + pair[1];
+                if (QuickFillProblem(text, shortcut) != null) continue;
+                if (mine.Any(m => string.Equals("" + ((object[])m)[1], shortcut, StringComparison.OrdinalIgnoreCase))) continue;
+                mine.Add(new object[] { text, shortcut });
+                addedQuickFill++;
+            }
+            Directory.CreateDirectory(dataDir);
+            File.WriteAllText(QuickFillPath, json.Serialize(new Dictionary<string, object> { { "format", 1 }, { "items", mine } }),
+                              new UTF8Encoding(false));
+        }
         var theirMemory = backup.ContainsKey("memory") ? backup["memory"] as Dictionary<string, object> : null;
         if (memory && theirMemory != null) {
             // only the IME writes user.json: it merges this file on its next key (import_memory bumped)
@@ -666,7 +742,7 @@ public class Backend {
         }
         WriteConfig(c);
         backup = null;
-        return new Dictionary<string, object> { { "words", addedWords }, { "shortcuts", addedShortcuts } };
+        return new Dictionary<string, object> { { "words", addedWords }, { "shortcuts", addedShortcuts }, { "quickFill", addedQuickFill } };
     }
 
     // ---- updates ------------------------------------------------------------------------------

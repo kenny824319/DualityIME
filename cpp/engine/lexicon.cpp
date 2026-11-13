@@ -675,8 +675,10 @@ UserModel::UserModel(const std::wstring& path, std::function<int()> today)
     if (!path.empty()) {
         size_t slash = path.find_last_of(L"\\/");
         custom_path_ = (slash == std::wstring::npos ? std::wstring() : path.substr(0, slash + 1)) + L"dictionary.json";
+        quick_fill_path_ = (slash == std::wstring::npos ? std::wstring() : path.substr(0, slash + 1)) + L"quick_fill.json";
     }
     reload_custom();
+    reload_quick_fill();
     std::string text;
     if (path.empty() || !read_file(path, text)) return;
     bool ok = false;
@@ -797,6 +799,30 @@ static bool is_han_text(const ustr& s) {
     return !s.empty() && std::all_of(s.begin(), s.end(), [](char32_t c) {
         return (c >= 0x3400 && c <= 0x9FFF) || (c >= 0xF900 && c <= 0xFAFF);
     });
+}
+
+bool UserModel::reload_quick_fill() {
+    // {"format": 1, "items": [["text", "shortcut"], ...]}: rows that are not two strings, or with no text, left out
+    if (quick_fill_path_.empty()) return false;
+    long long mtime = 0;
+    bool exists = file_mtime(quick_fill_path_, mtime);
+    if (exists == quick_fill_exists_ && (!exists || mtime == quick_fill_mtime_)) return false;
+    quick_fill_exists_ = exists;
+    quick_fill_mtime_ = mtime;
+    std::vector<std::pair<ustr, ustr>> items;
+    std::string text;
+    if (exists && read_file(quick_fill_path_, text)) {
+        bool ok = false;
+        Json data = Json::parse(text, &ok);
+        if (ok && data.is_object())
+            if (auto* list = data.get("items"); list && list->is_array())
+                for (auto& row : list->items())
+                    if (row.is_array() && row.items().size() == 2 && row.items()[0].is_string() &&
+                        row.items()[1].is_string() && !row.items()[0].as_string().empty())
+                        items.emplace_back(from_utf8(row.items()[0].as_string()), from_utf8(row.items()[1].as_string()));
+    }
+    quick_fill = std::move(items);
+    return true;
 }
 
 bool UserModel::reload_custom() {

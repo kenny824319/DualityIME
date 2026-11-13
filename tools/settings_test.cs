@@ -182,6 +182,29 @@ static class SettingsTest {
             bad = (Dictionary<string, object>)b.ReadBackup(file);
             Check("a file of another app is refused with the message", (string)bad["error"] == "這不是兩儀輸入法匯出的檔案", json.Serialize(bad));
 
+            // 快速填入 (#21): written to quick_fill.json, checked, in the backup, merged on restore
+            call("saveQuickFill", new Dictionary<string, object> { { "rows", new object[] {
+                new object[] { "sample@example.com", "email" }, new object[] { "王小明", "name1" } } } });
+            var qf = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(Path.Combine(dir, "quick_fill.json"), Encoding.UTF8));
+            Check("saveQuickFill writes quick_fill.json", (int)qf["format"] == 1 && ((object[])qf["items"]).Length == 2 &&
+                  (string)((object[])((object[])qf["items"])[1])[0] == "王小明", json.Serialize(qf));
+            bool dup = false, tooLong = false, badKey = false;
+            try { call("saveQuickFill", new Dictionary<string, object> { { "rows", new object[] { new object[] { "a", "x" }, new object[] { "b", "X" } } } }); } catch { dup = true; }
+            try { call("saveQuickFill", new Dictionary<string, object> { { "rows", new object[] { new object[] { new string('字', 256), "x" } } } }); } catch { tooLong = true; }
+            try { call("saveQuickFill", new Dictionary<string, object> { { "rows", new object[] { new object[] { "a", "a b" } } } }); } catch { badKey = true; }
+            qf = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(Path.Combine(dir, "quick_fill.json"), Encoding.UTF8));
+            Check("saveQuickFill refuses a repeated or bad row and writes nothing", dup && tooLong && badKey &&
+                  ((object[])qf["items"]).Length == 2, json.Serialize(qf));
+            b.WriteBackup(file);
+            var withFill = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(file, Encoding.UTF8));
+            Check("the backup has 快速填入", ((object[])withFill["quick_fill"]).Length == 2, json.Serialize(withFill));
+            call("saveQuickFill", new Dictionary<string, object> { { "rows", new object[] { new object[] { "另一個", "EMAIL" } } } });
+            var fillInfo = (Dictionary<string, object>)b.ReadBackup(file);
+            call("restoreBackup", new Dictionary<string, object> { { "quickFill", true } });
+            var after = (List<object>)call("quickFill", null);
+            Check("restore merges 快速填入 (a 捷徑 here kept as it is)", (int)fillInfo["quickFill"] == 2 && after.Count == 2 &&
+                  (string)((object[])after[0])[0] == "另一個" && (string)((object[])after[1])[1] == "name1", json.Serialize(after));
+
             // a backup of before #23 (cand_per_row only) over a grid here: its row again, the keys 1-9 (review 2026-11-13)
             call("setConfig", new Dictionary<string, object> { { "key", "cand_layout" }, { "value", "grid" } });
             call("setConfig", new Dictionary<string, object> { { "key", "cand_keys" }, { "value", "qwerasdf" } });

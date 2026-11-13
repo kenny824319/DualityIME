@@ -399,6 +399,78 @@ LRESULT CandidateWindow::message(UINT msg, WPARAM, LPARAM lp, bool& done) {
     return 0;
 }
 
+// ---- 快速填入 (#21) -------------------------------------------------------------------------
+
+namespace {
+constexpr int FILL_ROWS = 9, FILL_TEXT_W = 200, FILL_KEY_W = 90;
+}
+
+void FillWindow::show(const std::wstring& typed, const std::vector<std::pair<std::wstring, std::wstring>>& items,
+                      int index, const std::wstring& font, int font_size, const RECT& text_rect) {
+    if (!create(L"DualityIMEFill")) return;
+    typed_ = typed;
+    items_ = items;
+    index_ = std::clamp(index, 0, std::max(0, static_cast<int>(items.size()) - 1));
+    font_ = font.empty() ? L"Microsoft JhengHei UI" : font;
+    font_size_ = std::clamp(font_size, 10, 48);
+    // the rows shown follow the highlighted one
+    if (index_ < first_) first_ = index_;
+    if (index_ >= first_ + FILL_ROWS) first_ = index_ - FILL_ROWS + 1;
+    first_ = std::clamp(first_, 0, std::max(0, static_cast<int>(items_.size()) - FILL_ROWS));
+    rows_shown_ = std::max(1, std::min(FILL_ROWS, static_cast<int>(items_.size())));
+    HDC dc = GetDC(hwnd_);
+    Canvas cv(dc, 1.0);
+    row_h_ = cv.measure(L"中", cv.font(font_size_, font_.c_str())).cy + 2 * ITEM_PAD_Y + 4;
+    ReleaseDC(hwnd_, dc);
+    w_ = CAND_PAD * 2 + ITEM_PAD_X * 3 + FILL_TEXT_W + FILL_KEY_W;
+    int h = CAND_PAD * 2 + TITLE_H + rows_shown_ * row_h_;
+    double s = scale();
+    RECT work = work_area(text_rect);
+    int pw = static_cast<int>(w_ * s), ph = static_cast<int>(h * s);
+    int x = std::max<int>(work.left, std::min<int>(text_rect.left, work.right - pw));
+    int y = text_rect.bottom + static_cast<int>(4 * s);
+    if (y + ph > work.bottom) y = text_rect.top - ph - static_cast<int>(4 * s);
+    place(x, y, pw, ph);
+}
+
+void FillWindow::draw(HDC dc, int w, int h) {
+    const Theme& th = current_theme();
+    double s = scale();
+    Canvas cv(dc, s);
+    cv.box(0, 0, w / s, h / s, th.key, th.border, 10);
+    HFONT f = cv.font(font_size_, font_.c_str());
+    HFONT minor = cv.font(std::max(11, font_size_ * 3 / 4), font_.c_str());
+    HFONT title = cv.font(std::max(12, font_size_ * 3 / 4), L"Microsoft JhengHei UI");
+    cv.text(typed_.empty() ? L"快速填入" : typed_, CAND_PAD + ITEM_PAD_X, CAND_PAD, w_, TITLE_H, th.label, title,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    if (items_.empty()) {
+        cv.text(typed_.empty() ? L"尚未設定，可在設定的個人詞庫新增" : L"沒有符合的捷徑", CAND_PAD + ITEM_PAD_X,
+                CAND_PAD + TITLE_H, w_, row_h_, th.label, minor, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        return;
+    }
+    for (int k = 0; k < rows_shown_ && first_ + k < static_cast<int>(items_.size()); ++k) {
+        int i = first_ + k, y = CAND_PAD + TITLE_H + k * row_h_;
+        bool on = i == index_;
+        if (on) cv.box(CAND_PAD, y, w_ - 2 * CAND_PAD, row_h_ - 2, th.accent, th.accent, 6);
+        cv.text(items_[i].first, CAND_PAD + ITEM_PAD_X, y, FILL_TEXT_W, row_h_ - 2, on ? th.accent_text : th.text, f,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        cv.text(L"[" + items_[i].second + L"]", CAND_PAD + ITEM_PAD_X * 2 + FILL_TEXT_W, y, FILL_KEY_W, row_h_ - 2,
+                on ? th.accent_text : th.label, minor, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    }
+}
+
+LRESULT FillWindow::message(UINT msg, WPARAM, LPARAM lp, bool& done) {
+    done = false;
+    if (msg == WM_LBUTTONUP) {
+        double s = scale();
+        int y = static_cast<int>(GET_Y_LPARAM(lp) / s) - CAND_PAD - TITLE_H;
+        int k = y >= 0 ? y / row_h_ : -1;
+        if (k >= 0 && k < rows_shown_ && first_ + k < static_cast<int>(items_.size()) && on_pick) on_pick(first_ + k);
+        done = true;
+    }
+    return 0;
+}
+
 // ---- the replacement bar ------------------------------------------------------------------
 
 namespace {

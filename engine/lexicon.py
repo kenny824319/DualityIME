@@ -593,6 +593,12 @@ class UserModel:
                                             lambda: self.today())
         self._custom_mtime = None
         self.reload_custom()
+        # 快速填入 (#21): [(text, shortcut)] in the order given, quick_fill.json next to user.json (its own file:
+        # a version before it rewriting dictionary.json would drop it)
+        self.quick_fill = []
+        self.quick_fill_path = os.path.join(os.path.dirname(path), "quick_fill.json") if path else None
+        self._quick_fill_mtime = None
+        self.reload_quick_fill()
         if path and os.path.exists(path):
             try:
                 with open(path, encoding="utf-8") as f:
@@ -631,6 +637,32 @@ class UserModel:
         is mochi真, not mochi5p). Built each time: tests change words directly (the C++ caches it)."""
         typed = {w.lower() for w in self.words if self.word_count(w) >= WORD_MIN_USES}
         return self.custom_english | typed if typed else self.custom_english
+
+    def reload_quick_fill(self):
+        """Re-read quick_fill.json if it changed: {"format": 1, "items": [["text", "shortcut"], ...]}."""
+        if not self.quick_fill_path:
+            return False
+        try:
+            mtime = os.stat(self.quick_fill_path).st_mtime
+        except OSError:
+            mtime = None
+        if mtime == self._quick_fill_mtime:
+            return False
+        self._quick_fill_mtime = mtime
+        items = []
+        if mtime is not None:
+            try:
+                with open(self.quick_fill_path, encoding="utf-8-sig") as f:
+                    data = json.load(f)
+                listed = data.get("items")
+                for item in listed if isinstance(listed, list) else []:
+                    if (isinstance(item, list) and len(item) == 2 and all(isinstance(x, str) for x in item)
+                            and item[0]):
+                        items.append((item[0], item[1]))
+            except (OSError, ValueError, AttributeError):
+                items = []
+        self.quick_fill = items
+        return True
 
     def reload_custom(self):
         """Re-read dictionary.json if it changed. Format:

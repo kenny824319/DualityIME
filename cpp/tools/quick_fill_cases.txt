@@ -1,0 +1,24 @@
+# e2e-args: -QuickFill cpp\tools\quick_fill_sample.json
+# 快速填入 (#21): ` then Space opens the list of quick_fill.json; Up/Down and Enter send one, typing narrows it
+# to the shortcuts starting so (any case), Backspace takes a letter back, Esc closes it
+`{SPACE}{ENTER} => sample@example.com
+`{SPACE}{DOWN}{DOWN}{UP}{DOWN}{ENTER} => John
+`{SPACE}em{ENTER} => sample@example.com
+`{SPACE}em1{ENTER} => (*'∀')~♥
+`{SPACE}NAME1{ENTER} => 王小明
+`{SPACE}em1{BACK}{BACK}{BACK}tks{ENTER} => 感謝您的幫忙
+# nothing matching: Enter sends nothing; Backspace with nothing typed closes the list
+`{SPACE}x{ENTER}{ESC}ab{ENTER} => ab
+`{SPACE}{BACK}ab{ENTER} => ab
+`{SPACE}{ESC}su3cl3{ENTER} => 你好
+# while typing Chinese: the text goes after what is typed
+ji3`{SPACE}{ENTER} => 我sample@example.com
+ji3`{SPACE}{ESC}{ENTER} => 我
+# Shift to English closes the list: what is typed after it is itself
+ji3`{SPACE}{SHIFT}a{SHIFT} => 我a
+`{SPACE}{SHIFT}ab{SHIFT}su3cl3{ENTER} => ab你好
+# a numpad digit narrows the list too
+`{SPACE}em{#1}{ENTER} => (*'∀')~♥
+# the symbol keyboard as ever: a key types its symbol
+`1 => 1
+`q => 《

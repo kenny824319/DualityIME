@@ -1891,6 +1891,8 @@ void Composer::clear_input() {
     cand_actions_.clear();
     cand_index = 0;
     symbol_page.reset();
+    symbol_fresh_ = false;
+    fill_.reset();
     symbol_cursor = static_cast<int>(symbols::KEYS.find('1'));
     refresh();
 }
@@ -2068,7 +2070,7 @@ void Composer::render() {
     suggest();
     replacements.clear();
     repl_actions_.clear();
-    if (caret_ && candidates.empty() && !symbol_page && !simulating_) replacement_bar(replacements, repl_actions_);
+    if (caret_ && candidates.empty() && !symbol_page && !fill_ && !simulating_) replacement_bar(replacements, repl_actions_);
     if (repl_index >= static_cast<int>(replacements.size())) repl_index = -1;
 }
 
@@ -2222,7 +2224,7 @@ void Composer::suggest() {
     suggestions.clear();
     sugg_actions_.clear();
     sugg_index = 0;
-    if (!config.flag("completion") || !candidates.empty() || raw.empty()) return;
+    if (!config.flag("completion") || !candidates.empty() || raw.empty() || fill_) return;
     if (caret_) return;  // (only at the end, like the ASUS IME: in the middle the bar is up)
     if (auto custom = custom_completion()) {
         const auto& units = user.custom_entries[custom->first].second;
@@ -3710,6 +3712,7 @@ void Composer::leave_bar() {
 
 void Composer::open_symbols() {
     symbol_page = 0;
+    symbol_fresh_ = true;
     symbol_cursor = static_cast<int>(symbols::KEYS.find('1'));
     suggestions.clear();
     sugg_actions_.clear();
@@ -3721,7 +3724,8 @@ void Composer::close_symbols() {
 }
 
 void Composer::type_symbol(const ustr& sym) {
-    // the text typed so far goes out first, then the symbol
+    // the text typed so far goes out first, then the symbol (快速填入 closes too)
+    fill_.reset();
     close_symbols();
     ustr before;
     if (!raw.empty()) {
@@ -3734,6 +3738,13 @@ void Composer::type_symbol(const ustr& sym) {
 }
 
 bool Composer::key_symbols(std::optional<char32_t> ch, const std::string& special) {
+    bool fresh = symbol_fresh_;
+    symbol_fresh_ = false;
+    if (fresh && ch && *ch == U' ') {  // Space first: 快速填入 (#21)
+        close_symbols();
+        open_fill();
+        return true;
+    }
     int pages = static_cast<int>(symbols::page_count());
     if (ch && *ch == ' ') {
         type_symbol(symbols::symbol(*symbol_page, symbol_cursor));
@@ -3749,6 +3760,64 @@ bool Composer::key_symbols(std::optional<char32_t> ch, const std::string& specia
         symbol_page = (*symbol_page - 1 + pages) % pages;
     } else if (special == "LEFT" || special == "RIGHT" || special == "UP" || special == "DOWN") {
         symbol_cursor = symbols::neighbour(symbol_cursor, special);
+    }
+    return true;
+}
+
+void Composer::open_fill() {
+    user.reload_quick_fill();
+    fill_ = Fill{user.quick_fill, "", 0};
+    suggestions.clear();
+    sugg_actions_.clear();
+}
+
+void Composer::close_fill() {
+    fill_.reset();
+    suggest();
+}
+
+std::vector<std::pair<ustr, ustr>> Composer::fill_matches() const {
+    std::vector<std::pair<ustr, ustr>> out;
+    if (!fill_) return out;
+    std::string typed = lower(fill_->typed);
+    for (auto& item : fill_->items)
+        if (starts_with(lower(to_utf8(item.second)), typed)) out.push_back(item);
+    return out;
+}
+
+std::optional<Composer::FillShown> Composer::fill_shown() const {
+    if (!fill_) return std::nullopt;
+    return FillShown{fill_->typed, fill_matches(), fill_->index};
+}
+
+void Composer::pick_fill(int i) {
+    auto matches = fill_matches();
+    if (i < 0 || i >= static_cast<int>(matches.size())) return;
+    fill_.reset();
+    type_symbol(matches[i].first);
+}
+
+bool Composer::key_fill(std::optional<char32_t> ch, const std::string& special) {
+    // letters and digits narrow it, Backspace takes one back (nothing typed: closes it), up and down move,
+    // Enter sends, Esc closes (see engine/composer.py _key_fill)
+    Fill& f = *fill_;
+    if (ch && *ch < 0x80 && (is_alpha(static_cast<char>(*ch)) || is_digit(static_cast<char>(*ch)))) {
+        f.typed.push_back(static_cast<char>(*ch));
+        f.index = 0;
+    } else if (special == "BACK") {
+        if (!f.typed.empty()) {
+            f.typed.pop_back();
+            f.index = 0;
+        } else {
+            close_fill();
+        }
+    } else if (special == "UP" || special == "DOWN") {
+        int n = static_cast<int>(fill_matches().size());
+        f.index = std::max(0, std::min(n - 1, f.index + (special == "DOWN" ? 1 : -1)));
+    } else if (special == "ENTER") {
+        pick_fill(f.index);
+    } else if (special == "ESC") {
+        close_fill();
     }
     return true;
 }
@@ -4943,6 +5012,7 @@ bool Composer::key(std::optional<char32_t> ch, const std::string& special, bool 
         refresh();
     }
     if (ch) caps_lock_ = caps;  // (special keys carry no Caps Lock state)
+    if (fill_) return key_fill(ch, special);
     if (symbol_page) return key_symbols(ch, special);
     if (!candidates.empty()) return key_candidates(ch, special);
     if (repl_index >= 0) return key_bar(ch, special);
@@ -5009,6 +5079,7 @@ bool Composer::type_literal(char32_t ch) {
     // a key that is always itself, e.g. from the numpad: joins the text being typed
     commit.clear();
     last_commit_.reset();
+    if (fill_) return key_fill(ch, "");  // (快速填入: a numpad digit narrows it like any other)
     if (symbol_page) close_symbols();
     if (!candidates.empty()) close_candidates();
     if (repl_index >= 0) {  // it leaves the replacement bar (from the end: back there)

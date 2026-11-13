@@ -278,6 +278,19 @@ table.list input::placeholder { color: var(--sub); }
 .icon-btn { width: 30px; height: 30px; border: 0; border-radius: 5px; background: transparent; cursor: pointer; color: var(--sub); }
 .icon-btn:hover { background: var(--nav-hover); color: var(--danger); }
 .error-line { color: var(--danger); font-size: 13px; min-height: 20px; }
+/* 快速填入 (#21) */
+.text-input { width: 100%; height: 32px; padding: 0 8px; border: 1px solid var(--control-line); border-radius: 5px; background: var(--control); color: var(--text); user-select: text; }
+.text-input::placeholder { color: var(--sub); }
+.fill-bar { display: flex; gap: 8px; align-items: center; margin: 10px 0 6px; }
+.fill-bar .spacer { flex-grow: 1; }
+.fill-bar .fill-search { width: 180px; }
+table.list.fill-table input[type=checkbox] { width: 16px; height: 16px; }
+table.list.fill-table tbody tr { border-top: 1px solid var(--control-line); }
+table.list.fill-table td { padding: 6px 4px; vertical-align: middle; }
+.fill-table .fill-text { word-break: break-all; }
+.fill-table .icon-btn:hover { color: var(--accent); }
+.fill-edit label { display: block; font-size: 13px; color: var(--sub); margin-bottom: 10px; }
+.fill-edit label .text-input { margin-top: 4px; }
 .toast { position: fixed; left: 50%; bottom: 22px; transform: translate(-50%, 20px); opacity: 0; padding: 10px 18px; border-radius: 8px; background: var(--text); color: var(--bg); font-size: 13px; transition: transform .25s cubic-bezier(.2, .9, .3, 1.2), opacity .2s; pointer-events: none; z-index: 20; }
 .toast.show { transform: translate(-50%, 0); opacity: 1; }
 

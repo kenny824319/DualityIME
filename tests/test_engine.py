@@ -2311,6 +2311,156 @@ class KnownHardTest(Base):
         self.assertEqual(self.type(keys("ㄨㄛˇ ㄗㄞˋ ㄧ ㄘˋ ㄕˋ ㄕˋ")), "我再一次試試")
 
 
+class QuickFillTest(unittest.TestCase):
+    """快速填入 (#21, docs/superpowers/specs/2026-11-13-quick-fill-design.md): ` then Space opens the list of
+    quick_fill.json, ↑↓ Enter send one, typing narrows it to the shortcuts starting so, Esc closes it."""
+
+    ITEMS = [["sample@example.com", "email"], ["王小明", "name1"], ["John", "name2"], ["(*'∀')~♥", "em1"],
+             ["( ˙3˙)", "em2"], ["感謝您的幫忙", "tks"]]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.write(self.ITEMS)
+        self.c = create_composer(os.path.join(self.tmp.name, "user.json"))
+        self.c.config.values = dict(DEFAULTS)
+
+    writes = 0
+
+    def write(self, items):
+        path = os.path.join(self.tmp.name, "quick_fill.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"format": 1, "items": items}, f, ensure_ascii=False)
+        QuickFillTest.writes += 1  # (every write a new modification time, or it is not read again)
+        t = 2000000000 + QuickFillTest.writes
+        os.utime(path, (t, t))
+
+    def press(self, *seq):
+        for k in seq:
+            if len(k) == 1:
+                self.c.key(k)
+            else:
+                self.c.key(special=k)
+
+    def test_open_and_send(self):
+        c = self.c
+        self.press("`", " ")
+        self.assertIsNone(c.symbol_page)
+        typed, items, index = c.fill_shown()
+        self.assertEqual((typed, [s for _, s in items], index), ("", ["email", "name1", "name2", "em1", "em2", "tks"], 0))
+        self.press("DOWN", "DOWN", "UP", "DOWN", "ENTER")
+        self.assertEqual(c.commit, "John")
+        self.assertIsNone(c.fill_shown())
+
+    def test_narrow_and_back(self):
+        c = self.c
+        self.press("`", " ", "e", "m")
+        typed, items, _ = c.fill_shown()
+        self.assertEqual((typed, [s for _, s in items]), ("em", ["email", "em1", "em2"]))
+        self.press("1")
+        self.assertEqual([s for _, s in c.fill_shown()[1]], ["em1"])
+        self.press("BACK")
+        self.assertEqual([s for _, s in c.fill_shown()[1]], ["email", "em1", "em2"])
+        self.press("BACK", "BACK", "BACK")  # (nothing typed: Backspace closes it)
+        self.assertIsNone(c.fill_shown())
+        self.press("`", " ", "x")
+        self.assertEqual(c.fill_shown()[:2], ("x", []))
+        self.press("ENTER")  # (nothing to send)
+        self.assertEqual(c.commit, "")
+
+    def test_filter_case(self):
+        c = self.c
+        self.press("`", " ", "N", "A", "M", "E", "2", "ENTER")
+        self.assertEqual(c.commit, "John")
+
+    def test_esc(self):
+        c = self.c
+        self.press("`", " ", "ESC")
+        self.assertIsNone(c.fill_shown())
+        self.assertEqual((c.commit, c.composition), ("", ""))
+
+    def test_space_after_moving_types_symbol(self):
+        # (the symbol keyboard as ever once anything else was pressed in it)
+        c = self.c
+        self.press("`", "RIGHT", " ")
+        self.assertIsNone(c.fill_shown())
+        self.assertEqual(len(c.commit), 1)
+        self.press("`", "1")
+        self.assertIsNone(c.fill_shown())
+
+    def test_open_while_composing(self):
+        c = self.c
+        for ch in keys("ㄨㄛˇ"):
+            c.key(ch)
+        self.press("`", " ", "ENTER")
+        self.assertEqual(c.commit, "我sample@example.com")
+        for ch in keys("ㄨㄛˇ"):
+            c.key(ch)
+        self.press("`", " ", "ESC")
+        self.assertEqual(c.composition, "我")
+
+    def test_file_changed_while_open(self):
+        c = self.c
+        self.press("`", " ", "DOWN")
+        self.write([["另一個", "other"]])
+        self.press("ENTER")
+        self.assertEqual(c.commit, "王小明")
+        self.press("`", " ")
+        self.assertEqual([s for _, s in c.fill_shown()[1]], ["other"])
+
+    def test_none_set(self):
+        c = self.c
+        self.write([])
+        self.press("`", " ")
+        self.assertEqual(c.fill_shown(), ("", [], 0))
+        self.press("ENTER")
+        self.assertEqual(c.commit, "")
+
+    def test_numpad_digit_narrows(self):
+        # (a numpad key comes as a literal: it narrows the list too, also while typing Chinese)
+        c = self.c
+        for ch in keys("ㄨㄛˇ"):
+            c.key(ch)
+        self.press("`", " ", "e", "m")
+        c.type_literal("1")
+        self.assertEqual([s for _, s in c.fill_shown()[1]], ["em1"])
+        self.assertEqual(c.composition, "我")
+
+    def test_full_punct_closes(self):
+        # (Ctrl + a punctuation key: the mark goes out after what is typed, and the list closes)
+        c = self.c
+        for ch in keys("ㄨㄛˇ"):
+            c.key(ch)
+        self.press("`", " ")
+        self.assertTrue(c.type_full_punct(","))
+        self.assertIsNone(c.fill_shown())
+        self.assertEqual(c.commit, "我，")
+        self.press("`", " ")  # (nothing typed)
+        self.assertTrue(c.type_full_punct(","))
+        self.assertIsNone(c.fill_shown())
+        self.assertEqual(c.commit, "，")
+
+    def test_bad_items(self):
+        for items in (None, 3, "x"):
+            self.write(items)
+            c = create_composer(os.path.join(self.tmp.name, "user.json"))
+            c.config.values = dict(DEFAULTS)
+            self.press_on(c, "`", " ")
+            self.assertEqual(c.fill_shown(), ("", [], 0))
+
+    def press_on(self, c, *seq):
+        for k in seq:
+            c.key(k) if len(k) == 1 else c.key(special=k)
+
+    def test_no_file_symbols_as_ever(self):
+        os.remove(os.path.join(self.tmp.name, "quick_fill.json"))
+        c = create_composer(os.path.join(self.tmp.name, "user.json"))
+        c.config.values = dict(DEFAULTS)
+        for k in ("`", "`"):
+            c.key(k)
+        self.assertEqual(c.commit, "`")
+
+
 class CandKeysTest(unittest.TestCase):
     """The candidate list with other keys and layouts (#23): a page as many as the keys, a key picks its place on
     the page (letters whatever their case), keys not in the set do nothing; the grid's arrow keys."""

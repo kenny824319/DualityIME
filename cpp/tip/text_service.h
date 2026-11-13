@@ -99,6 +99,10 @@ private:
         std::vector<std::wstring> replacements;  // the bar above the text
         int repl_index = -1;
         int symbol_page = -1, symbol_cursor = 0;
+        bool fill_open = false;  // 快速填入 (#21): what was typed, (text, shortcut) shown, the highlighted one
+        std::wstring fill_typed;
+        std::vector<std::pair<std::wstring, std::wstring>> fill_items;
+        int fill_index = 0;
         bool can_undo = false;
     };
     struct Settings {
@@ -208,6 +212,8 @@ private:
     std::unique_ptr<ZhuyinTip> tip_win_;
     std::unique_ptr<HintWindow> mode_win_;
     std::unique_ptr<SymbolKeyboard> keyboard_;
+    std::unique_ptr<FillWindow> fill_win_;
+    void pick_fill(int index);
 };
 
 }  // namespace sz

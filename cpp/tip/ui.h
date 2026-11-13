@@ -97,6 +97,23 @@ private:
     SIZE size_{};
 };
 
+// 快速填入 (#21): the title (what was typed, else 快速填入), a row a text with its [shortcut], nine rows shown
+class FillWindow : public Popup {
+public:
+    std::function<void(int)> on_pick;  // a row clicked: its index among the items
+    void show(const std::wstring& typed, const std::vector<std::pair<std::wstring, std::wstring>>& items, int index,
+              const std::wstring& font, int font_size, const RECT& text_rect);
+
+protected:
+    void draw(HDC dc, int w, int h) override;
+    LRESULT message(UINT msg, WPARAM wp, LPARAM lp, bool& done) override;
+
+private:
+    std::wstring typed_, font_ = L"Microsoft JhengHei UI";
+    std::vector<std::pair<std::wstring, std::wstring>> items_;
+    int index_ = 0, first_ = 0, font_size_ = 18, row_h_ = 30, w_ = 260, rows_shown_ = 0;
+};
+
 class ReplacementBar : public Popup {
 public:
     std::function<void(int)> on_pick;  // clicked with the mouse

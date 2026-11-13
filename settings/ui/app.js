@@ -127,7 +127,8 @@ function dialog(title, body, buttons) {
   // buttons: [{text, kind, click(close) }]; Esc or a click outside closes it
   return new Promise((resolve) => {
     const close = (v) => { overlay.remove(); document.removeEventListener("keydown", esc); resolve(v); };
-    const esc = (e) => { if (e.key === "Escape") close(null); };
+    // (Esc closes only the top dialog: 快速填入 opens one over another)
+    const esc = (e) => { if (e.key === "Escape" && overlay === [...document.querySelectorAll(".overlay")].pop()) close(null); };
     const foot = h("div", { class: "dialog-foot" }, h("span", { class: "spacer" }));
     const overlay = h("div", { class: "overlay", onclick: (e) => { if (e.target === overlay) close(null); } },
       h("div", { class: "dialog", role: "dialog", "aria-modal": "true", "aria-label": title },
@@ -451,12 +452,100 @@ async function forgetMemory() {
   if (current === "complete") show("complete");
 }
 
+// ---- 快速填入 (#21): a table like the ASUS IME's 快捷文字本 ----------------------------------------
+function quickFillProblem(text, key, rows, except) {
+  if (!text) return "請輸入內容";
+  if (text.length > 255) return "內容最多 255 個字";
+  if (/[\r\n]/.test(text)) return "內容不能換行";
+  if (!/^[A-Za-z0-9]{1,8}$/.test(key)) return "捷徑請用 1 到 8 個英文字母或數字";
+  if (rows.some(([, k], i) => i !== except && k.toLowerCase() === key.toLowerCase())) return `捷徑「${key}」已被使用`;
+  return null;
+}
+
+async function editQuickFillRow(rows, i) {
+  // 新增 (i undefined) or 編輯 one row; resolves to the row, or null
+  const [t0, k0] = i === undefined ? ["", ""] : rows[i];
+  const text = h("input", { class: "text-input", value: t0, maxlength: 255, "aria-label": "內容" });
+  const key = h("input", { class: "text-input", value: k0, maxlength: 8, "aria-label": "捷徑" });
+  const error = h("div", { class: "error-line", role: "alert" });
+  const body = h("div", { class: "fill-edit" },
+    h("label", {}, "內容", text), h("label", {}, "捷徑（1 到 8 個英文字母或數字）", key), error);
+  setTimeout(() => text.focus(), 0);
+  return dialog(i === undefined ? "新增快速填入" : "編輯快速填入", body, [
+    { text: "取消", value: null },
+    { text: "確定", kind: "primary", click: (close) => {
+      const row = [text.value, key.value.trim()];
+      const err = quickFillProblem(row[0], row[1], rows, i);
+      if (err) { error.textContent = err; return; }
+      close(row);
+    } }]);
+}
+
+async function editQuickFill() {
+  let rows = await api("quickFill");
+  const checked = new Set();
+  let lastShown = 0;
+  const tbody = h("tbody");
+  const search = h("input", { class: "text-input fill-search", type: "search", placeholder: "搜尋", "aria-label": "搜尋" });
+  const all = h("input", { type: "checkbox", "aria-label": "全選" });
+  const del = h("button", { class: "btn", disabled: true }, "刪除");
+  async function save(next) {
+    try { await api("saveQuickFill", { rows: next }); rows = next; }
+    catch (e) { toast(e && e.message ? e.message : "儲存失敗，請再試一次"); }
+    draw();
+  }
+  function shownRows() {
+    const q = search.value.trim().toLowerCase();
+    return rows.map((r, i) => [r, i]).filter(([[t, k]]) => !q || t.toLowerCase().includes(q) || k.toLowerCase().includes(q));
+  }
+  function draw() {
+    const shown = shownRows();
+    const seen = new Set(shown.map(([, i]) => i));
+    for (const i of [...checked]) if (!seen.has(i)) checked.delete(i);  // (only rows shown stay checked)
+    lastShown = shown.length;
+    tbody.replaceChildren(...shown.map(([[t, k], i]) => {
+      const box = h("input", { type: "checkbox", "aria-label": "選取" });
+      box.checked = checked.has(i);
+      box.addEventListener("change", () => { box.checked ? checked.add(i) : checked.delete(i); sync(); });
+      return h("tr", {},
+        h("td", { style: "width:36px" }, box),
+        h("td", { class: "fill-text" }, t),
+        h("td", { style: "width:28%" }, k),
+        h("td", { style: "width:40px" }, h("button", { class: "icon-btn", "aria-label": "編輯", title: "編輯",
+          onclick: async () => { const row = await editQuickFillRow(rows, i); if (row) save(rows.map((r, j) => (j === i ? row : r))); } }, "✎")));
+    }));
+    if (!shown.length)
+      tbody.append(h("tr", {}, h("td", { colspan: 4, class: "row-desc" }, rows.length ? "沒有符合的項目" : "尚未新增。打字時按 ` 再按空白，即可叫出這些內容")));
+    sync();
+  }
+  function sync() {
+    del.disabled = !checked.size;
+    all.checked = lastShown > 0 && checked.size === lastShown;
+  }
+  // (全選 and 刪除 only ever reach the rows shown: a search clears what was checked)
+  all.addEventListener("change", () => { checked.clear(); if (all.checked) shownRows().forEach(([, i]) => checked.add(i)); draw(); });
+  search.addEventListener("input", () => { checked.clear(); draw(); });
+  del.addEventListener("click", () => { const next = rows.filter((_, i) => !checked.has(i)); checked.clear(); save(next); });
+  const add = h("button", { class: "btn", onclick: async () => { const row = await editQuickFillRow(rows); if (row) save([...rows, row]); } }, "＋ 新增");
+  const body = h("div", {},
+    h("p", { class: "row-desc" }, "打字時按 ` 再按空白叫出清單，用 ↑↓ 選擇、Enter 送出；接著打捷徑的開頭可以縮小清單。"),
+    h("div", { class: "fill-bar" }, add, del, h("span", { class: "spacer" }), search),
+    h("table", { class: "list fill-table" },
+      h("thead", {}, h("tr", {}, h("th", {}, all), h("th", {}, "內容"), h("th", {}, "捷徑"), h("th"))), tbody));
+  draw();
+  await dialog("快速填入", body, [{ text: "完成", kind: "primary", value: true }]);
+  S = await api("state");
+  show("dict");
+}
+
 function pageDict() {
   return [
     h("h1", {}, "個人詞庫"),
     card(
       row("自訂詞彙", `打字時優先選用設定的詞彙。目前已設定 ${S.words} 筆`, h("button", { class: "btn", onclick: () => editList("words") }, "編輯")),
-      row("映射詞彙", `可自定義詞彙映射關係。目前已設定 ${S.shortcuts} 筆`, h("button", { class: "btn", onclick: () => editList("shortcuts") }, "編輯"))),
+      row("映射詞彙", `可自定義詞彙映射關係。目前已設定 ${S.shortcuts} 筆`, h("button", { class: "btn", onclick: () => editList("shortcuts") }, "編輯")),
+      row("快速填入", `打字時按 \` 再按空白，叫出常用的 Email、地址等內容。目前已設定 ${S.quickFill || 0} 筆`,
+        h("button", { class: "btn", onclick: () => editQuickFill() }, "編輯"))),
     h("h2", {}, "框選查詢"),
     card(
       row("連按 Ctrl 框選查詢", "選取文字後連按兩次 Ctrl，即可查看注音、語音朗讀，或快速加入「自訂詞彙」與「映射詞彙」", cfgToggle("lookup", "連按 Ctrl 框選查詢")),
@@ -724,7 +813,8 @@ async function restore() {
     return;
   }
   const parts = [["memory", `記憶（${info.memory} 筆）`, info.memory > 0], ["words", `自訂詞彙（${info.words} 筆）`, info.words > 0],
-    ["shortcuts", `映射詞彙（${info.shortcuts} 筆）`, info.shortcuts > 0], ["config", "設定", info.config]];
+    ["shortcuts", `映射詞彙（${info.shortcuts} 筆）`, info.shortcuts > 0], ["quickFill", `快速填入（${info.quickFill || 0} 筆）`, info.quickFill > 0],
+    ["config", "設定", info.config]];
   const boxes = {};
   const body = h("div", {},
     h("p", { class: "row-desc", style: "font-size:14px" }, `匯出時間：${info.created}。會與目前的資料合併。`),

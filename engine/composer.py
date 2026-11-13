@@ -1492,6 +1492,7 @@ class Composer:
         self.after_english = False  # last commit ended with an English word
         self.commit = ""
         self.last_commit = None     # what undo_commit() can bring back
+        self.fill = None
         self._clear_input()
 
     def _clear_input(self):
@@ -1520,6 +1521,8 @@ class Composer:
         self.cand_expanded = False   # → spread the list out to the right: columns of a page, GRID_COLUMNS shown
         self.cand_first = 0          # the first column shown then
         self.symbol_page = None      # symbol keyboard page while it is open
+        self.symbol_fresh = False    # ...and nothing pressed in it yet (Space then opens 快速填入, #21)
+        self.fill = None             # 快速填入 while open: {"items": as opened, "typed": str, "index": int}
         self.symbol_cursor = symbols.KEYS.index("1")
         self._refresh()
 
@@ -1641,7 +1644,8 @@ class Composer:
         self.composition = "".join(text)
         self.cursor = len(self.composition) if self.caret is None else self._tok_offset(self.caret)
         self._suggest()
-        if self.caret is None or self.candidates or self.symbol_page is not None or self._simulating:
+        if (self.caret is None or self.candidates or self.symbol_page is not None or self.fill is not None
+                or self._simulating):
             self.replacements, self._repl_actions = [], []
         else:
             self.replacements, self._repl_actions = self._replacement_bar()
@@ -1769,7 +1773,7 @@ class Composer:
         """The single most likely continuation, shown next to the text: the rest
         of a remembered e-mail / English word, or the next Chinese character."""
         self.suggestions, self._sugg_actions, self.sugg_index = [], [], 0
-        if not self.config.completion or self.candidates or not self.raw:
+        if not self.config.completion or self.candidates or not self.raw or self.fill is not None:
             return
         if self.caret is not None:
             return  # (only at the end, like the ASUS IME: in the middle the bar is up)
@@ -2770,6 +2774,7 @@ class Composer:
     # ---- symbol keyboard ----------------------------------------------------
     def open_symbols(self):
         self.symbol_page = 0
+        self.symbol_fresh = True
         self.symbol_cursor = symbols.KEYS.index("1")
         self.suggestions, self._sugg_actions = [], []
 
@@ -2778,7 +2783,8 @@ class Composer:
         self._suggest()
 
     def _type_symbol(self, sym):
-        """The text typed so far goes out first, then the symbol."""
+        """The text typed so far goes out first, then the symbol (快速填入 closes too)."""
+        self.fill = None
         self.close_symbols()
         before = ""
         if self.raw:
@@ -2798,7 +2804,12 @@ class Composer:
         return True
 
     def _key_symbols(self, ch, special):
-        """Keys while the symbol keyboard is open: each key types its symbol."""
+        """Keys while the symbol keyboard is open: each key types its symbol; Space first opens 快速填入."""
+        fresh, self.symbol_fresh = self.symbol_fresh, False
+        if fresh and ch == " ":
+            self.close_symbols()
+            self.open_fill()
+            return True
         pages = len(symbols.PAGES)
         if ch == " ":
             self._type_symbol(symbols.symbol(self.symbol_page, self.symbol_cursor))
@@ -2816,6 +2827,55 @@ class Composer:
             self.symbol_page = (self.symbol_page - 1) % pages
         elif special in ("LEFT", "RIGHT", "UP", "DOWN"):
             self.symbol_cursor = symbols.neighbour(self.symbol_cursor, special)
+        return True
+
+    # ---- 快速填入 (#21) -----------------------------------------------------------------------
+    def open_fill(self):
+        """The list of quick_fill.json as it is now (kept while it is open)."""
+        self.user.reload_quick_fill()
+        self.fill = {"items": list(self.user.quick_fill), "typed": "", "index": 0}
+        self.suggestions, self._sugg_actions = [], []
+
+    def _fill_matches(self):
+        typed = self.fill["typed"].lower()
+        return [it for it in self.fill["items"] if it[1].lower().startswith(typed)]
+
+    def fill_shown(self):
+        """(what was typed, [(text, shortcut)] of the shortcuts starting so, the highlighted one), or None."""
+        if self.fill is None:
+            return None
+        return self.fill["typed"], self._fill_matches(), self.fill["index"]
+
+    def close_fill(self):
+        self.fill = None
+        self._suggest()
+
+    def pick_fill(self, i):
+        """The text of item i of the list as shown goes out, after what was being typed."""
+        matches = self._fill_matches() if self.fill is not None else []
+        if 0 <= i < len(matches):
+            self.fill = None
+            self._type_symbol(matches[i][0])
+
+    def _key_fill(self, ch, special):
+        """Keys while 快速填入 is open: letters and digits narrow it (the shortcuts starting so, whatever the
+        case), Backspace takes one back (nothing typed: closes it), up and down move, Enter sends, Esc closes."""
+        f = self.fill
+        if ch and ch.isascii() and ch.isalnum():
+            f["typed"] += ch
+            f["index"] = 0
+        elif special == "BACK":
+            if f["typed"]:
+                f["typed"], f["index"] = f["typed"][:-1], 0
+            else:
+                self.close_fill()
+        elif special in ("UP", "DOWN"):
+            n = len(self._fill_matches())
+            f["index"] = max(0, min(n - 1, f["index"] + (1 if special == "DOWN" else -1)))
+        elif special == "ENTER":
+            self.pick_fill(f["index"])
+        elif special == "ESC":
+            self.close_fill()
         return True
 
     def _pick(self, i, from_bar=False):
@@ -3631,6 +3691,8 @@ class Composer:
             self._refresh()
         if ch is not None:  # (special keys carry no Caps Lock state)
             self.caps_lock = caps
+        if self.fill is not None:
+            return self._key_fill(ch, special)
         if self.symbol_page is not None:
             return self._key_symbols(ch, special)
         if self.candidates:
@@ -3684,6 +3746,8 @@ class Composer:
         being typed (rather than sending it off first) and never read as zhuyin."""
         self.commit = ""
         self.last_commit = None
+        if self.fill is not None:  # (快速填入: a numpad digit narrows it like any other)
+            return self._key_fill(ch, None)
         if self.symbol_page is not None:
             self.close_symbols()
         if self.candidates:
