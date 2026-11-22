@@ -16,3 +16,7 @@
 ^(engine/lexicon\.py|cpp/engine/lexicon\.cpp)$	\bnames\.txt\b  # 名人與角色的名單（tools/build_names.py 產生），引擎只讀不寫
 ^(engine/(lexicon|composer)\.py|cpp/engine/lexicon\.cpp|installer/src/Settings\.cs)$	\bcustom_picks\.json\b  # Tab 補過的自訂詞次數（#13）
 ^(engine/(lexicon|composer)\.py|cpp/engine/lexicon\.cpp|installer/src/Settings\.cs)$	\bquick_fill\.json\b  # quick fill (#21)
+^(engine/(composer|lexicon)\.py|cpp/engine/lexicon\.cpp)$	\bafter_english\.txt\b  # 英文後面接中文的字表（#42，data/），引擎只讀不寫
+^(engine/lexicon\.py|cpp/engine/lexicon\.cpp|installer/src/Settings\.cs)$	\buser_simplified\.json\b  # 簡體模式自己的選字記憶（#32），和 user.json 分開的檔
+^(engine/lm(_next)?\.py|cpp/engine/lm\.cpp|installer/(build|install)\.ps1)$	\blm(_plus|_max)?\.bin\b  # 選字模型三檔的模型檔（#41，data/），引擎只讀不寫
+^(engine/script\.py|cpp/engine/script\.cpp|installer/(build|install)\.ps1)$	\b(T[SW]\w+|mainland_words)\.txt\b|\bLICENSE-OpenCC\.txt\b  # 簡體中文的 OpenCC 字表與授權（#32，data/opencc），引擎只讀不寫
