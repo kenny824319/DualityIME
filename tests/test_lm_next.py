@@ -1,5 +1,5 @@
 """tools/lm/next: the next student model of 長句選字加強 (#41) - its training text with English kept as one mark
-(docs/superpowers/plans/2026-11-15-next-gen-student.md)."""
+(docs/architecture/decisions.md, #42)."""
 import importlib.util
 import os
 import unittest

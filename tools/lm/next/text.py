@@ -1,6 +1,6 @@
 """The text the next student model (#41) reads: Chinese characters, and English kept as one mark.
 
-The same rule as the engines' (docs/superpowers/plans/2026-11-15-next-gen-student.md): after NFKC, each Chinese
+The same rule as the engines' (docs/architecture/decisions.md, #42): after NFKC, each Chinese
 character (tools/lm/prepare.py RANGES) is one unit; a run of ASCII letters and digits, single - . _ allowed between
 them (Qwen3-1.7B, v3.2.6, 1.5), is one EN; everything else (punctuation, spaces, symbols) is dropped and does not cut
 the text.
