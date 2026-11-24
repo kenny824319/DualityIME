@@ -18,6 +18,18 @@ namespace sz {
 
 namespace {
 
+// (#59) one action of the user counted once for the language model's caches (lm_next_key), however many entry points
+// it passes (key_bar calls key again): each entry point holds one, only the outermost counts
+struct LmAction {
+    explicit LmAction(int& depth) : depth_(depth) {
+        if (depth_++ == 0) lm_next_key();
+    }
+    ~LmAction() { --depth_; }
+    LmAction(const LmAction&) = delete;
+    LmAction& operator=(const LmAction&) = delete;
+    int& depth_;
+};
+
 // keys that become full-width punctuation outside English words
 const std::map<char, ustr>& PUNCT() {
     static const std::map<char, ustr> m = {
@@ -2740,6 +2752,7 @@ void Composer::drop_mainland_picks() {
 
 bool Composer::toggle_simplified() {
     // 簡體輸出 (#32): what is being typed and an open list turn at once (see engine/composer.py)
+    LmAction action(lm_action_depth_);
     config.save("simplified", Json(!config.flag("simplified")));
     user.set_simplified(config.flag("simplified"));
     if (!config.flag("simplified")) drop_mainland_picks();
@@ -5230,6 +5243,7 @@ std::optional<Composer::FillShown> Composer::fill_shown() const {
 }
 
 void Composer::pick_fill(int i) {
+    LmAction action(lm_action_depth_);
     auto matches = fill_matches();
     if (i < 0 || i >= static_cast<int>(matches.size())) return;
     fill_.reset();
@@ -6476,6 +6490,7 @@ void Composer::autocorrect_choices(const Token* tok, std::vector<ustr>& labels, 
 ustr Composer::undo_commit() {
     // right after text was sent: bring its keys back for another try; returns
     // the text the front end must delete first ("" = nothing to undo)
+    LmAction action(lm_action_depth_);
     if (!raw.empty() || !last_commit_) return U"";
     auto [text, undo] = *last_commit_;
     last_commit_.reset();
@@ -6882,6 +6897,7 @@ void Composer::commit_head() {
 // ---- key entry point -------------------------------------------------------------------
 
 bool Composer::key(std::optional<char32_t> ch, const std::string& special, bool caps) {
+    LmAction action(lm_action_depth_);  // (the model's caches keep what this key and the one before used, #59)
     commit.clear();
     last_commit_.reset();
     if (user.reload_custom()) {
@@ -6941,6 +6957,7 @@ bool Composer::key(std::optional<char32_t> ch, const std::string& special, bool 
 }
 
 bool Composer::type_full_punct(char32_t ch) {
+    LmAction action(lm_action_depth_);
     if (ch >= 128) return false;
     char k = static_cast<char>(ch);
     auto a = PUNCT_KEYS().find(k);
@@ -6954,6 +6971,7 @@ bool Composer::type_full_punct(char32_t ch) {
 
 bool Composer::type_literal(char32_t ch) {
     // a key that is always itself, e.g. from the numpad: joins the text being typed
+    LmAction action(lm_action_depth_);
     commit.clear();
     last_commit_.reset();
     if (fill_) return key_fill(ch, "");  // (快速填入: a numpad digit narrows it like any other)

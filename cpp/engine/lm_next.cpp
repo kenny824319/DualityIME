@@ -1,9 +1,11 @@
 // Version 2 of the language model file (b"DLM2"): the next student (#41), exactly as engine/lm_next.py computes it (the
 // operations, their order and their rounding are listed there; tools/lm/check_cpp.py compares the two).
+#include <algorithm>
 #include <cstring>
 
 #include "lm.h"
 #include "lm_detail.h"
+#include "lm_pool.h"
 
 namespace sz {
 
@@ -23,6 +25,8 @@ namespace {
 constexpr uint32_t VERSION2 = 2;
 constexpr uint32_t ARCH_TF = 1, ARCH_GA = 2;
 constexpr int EN_ID = 2;  // "<en>" (engine/lm_next.py)
+constexpr int MATVEC_ROWS = 32;  // (rows per task of matvecs: a multiple of 4)
+constexpr size_t ATTEND_WAVE_MIN = 4;  // (a wave of fewer items attends on one thread)
 constexpr int64_t INT32_MAX_V = INT32_LIMIT - 1;
 
 // the largest |x| a matvec of n columns takes: n products of int8 and int16 then fit an int32 sum
@@ -285,22 +289,33 @@ std::vector<std::vector<int64_t>> NextLM::matvecs(const Linear& l, const std::ve
     std::vector<int> ks(B);
     for (size_t b = 0; b < B; ++b) ks[b] = shifted(xs[b], l.n, x16[b]);
     std::vector<std::vector<int64_t>> out(B, std::vector<int64_t>(static_cast<size_t>(l.rows)));
-    int r = 0;
+    // the rows in tasks of MATVEC_ROWS (a multiple of 4: the four-row groups and the scalar rest as before), each task
+    // its rows for every x while they stay in the cache, writing only its rows: a large batch on several threads (#59),
+    // the same integer sums whichever thread does them
+    const int rows = l.rows;
+    const size_t tasks = (static_cast<size_t>(rows) + MATVEC_ROWS - 1) / MATVEC_ROWS;
+    auto task = [&](size_t t, int) {
+        const int r0 = static_cast<int>(t) * MATVEC_ROWS, r1 = std::min(rows, r0 + MATVEC_ROWS);
+        for (size_t b = 0; b < B; ++b) {
+            int r = r0;
 #ifdef SZ_LM_X86
-    if (avx2_)
-        for (; r + 4 <= l.rows; r += 4) {  // (four rows, then every x: the rows stay in the cache)
-            const int8_t* w = l.q.data() + static_cast<size_t>(r) * l.n;
-            for (size_t b = 0; b < B; ++b) {
-                int32_t acc[4];
-                dot4_avx2(w, static_cast<size_t>(l.n), x16[b].data(), l.n, acc);
-                for (int i = 0; i < 4; ++i) out[b][r + i] = requant_shift(acc[i], l.m[r + i], ks[b]) + l.b[r + i];
-            }
-        }
+            if (avx2_)
+                for (; r + 4 <= r1; r += 4) {
+                    int32_t acc[4];
+                    dot4_avx2(l.q.data() + static_cast<size_t>(r) * l.n, static_cast<size_t>(l.n), x16[b].data(), l.n,
+                              acc);
+                    for (int i = 0; i < 4; ++i) out[b][r + i] = requant_shift(acc[i], l.m[r + i], ks[b]) + l.b[r + i];
+                }
 #endif
-    for (; r < l.rows; ++r) {
-        const int8_t* w = l.q.data() + static_cast<size_t>(r) * l.n;
-        for (size_t b = 0; b < B; ++b) out[b][r] = requant_shift(dot(w, x16[b].data(), l.n), l.m[r], ks[b]) + l.b[r];
-    }
+            for (; r < r1; ++r)
+                out[b][r] = requant_shift(dot(l.q.data() + static_cast<size_t>(r) * l.n, x16[b].data(), l.n), l.m[r],
+                                          ks[b]) + l.b[r];
+        }
+    };
+    if (B * static_cast<size_t>(rows) * static_cast<size_t>(l.n) >= PARALLEL_MACS)
+        lmq::parallel_for(tasks, lmq::threads(), task);
+    else
+        for (size_t t = 0; t < tasks; ++t) task(t, 0);
     return out;
 }
 
@@ -361,24 +376,38 @@ LmState NextLM::start() const { return step(LmState{}, 1); }
 std::vector<LmState> NextLM::forward(const std::vector<std::shared_ptr<const NextNode>>& prev,
                                      const std::vector<int>& link, const std::vector<int>& cs) const {
     // step()'s arch 1 for every item, layer by layer: each Linear's rows read once for all the items (matvecs); the
-    // attention item by item, in order, so an item linked to an earlier one reads its k and v of this layer
+    // attention in waves by depth in the batch, so an item linked to an earlier one reads its k and v of this layer;
+    // the items of a wave are independent and may go to several threads (#59)
     const size_t B = cs.size();
     std::vector<std::shared_ptr<NextNode>> nodes(B);
     std::vector<std::vector<int64_t>> x(B), t(B), att(B);
+    std::vector<size_t> depth(B, 0);
+    std::vector<std::vector<size_t>> waves;
     for (size_t b = 0; b < B; ++b) {
         nodes[b] = std::make_shared<NextNode>();
         nodes[b]->prev = link[b] >= 0 ? std::shared_ptr<const NextNode>(nodes[static_cast<size_t>(link[b])]) : prev[b];
         nodes[b]->k.resize(static_cast<size_t>(layers_));
         nodes[b]->v.resize(static_cast<size_t>(layers_));
         x[b] = embed(cs[b]);
+        if (link[b] >= 0) depth[b] = depth[static_cast<size_t>(link[b])] + 1;  // (a link is always to an earlier item)
+        if (depth[b] >= waves.size()) waves.resize(depth[b] + 1);
+        waves[depth[b]].push_back(b);
     }
     for (int l = 0; l < layers_; ++l) {
         const Block& blk = blocks_[static_cast<size_t>(l)];
         for (size_t b = 0; b < B; ++b) t[b] = rmsnorm(x[b], blk.n1);
         std::vector<std::vector<int64_t>> qkv = matvecs(blk.qkv, t);
-        for (size_t b = 0; b < B; ++b)
-            attend(qkv[b], nodes[b]->prev.get(), l, nodes[b]->k[static_cast<size_t>(l)],
-                   nodes[b]->v[static_cast<size_t>(l)], att[b]);
+        for (const std::vector<size_t>& wave : waves) {
+            auto one = [&](size_t q, int) {
+                const size_t b = wave[q];
+                attend(qkv[b], nodes[b]->prev.get(), l, nodes[b]->k[static_cast<size_t>(l)],
+                       nodes[b]->v[static_cast<size_t>(l)], att[b]);
+            };
+            if (wave.size() >= ATTEND_WAVE_MIN)
+                lmq::parallel_for(wave.size(), lmq::threads(), one);
+            else
+                for (size_t q = 0; q < wave.size(); ++q) one(q, 0);
+        }
         std::vector<std::vector<int64_t>> o = matvecs(blk.out, att);
         for (size_t b = 0; b < B; ++b) {
             for (int j = 0; j < D_; ++j) x[b][j] += o[b][j];

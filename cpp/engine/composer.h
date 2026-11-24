@@ -372,6 +372,7 @@ private:
     bool is_symbol_key(size_t tok) const;
     void auto_commit();
     void commit_head();
+    int lm_action_depth_ = 0;  // (#59: entry points of the action being handled, LmAction in composer.cpp)
     bool key_special(const std::string& special);
     bool key_candidates(std::optional<char32_t> ch, const std::string& special);
     void key_grid(const std::string& special);

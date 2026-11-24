@@ -20,6 +20,7 @@
 
 #include "composer.h"
 #include "json.h"
+#include "lm_pool.h"
 #include "pipe.h"
 
 using namespace sz;
@@ -429,6 +430,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
         return 0;
     }
     SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);  // typing must never wait
+    sz::lmq::set_threads(sz::lmq::default_threads());  // (a key with a large batch for the model: a few threads, #59)
 
     std::wstring data = module_dir(nullptr) + L"data";
     bool own_dir = false;  // --user-dir (tests): no migration

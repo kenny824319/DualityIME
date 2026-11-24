@@ -4,6 +4,7 @@
 // are in those two Python files.
 #pragma once
 #include <cstdint>
+#include <iterator>
 #include <list>
 #include <memory>
 #include <string>
@@ -176,8 +177,10 @@ private:
     mutable std::vector<int> all_;
 };
 
-// states (and scored syllables) kept across keys, then all dropped but the start (the same as
-// engine/lm.py: a sentence of 47 syllables typed with 注音自動校正 on makes about 1100; a version 1 state is 3 KB)
+// states (and scored syllables) kept across keys (a sentence of 47 syllables typed with 注音自動校正 on makes about 1100;
+// a version 1 state is 3 KB); over it, what neither this key nor the one before used is dropped; over twice it, what
+// this key did not use, then all but the start (#59: engine/lm.py drops all at once; a long sentence's key on max needs
+// most of the budget and was dropped part way, stepping it all again)
 constexpr size_t LM_STATES_KEPT = 3000;
 // ...and the states within this many bytes (#41: a version 2 state is 15 KB for light, 55 KB for a max Transformer;
 // what is kept changes the time, never a score - Task 18 measures the time against it)
@@ -188,12 +191,55 @@ constexpr size_t LM_VIEWS_KEPT = 64;
 // #41: one English or letters-and-digits run in a context, for a model that knows English (engine/lm.py EN_MARK)
 constexpr char32_t EN_MARK = 0xE000;
 
+// #59: the key the engine is on (Composer::key counts them): an entry of LmScorer's caches remembers the last key that
+// used it. From 2, so "the key before" is never below 1. Not thread-safe, as LmScorer.
+inline uint64_t g_lm_key = 2;
+inline void lm_next_key() { ++g_lm_key; }
+
+// one of LmScorer's caches: each entry marked with the key that last found, read or wrote it. References to values
+// stay valid while other entries are added (an unordered_map's nodes stay put).
+template <class V> class KeyCache {
+public:
+    size_t size() const { return m_.size(); }
+    bool has(const ustr& k) { return find(k) != nullptr; }
+    V* find(const ustr& k) {
+        auto it = m_.find(k);
+        if (it == m_.end()) return nullptr;
+        it->second.used = g_lm_key;
+        return &it->second.v;
+    }
+    V& at(const ustr& k) {
+        Entry& e = m_.at(k);
+        e.used = g_lm_key;
+        return e.v;
+    }
+    V& put(ustr k, V v) {
+        Entry& e = m_[std::move(k)];
+        e.v = std::move(v);
+        e.used = g_lm_key;
+        return e.v;
+    }
+    void clear() { m_.clear(); }
+    // drops the entries last used before key `before`
+    void drop_before(uint64_t before) {
+        for (auto it = m_.begin(); it != m_.end();) it = it->second.used < before ? m_.erase(it) : std::next(it);
+    }
+
+private:
+    struct Entry {
+        V v{};
+        uint64_t used = 0;
+    };
+    std::unordered_map<ustr, Entry> m_;
+};
+
 // The model's score of a text written for some syllables, as convert() uses it (engine/lm.py
 // Scorer): each character among the characters its syllable may be (every one a word of the
 // dictionary writes for it), the text from the start of the run of Chinese (<s>, nothing
 // before it). States are kept by text: the hypotheses of one key and the keys after it share
-// their beginnings (LM_STATES_KEPT, then started again). Not thread-safe (the engine handles
-// one request at a time).
+// their beginnings (within LM_STATES_KEPT: what recent keys did not use is dropped first, #59).
+// Not thread-safe (the engine handles one request at a time; only the model's arithmetic below
+// it may use other threads, lm_pool.h).
 class LmScorer {
 public:
     LmScorer(const LmModel& lm, const Lexicon& lexicon);
@@ -233,9 +279,15 @@ private:
     LmScorer(const LmScorer& base, const ustr& context);  // (view's)
     void clear() const;
     void room() const;
-    // room's test with this many states and masses more (all the views together for a view), and what room drops
-    bool full(size_t states, size_t masses) const;
-    void drop() const;
+    struct Sizes {
+        size_t states = 0, scores = 0, masses = 0;
+    };
+    Sizes sizes() const;  // the caches' sizes (all the views together for a view)
+    bool over(const Sizes& s, size_t more_states, size_t more_masses, size_t more_scores, size_t times) const;
+    // room's test with this many states, masses and scores more, against the budget times `times`
+    bool full(size_t states, size_t masses, size_t scores = 0, size_t times = 1) const;
+    // what room drops when there is no room for this many more (#59: see LM_STATES_KEPT); may_clear false: never all
+    void drop(size_t states = 0, size_t masses = 0, size_t scores = 0, bool may_clear = true) const;
     LmState state(const ustr& text) const;
 
     const LmModel& lm_;
@@ -247,9 +299,13 @@ private:
     LmState start_;                   // <s>, then the context
     size_t kept_ = LM_STATES_KEPT;    // states kept: LM_STATES_KEPT, fewer for a large state (LM_STATES_BYTES)
     mutable std::list<std::unique_ptr<LmScorer>> views_;  // the views kept, the one used most lately first
-    mutable std::unordered_map<ustr, LmState> states_;
-    mutable std::unordered_map<ustr, std::vector<int64_t>> score_cache_;  // before + U'\0' + syllable
-    mutable std::unordered_map<ustr, int64_t> mass_cache_;               // before + U'\0' + syllable
+    mutable KeyCache<LmState> states_;
+    mutable KeyCache<std::vector<int64_t>> score_cache_;  // before + U'\0' + syllable
+    mutable KeyCache<int64_t> mass_cache_;               // before + U'\0' + syllable
+    // (drop's: the key it last trimmed in and how far - 1 what the key before did not use either, 2 what this key did
+    // not use - for the scorer's own caches, and on the scorer for all its views together: the two budgets apart)
+    mutable uint64_t trimmed_key_ = 0, views_trimmed_key_ = 0;
+    mutable int trimmed_ = 0, views_trimmed_ = 0;
     mutable std::vector<int> every_;  // 0 .. V-1 (units_logp), made on first use
 };
 

@@ -10,7 +10,8 @@ add_compile_definitions(UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECUR
 
 add_library(sz_engine STATIC
     engine/util.cpp engine/json.cpp engine/zhuyin.cpp engine/lexicon.cpp engine/bigram.cpp
-    engine/config.cpp engine/symbols.cpp engine/composer.cpp engine/lm.cpp engine/lm_next.cpp engine/candlayout.cpp
+    engine/config.cpp engine/symbols.cpp engine/composer.cpp engine/lm.cpp engine/lm_next.cpp engine/lm_pool.cpp
+    engine/candlayout.cpp
     engine/script.cpp)
 target_include_directories(sz_engine PUBLIC engine)
 

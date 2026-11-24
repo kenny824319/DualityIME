@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <vector>
 
+#include "lm_pool.h"
+
 #if defined(_M_X64) || defined(_M_IX86)
 #include <immintrin.h>
 #include <intrin.h>
@@ -122,9 +124,14 @@ inline std::vector<int64_t> unit_scores(bool avx2, const std::vector<int8_t>& em
     constexpr size_t CHUNK = 32;  // (states at a time: their int16 copies stay in the cache)
     const size_t V_ = static_cast<size_t>(V), E_ = static_cast<size_t>(E);
     std::vector<int64_t> out(ps.size());
-    std::vector<int64_t> lg;
-    for (size_t b0 = 0; b0 < ps.size(); b0 += CHUNK) {
+    // each chunk a task, on several threads for many states (#59): its own outputs, its slot's logits buffer
+    const int slots = ps.size() * V_ * E_ >= PARALLEL_MACS ? threads() : 1;
+    std::vector<std::vector<int64_t>> lgs(static_cast<size_t>(slots));
+    const size_t chunks = (ps.size() + CHUNK - 1) / CHUNK;
+    parallel_for(chunks, slots, [&](size_t q, int slot) {
+        const size_t b0 = q * CHUNK;
         const size_t B = std::min(CHUNK, ps.size() - b0);
+        std::vector<int64_t>& lg = lgs[static_cast<size_t>(slot)];
         lg.assign(B * V_, 0);
         std::vector<size_t> fast;  // (the states logits() reads with 32-bit sums)
         std::vector<std::vector<int16_t>> p16;
@@ -173,7 +180,7 @@ inline std::vector<int64_t> unit_scores(bool avx2, const std::vector<int8_t>& em
             for (size_t k = 0; k < V_; ++k) s += exp_table[static_cast<size_t>(std::min(top - d[k], EXP_RANGE))];
             out[b0 + b] = d[static_cast<size_t>(ids[b0 + b])] - top - log_q10(s, log_table);
         }
-    }
+    });
     return out;
 }
 

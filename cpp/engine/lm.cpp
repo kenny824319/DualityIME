@@ -396,41 +396,76 @@ const std::vector<int>* LmScorer::candidates(const ustr& syllable) const {
 
 void LmScorer::clear() const {
     states_.clear();
-    states_[ustr()] = start_;
+    states_.put(ustr(), start_);
     score_cache_.clear();
     mass_cache_.clear();
 }
 
-void LmScorer::room() const {
-    if (!base_) {
-        if (full(0, 0)) clear();
-        return;
+void LmScorer::room() const { drop(); }
+
+LmScorer::Sizes LmScorer::sizes() const {
+    Sizes s{states_.size(), score_cache_.size(), mass_cache_.size()};
+    if (base_) {  // (a view: all the views' caches together within the one budget - engine/lm.py Scorer._room)
+        s = Sizes{};
+        for (auto& v : base_->views_) {
+            s.states += v->states_.size();
+            s.scores += v->score_cache_.size();
+            s.masses += v->mass_cache_.size();
+        }
     }
-    if (full(0, 0)) drop();
+    return s;
 }
 
-bool LmScorer::full(size_t more_states, size_t more_masses) const {
-    if (!base_)
-        return states_.size() + more_states >= kept_ || score_cache_.size() >= LM_STATES_KEPT ||
-               mass_cache_.size() + more_masses >= LM_STATES_KEPT;
-    // (a view: all the views' caches together within the one budget, then all dropped - engine/lm.py Scorer._room)
-    size_t states = 0, scores = 0, masses = 0;
-    for (auto& v : base_->views_) {
-        states += v->states_.size();
-        scores += v->score_cache_.size();
-        masses += v->mass_cache_.size();
-    }
-    return states + more_states >= kept_ || scores >= LM_STATES_KEPT || masses + more_masses >= LM_STATES_KEPT;
+bool LmScorer::over(const Sizes& s, size_t more_states, size_t more_masses, size_t more_scores, size_t times) const {
+    return s.states + more_states >= kept_ * times || s.scores + more_scores >= LM_STATES_KEPT * times ||
+           s.masses + more_masses >= LM_STATES_KEPT * times;
 }
 
-void LmScorer::drop() const {
-    if (!base_) return clear();
-    bool listed = false;
-    for (auto& v : base_->views_) {
-        v->clear();
-        listed = listed || v.get() == this;
+bool LmScorer::full(size_t more_states, size_t more_masses, size_t more_scores, size_t times) const {
+    return over(sizes(), more_states, more_masses, more_scores, times);
+}
+
+void LmScorer::drop(size_t more_states, size_t more_masses, size_t more_scores, bool may_clear) const {
+    // (#59, LM_STATES_KEPT) over the budget: what neither this key nor the one before used; over twice the budget:
+    // what this key did not use, then (may_clear) all but the start - each trim at most once a key; for a view, in all
+    // the views (they share the budget). What is kept changes the time, never a score.
+    Sizes s = sizes();
+    if (!over(s, more_states, more_masses, more_scores, 1)) return;
+    auto each = [&](auto&& f) {
+        if (!base_) return f(*this);
+        bool listed = false;
+        for (auto& v : base_->views_) {
+            f(*v);
+            listed = listed || v.get() == this;
+        }
+        if (!listed) f(*this);  // (a view already dropped from the list, still in use by its caller)
+    };
+    uint64_t& trimmed_key = base_ ? base_->views_trimmed_key_ : trimmed_key_;  // (the views' budget is not the scorer's)
+    int& trimmed = base_ ? base_->views_trimmed_ : trimmed_;
+    if (trimmed_key != g_lm_key) {
+        trimmed_key = g_lm_key;
+        trimmed = 0;
     }
-    if (!listed) clear();  // (a view already dropped from the list, still in use by its caller)
+    auto trim = [&](uint64_t before) {
+        each([&](const LmScorer& x) {
+            x.states_.drop_before(before);
+            if (!x.states_.has(ustr())) x.states_.put(ustr(), x.start_);
+            x.score_cache_.drop_before(before);
+            x.mass_cache_.drop_before(before);
+        });
+        s = sizes();
+    };
+    if (trimmed < 1) {
+        trimmed = 1;
+        trim(g_lm_key - 1);
+    }
+    if (!over(s, more_states, more_masses, more_scores, 2)) return;
+    if (trimmed < 2) {
+        trimmed = 2;
+        trim(g_lm_key);
+        if (!over(s, more_states, more_masses, more_scores, 2)) return;
+    }
+    if (may_clear) each([](const LmScorer& x) { x.clear(); });
 }
 
 void LmScorer::prepare(const std::vector<ustr>& texts) const {
@@ -441,7 +476,7 @@ void LmScorer::prepare(const std::vector<ustr>& texts) const {
         for (const ustr& t : texts)
             for (size_t j = 1; j < t.size(); ++j) {  // (a character's score needs the state before it)
                 ustr p = t.substr(0, j);
-                if (states_.count(p) || !seen.insert(p).second) continue;
+                if (states_.has(p) || !seen.insert(p).second) continue;
                 if (by_len.size() < j) by_len.resize(j);
                 by_len[j - 1].push_back(std::move(p));
             }
@@ -452,27 +487,37 @@ void LmScorer::prepare(const std::vector<ustr>& texts) const {
     for (auto& level : by_len) count += level.size();
     size_t scored = 0;  // (the scores text_score keeps next, at most one per character)
     for (const ustr& t : texts) scored += t.size();
-    if (states_.size() + count >= kept_ || score_cache_.size() + scored >= LM_STATES_KEPT) {
+    if (full(count, 0, scored)) {
         // (now, not part way through text_score: room() would drop the states kept or just
         // stepped, and each would be stepped again alone; the states and scores are the same either way)
-        clear();
+        drop(count, 0, scored);
         by_len = missing();
     }
-    for (auto& level : by_len) {
-        std::vector<const LmState*> parents;
-        std::vector<int> ids;
+    // all of them as one tree (LmModel::tree), shorter first, each after a kept state or an earlier item: a Transformer
+    // reads each layer's weights once for all of them, not once a length, and spreads them over its threads (#59); the
+    // GRU's tree steps them length by length as before
+    std::unordered_map<ustr, int> item;
+    std::vector<const LmState*> prev;
+    std::vector<int> link, chars;
+    std::vector<const ustr*> order;
+    for (auto& level : by_len)
         for (const ustr& p : level) {
-            parents.push_back(&states_.at(p.substr(0, p.size() - 1)));  // (nodes stay put as the map grows)
-            ids.push_back(lm_.id(p.back()));
+            ustr parent = p.substr(0, p.size() - 1);
+            auto it = item.find(parent);
+            link.push_back(it == item.end() ? -1 : it->second);
+            prev.push_back(it == item.end() ? &states_.at(parent) : nullptr);  // (nodes stay put as the map grows)
+            chars.push_back(lm_.id(p.back()));
+            item.emplace(p, static_cast<int>(link.size()) - 1);
+            order.push_back(&p);
         }
-        std::vector<LmState> next = lm_.steps(parents, ids);
-        for (size_t k = 0; k < level.size(); ++k) states_[level[k]] = std::move(next[k]);
-    }
+    if (order.empty()) return;
+    std::vector<LmState> made = lm_.tree(prev, link, chars);
+    for (size_t k = 0; k < order.size(); ++k) states_.put(*order[k], std::move(made[k]));
 }
 
 LmState LmScorer::state(const ustr& text) const {
     size_t k = text.size();
-    while (!states_.count(text.substr(0, k))) --k;
+    while (!states_.has(text.substr(0, k))) --k;
     LmState st = states_.at(text.substr(0, k));
     std::vector<int> ids;
     for (size_t j = k; j < text.size(); ++j) ids.push_back(lm_.id(text[j]));
@@ -480,7 +525,7 @@ LmState LmScorer::state(const ustr& text) const {
     for (size_t j = k; j < text.size(); ++j) {
         st = run[j - k];
         room();
-        states_[text.substr(0, j + 1)] = st;
+        states_.put(text.substr(0, j + 1), st);
     }
     return st;
 }
@@ -491,13 +536,13 @@ int64_t LmScorer::char_score(const ustr& before, char32_t ch, const ustr& syllab
     ustr key = before;
     key.push_back(U'\0');
     key += syllable;
-    auto it = score_cache_.find(key);
-    if (it == score_cache_.end()) {
+    const std::vector<int64_t>* found = score_cache_.find(key);
+    if (!found) {
         std::vector<int64_t> scores = lm_.scores(state(before), *cands);
         room();
-        it = score_cache_.emplace(std::move(key), std::move(scores)).first;
+        found = &score_cache_.put(std::move(key), std::move(scores));
     }
-    const std::vector<int64_t>& scores = it->second;
+    const std::vector<int64_t>& scores = *found;
     int c = lm_.id(ch);
     auto at = std::lower_bound(cands->begin(), cands->end(), c);
     if (at != cands->end() && *at == c) return scores[at - cands->begin()];
@@ -510,13 +555,13 @@ std::vector<char32_t> LmScorer::top_chars(const ustr& before, const ustr& syllab
     ustr key = before;
     key.push_back(U'\0');
     key += syllable;
-    auto it = score_cache_.find(key);
-    if (it == score_cache_.end()) {
+    const std::vector<int64_t>* found = score_cache_.find(key);
+    if (!found) {
         std::vector<int64_t> scores = lm_.scores(state(before), *cands);
         room();
-        it = score_cache_.emplace(std::move(key), std::move(scores)).first;
+        found = &score_cache_.put(std::move(key), std::move(scores));
     }
-    const std::vector<int64_t>& scores = it->second;
+    const std::vector<int64_t>& scores = *found;
     std::vector<size_t> order;
     for (size_t i = 0; i < cands->size(); ++i)
         if ((*cands)[i] != 0) order.push_back(i);
@@ -547,13 +592,13 @@ int64_t LmScorer::among_score(const ustr& before, char32_t ch, const std::vector
     if (!any) return 0;
     std::sort(cands.begin(), cands.end());
     cands.erase(std::unique(cands.begin(), cands.end()), cands.end());
-    auto it = score_cache_.find(key);
-    if (it == score_cache_.end()) {
+    const std::vector<int64_t>* found = score_cache_.find(key);
+    if (!found) {
         std::vector<int64_t> scores = lm_.scores(state(before), cands);
         room();
-        it = score_cache_.emplace(std::move(key), std::move(scores)).first;
+        found = &score_cache_.put(std::move(key), std::move(scores));
     }
-    const std::vector<int64_t>& scores = it->second;
+    const std::vector<int64_t>& scores = *found;
     int c = lm_.id(ch);
     auto at = std::lower_bound(cands.begin(), cands.end(), c);
     if (at != cands.end() && *at == c) return scores[at - cands.begin()];
@@ -574,15 +619,15 @@ int64_t LmScorer::units_logp(const ustr& units) const {
         key.push_back(U'\0');
         key.push_back(U'\x01');
         key.push_back(units[k]);
-        auto it = mass_cache_.find(key);
+        const int64_t* found = mass_cache_.find(key);
         int64_t hit;
-        if (it == mass_cache_.end()) {
+        if (!found) {
             std::vector<int64_t> s = lm_.scores(state(before), every_);
             hit = s[static_cast<size_t>(lm_.id(units[k]))];
             room();
-            mass_cache_.emplace(std::move(key), hit);
+            mass_cache_.put(std::move(key), hit);
         } else {
-            hit = it->second;
+            hit = *found;
         }
         total += hit;
     }
@@ -601,12 +646,18 @@ std::vector<int64_t> LmScorer::units_logp_many(const std::vector<ustr>& texts) c
     auto missing = [&](size_t from, size_t to, std::unordered_set<ustr>& states, std::unordered_set<ustr>& masses) {
         for (size_t t = from; t < to; ++t)
             for (size_t k = 0; k < texts[t].size(); ++k) {
-                if (k && !states_.count(texts[t].substr(0, k))) states.insert(texts[t].substr(0, k));
+                if (k && !states_.has(texts[t].substr(0, k))) states.insert(texts[t].substr(0, k));
                 ustr key = mass_key(texts[t], k);
-                if (!mass_cache_.count(key)) masses.insert(std::move(key));
+                if (!mass_cache_.has(key)) masses.insert(std::move(key));
             }
     };
     std::vector<int64_t> out(texts.size(), 0);
+    {  // (#59: first make room by what earlier keys used, so the groups below are not cut short by it; never all
+        // dropped here: the groups below use what is kept before anything is dropped)
+        std::unordered_set<ustr> states, masses;
+        missing(0, texts.size(), states, masses);
+        drop(states.size(), masses.size(), 0, false);
+    }
     size_t at = 0;
     while (at < texts.size()) {
         // a group: the texts from at while what they need more stays within the budget (at least one)
@@ -619,13 +670,14 @@ std::vector<int64_t> LmScorer::units_logp_many(const std::vector<ustr>& texts) c
             size_t more_s = 0, more_m = 0;
             for (const ustr& p : s1) more_s += !states.count(p);
             for (const ustr& k : m1) more_m += !masses.count(k);
-            if (end > at && full(states.size() + more_s, masses.size() + more_m)) break;
+            // (#59: within twice the budget, as this key's own may grow to before drop clears all)
+            if (end > at && full(states.size() + more_s, masses.size() + more_m, 0, 2)) break;
             states.insert(s1.begin(), s1.end());
             masses.insert(m1.begin(), m1.end());
             ++end;
         }
         if (full(states.size(), masses.size())) {  // (dropped now, never part way through)
-            drop();
+            drop(states.size(), masses.size());
             states.clear();
             masses.clear();
             missing(at, end, states, masses);
@@ -650,7 +702,7 @@ std::vector<int64_t> LmScorer::units_logp_many(const std::vector<ustr>& texts) c
         }
         if (!order.empty()) {
             std::vector<LmState> made = lm_.tree(prev, link, chars);
-            for (size_t k = 0; k < order.size(); ++k) states_[order[k]] = std::move(made[k]);
+            for (size_t k = 0; k < order.size(); ++k) states_.put(order[k], std::move(made[k]));
         }
         // the masses, together
         std::vector<ustr> keys(masses.begin(), masses.end());
@@ -662,7 +714,7 @@ std::vector<int64_t> LmScorer::units_logp_many(const std::vector<ustr>& texts) c
             ids.push_back(lm_.id(key.back()));
         }
         std::vector<int64_t> got = lm_.unit_scores(sts, ids);
-        for (size_t k = 0; k < keys.size(); ++k) mass_cache_[keys[k]] = got[k];
+        for (size_t k = 0; k < keys.size(); ++k) mass_cache_.put(keys[k], got[k]);
         for (size_t t = at; t < end; ++t)
             for (size_t k = 0; k < texts[t].size(); ++k) out[t] += mass_cache_.at(mass_key(texts[t], k));
         at = end;
@@ -674,8 +726,7 @@ int64_t LmScorer::syllable_mass_q16(const ustr& before, const ustr& syllable) co
     ustr key = before;
     key.push_back(U'\0');
     key += syllable;
-    auto it = mass_cache_.find(key);
-    if (it != mass_cache_.end()) return it->second;
+    if (const int64_t* found = mass_cache_.find(key)) return *found;
     int64_t mass = 0;
     if (const std::vector<int>* cands = candidates(syllable)) {
         std::vector<int> ids;
@@ -684,7 +735,7 @@ int64_t LmScorer::syllable_mass_q16(const ustr& before, const ustr& syllable) co
         if (!ids.empty()) mass = lm_.mass_q16(state(before), ids);
     }
     room();
-    mass_cache_.emplace(std::move(key), mass);
+    mass_cache_.put(std::move(key), mass);
     return mass;
 }
 

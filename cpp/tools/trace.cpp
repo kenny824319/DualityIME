@@ -11,8 +11,11 @@
 // Script lines: characters as typed, {DOWN} {ENTER} ... special keys,
 // {#5} a numpad key, {CAPS} Caps Lock on/off, {UNDO} take back the last commit,
 // {FW} 全形 on/off, {SC} 簡體輸出 on/off (#32), {RESET} focus change, {CL} context lost (#37), {LB} a literal "{".
+// The language model uses lmq::default_threads() threads for a large batch, as the engine program does (#59);
+// DUALITYIME_LM_THREADS=<n> sets another number (1: one thread, as before #59).
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <crtdbg.h>
 #include <fcntl.h>
 #include <io.h>
@@ -28,6 +31,7 @@
 
 #include "../engine/composer.h"
 #include "../engine/lm.h"
+#include "../engine/lm_pool.h"
 #include "../tip/photo_frame.h"
 
 using namespace sz;
@@ -187,6 +191,11 @@ int main(int argc, char** argv) {
     if (argc < 4) {
         std::fprintf(stderr, "usage: sz_trace [--time] <data dir> <user.json> <script> [config.json]\n");
         return 2;
+    }
+    {
+        int n = lmq::default_threads();
+        if (const char* v = std::getenv("DUALITYIME_LM_THREADS"); v && std::atoi(v) > 0) n = std::atoi(v);
+        lmq::set_threads(n);
     }
     Clock::time_point started = Clock::now();
     Resources res = Resources::load(widen(argv[1]));

@@ -12,7 +12,9 @@ as lm_plus.bin or lm_max.bin): the tier by its own name, so with its own paramet
 --lm-plus run of max's file compared plus's for 13 hours).
 --jobs: settings compared at once, each in a process of its own with its own temporary folder (the same cases, seed
 and checks; each setting starts from fresh files either way); default half the processors, at most one a setting.
---jobs 1 runs them one after another in this process. --exe: another build's sz_trace.exe for the C++ side.
+--jobs 1 runs them one after another in this process. With --jobs each sz_trace's model may use half the processors
+shared by the settings at once (DUALITYIME_LM_THREADS, #59), one thread at least. --exe: another build's sz_trace.exe
+for the C++ side.
 --cases N: only the first N hand-written cases (a small sample before a run of hours: CLAUDE.md Workflow 2). (2026-11-21: plus and max made a setting take hours - max about
 7 - and one after another the 13 settings took 13-20 hours.) main() itself always runs them in turn: callers that set
 CONFIGS, CASES, TIER, DATA or EXE first keep what they set.
@@ -679,6 +681,9 @@ def main_jobs(count, seed, jobs):
     # a child stopped by taskkill cleans up nothing itself)
     root = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
     env = dict(os.environ, PYTHONIOENCODING="utf-8", TEMP=root.name, TMP=root.name)
+    # (#59: sz_trace spreads a large batch over a few threads, as the engine does; the settings at once share half the
+    # processors between them - the user's rule for these runs - at least one thread each, unless one was set)
+    env.setdefault("DUALITYIME_LM_THREADS", str(max(1, min(4, ((os.cpu_count() or 2) // 2) // max(1, min(jobs, n))))))
 
     def one(i):
         cmd = [sys.executable, os.path.abspath(__file__), str(count), str(seed), "--only", str(i)] + extra
