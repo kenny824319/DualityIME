@@ -518,17 +518,111 @@ function hotkeyRow() {
   return row("系統切換快速鍵設定", "", h("button", { class: "btn", onclick: () => api("openHotkeys") }, "前往 Windows 設定"));
 }
 
+// 已記憶項目's text: 記憶清單's rows (#65), 簡體 apart once Simplified mode has memory of its own (#32)
+function rememberedText() {
+  return S.rememberedSimplified == null  // (簡體輸出 never used: as before)
+    ? `目前已記住 ${S.remembered} 筆打字習慣、${S.rememberedEmails} 個 Email`
+    : `目前已記住 繁體 ${S.remembered} 筆、簡體 ${S.rememberedSimplified} 筆打字習慣，${S.rememberedEmails} 個 Email`;
+}
+
 function pageComplete() {
+  const remembered = h("span", {}, rememberedText());
   return [
     h("h1", {}, "補字與記憶"),
     card(
       row("Tab 智慧補字", "輸入時於游標後方提示最可能的下一個字", cfgToggle("completion", "Tab 智慧補字")),
       row("自動記憶常用英文與 Email", "自動記憶輸入滿 2 次的英文單字，以及輸入過 1 次的 Email。", cfgToggle("remember_words", "自動記憶常用英文與 Email")),
-      row("已記憶項目", S.rememberedSimplified == null  // (簡體輸出 never used: as before, #32)
-        ? `目前已記住 ${S.remembered} 筆打字習慣、${S.rememberedEmails} 個 Email`
-        : `目前已記住 繁體 ${S.remembered} 筆、簡體 ${S.rememberedSimplified} 筆打字習慣，${S.rememberedEmails} 個 Email`,
-        h("button", { class: "btn", onclick: forgetMemory }, "全部清除")))
+      row("已記憶項目", remembered, h("button", { class: "btn", onclick: forgetMemory }, "全部清除"))),
+    card(memoryPanel(async () => { S = await api("state"); remembered.textContent = rememberedText(); }))
   ];
+}
+
+// ---- 記憶清單 (#65 design, approved 2026-11-24): what affects typing, searchable, deletable --------------------
+// Rows as settings.exe's memory op gives them (Settings.cs MemoryList, the same as engine/lexicon.py memory_list):
+// {kind, key, value, shown, reading, count, day, note}, newest first; count and day null where nothing is kept (the
+// older 照打成英文 of user.json): shown as —. A row is (kind, key, value) to delete.
+const MEMORY_SHOWN = 300;  // rows drawn at once; the rest reached by search
+const memoryCount = (r) => r.count == null ? "—" : `${r.count} 次`;
+const memoryDay = (r) => {
+  if (r.day == null) return "—";
+  const d = new Date(r.day * 86400000);
+  return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+};
+const MEMORY_TABS = [
+  ["picks", "選字", ["字詞", "注音", "選過", "最近使用"], (r) => [r.shown, r.reading, memoryCount(r), memoryDay(r)]],
+  ["words", "英文字", ["英文字", "打過", "最近使用"], (r) => [r.shown, memoryCount(r), memoryDay(r)]],
+  ["emails", "Email", ["Email", "打過", "最近使用"], (r) => [r.shown, memoryCount(r), memoryDay(r)]],
+  // (count and last use as the other tabs - the user 2026-11-24; 會打成: the 注音 stored, or the keys themselves)
+  ["keys", "按鍵", ["按鍵", "會打成", "說明", "選過", "最近使用"], (r) => [r.shown, r.reading || r.shown, r.note, memoryCount(r), memoryDay(r)]],
+  ["simplified", "簡體模式", ["字詞", "對應", "種類", "選過", "最近使用"], (r) => [r.shown, r.reading, r.note, memoryCount(r), memoryDay(r)]]
+];
+
+function memoryPanel(deleted) {
+  // deleted(): after a 刪除, so 已記憶項目 above follows (the settings tool counts the rows the engine is about to remove
+  // as gone). (On the page itself, below 已記憶項目: the user 2026-11-24 "我不喜歡要點開才能看 直接列在下面就好")
+  let data = { picks: [], words: [], emails: [], keys: [], simplified: null };
+  let tab = "picks";
+  const id = (r) => r.kind + "\u0000" + r.key + "\u0000" + r.value;
+  const picked = new Set();  // id() of the rows ticked
+  const tabs = h("div", { class: "tabs", role: "tablist", "aria-label": "記憶種類" });
+  const search = h("input", { class: "text-input", type: "search", placeholder: "搜尋", "aria-label": "搜尋", style: "margin-bottom:8px" });
+  const table = h("table", { class: "list" });
+  const empty = h("p", { class: "row-desc", style: "display:none;padding:12px 0" }, "沒有符合的項目");
+  const more = h("p", { class: "row-desc", style: "display:none;padding:8px 0 0" });
+  const del = h("button", { class: "btn danger", disabled: true }, "刪除選取的項目");
+  const cellsOf = (r) => MEMORY_TABS.find(([k]) => k === tab)[3](r);
+  function rows() {
+    const q = search.value.trim().toLowerCase();
+    return (data[tab] || []).filter((r) => !q || cellsOf(r).some((c) => String(c).toLowerCase().includes(q)));
+  }
+  function draw() {
+    tabs.replaceChildren(...MEMORY_TABS.filter(([k]) => k !== "simplified" || (data.simplified || []).length).map(([k, name]) =>
+      h("button", { class: "tab" + (k === tab ? " on" : ""), role: "tab", onclick: () => { tab = k; draw(); } },
+        `${name} ${(data[k] || []).length}`)));
+    const [, , heads] = MEMORY_TABS.find(([k]) => k === tab);
+    const found = rows();
+    const shown = found.slice(0, MEMORY_SHOWN);
+    const all = h("input", { type: "checkbox", "aria-label": "全選" });
+    all.checked = shown.length > 0 && shown.every((r) => picked.has(id(r)));
+    all.addEventListener("change", () => { for (const r of shown) all.checked ? picked.add(id(r)) : picked.delete(id(r)); draw(); });
+    table.replaceChildren(
+      h("thead", {}, h("tr", {}, h("th", { style: "width:32px" }, all), ...heads.map((t) => h("th", {}, t)))),
+      h("tbody", {}, ...shown.map((r) => {
+        const box = h("input", { type: "checkbox", "aria-label": "選取 " + r.shown });
+        box.checked = picked.has(id(r));
+        box.addEventListener("change", () => { box.checked ? picked.add(id(r)) : picked.delete(id(r)); draw(); });
+        return h("tr", {}, h("td", {}, box), ...cellsOf(r).map((c) => h("td", {}, c)));
+      })));
+    empty.style.display = found.length ? "none" : "";
+    more.style.display = found.length > shown.length ? "" : "none";
+    more.textContent = `還有 ${found.length - shown.length} 筆，請用搜尋`;
+    del.textContent = picked.size ? `刪除選取的 ${picked.size} 項` : "刪除選取的項目";
+    del.disabled = !picked.size;
+  }
+  search.addEventListener("input", draw);
+  del.addEventListener("click", async () => {
+    if (!picked.size) return;
+    const n = picked.size;
+    const ok = await dialog("刪除記憶", h("p", { class: "row-desc", style: "font-size:14px" },
+      `確定要刪除選取的 ${n} 項記憶嗎？刪除後下一個按鍵起不再出現，此操作無法復原。`),
+      [{ text: "取消", value: false }, { text: "刪除", kind: "danger", value: true }]);
+    if (!ok) return;
+    await api("forgetMemory", { items: [...picked].map((k) => k.split("\u0000")) });
+    for (const t of Object.keys(data)) if (data[t]) data[t] = data[t].filter((r) => !picked.has(id(r)));
+    picked.clear();
+    toast(`已刪除 ${n} 項`);
+    draw();
+    await deleted();
+  });
+  api("memory").then((d) => { data = d; draw(); });
+  draw();
+  return h("div", { class: "row column" },
+    h("div", { class: "row-text" },
+      h("div", { class: "row-title" }, "記憶清單"),
+      h("div", { class: "row-desc" }, "目前會影響打字的記憶。勾選後按「刪除」，下一個按鍵起就不再出現。")),
+    h("div", { style: "width:100%" },
+      tabs, search, h("div", { style: "max-height:360px;overflow:auto" }, table), empty, more,
+      h("div", { style: "display:flex;justify-content:flex-end;margin-top:10px" }, del)));
 }
 
 async function forgetMemory() {
@@ -800,7 +894,7 @@ const TOPICS = [
    ["look", "自訂外觀"]],
   ["隱私與記憶", "輸入習慣僅存於本機，絕不外傳", [
     ["100% 本機端儲存", "您選過的字詞、常用英文與 Email 紀錄皆僅儲存在這台電腦中，絕不上傳雲端，保障隱私安全。"],
-    ["自動淘汰舊紀錄", "長期未使用的字詞權重會自然降低；您也可以隨時至「補字與記憶」頁面手動清除所有紀錄。"]],
+    ["自動淘汰舊紀錄", "長期未使用的字詞權重會自然降低；您也可以隨時至「補字與記憶」頁面逐筆刪除或清除所有紀錄。"]],
    ["complete", "已記憶項目"]],
   ["遊戲中 Shift 交給遊戲", "遊戲按鍵不被輸入法攔截", [
     ["按鍵直接給遊戲", "許多遊戲把 Shift 當成衝刺或技能鍵。在遊戲裡，Shift 和其他按鍵都直接交給遊戲，不會切換輸入模式，也不會被拿去組字（預設開啟）。"],
@@ -817,7 +911,7 @@ const FAQ = [
   ["注音打錯（按到旁邊的鍵、漏打聲調）能自動改正嗎？", "可以。到「打字」頁開啟「注音自動校正」（預設關閉），按到旁邊的鍵、漏打聲調、注音順序打錯、同一個鍵按兩次、ㄣ／ㄥ 或 ㄢ／ㄤ 打反，都會改成整句最通順的字。英文和個人詞庫的詞不會被改；改錯了在那個字按 ↓ 選回原本的音，同樣的按鍵改回 2 次後就照您打的讀。", ["typing", "注音自動校正"]],
   ["前面剛打的句子，會影響接下來的選字嗎？", "會。輸入法本來就會參考剛送出的最後一個詞；「接續前文選字」開啟時，還會參考剛送出、游標還緊接在後面的更多字，接著打的句子選得更準。不需要的話可以在「打字」頁關閉「接續前文選字」。", ["typing", "接續前文選字"]],
   ["人名、專有名詞老是選錯？", "請到「個人詞庫」頁的「自訂詞彙」加入這個詞，打字時就會優先出現。注音可以按「自動填入注音」帶入，破音字再自己修改。", ["dict", "自訂詞彙"]],
-  ["選錯的字或打錯的英文一直被記住、一直出現？", "選錯的字：在那個字按 ↓ 選對的字，系統會改記您選的。很久沒用的紀錄會慢慢淡掉；要清掉所有打字記憶，請到「補字與記憶」頁按「全部清除」（個人詞庫與設定會保留；記住的 Email 預設留著，勾選才一起清除）。", ["complete", "已記憶項目"]],
+  ["選錯的字或打錯的英文一直被記住、一直出現？", "選錯的字：在那個字按 ↓ 選對的字，系統會改記您選的。要刪掉某一筆記住的選字、英文字或 Email，請到「補字與記憶」頁的「記憶清單」搜尋、勾選後按「刪除」，下一個按鍵起就不再出現。很久沒用的紀錄會慢慢淡掉；要清掉所有打字記憶，按同一頁的「全部清除」（個人詞庫與設定會保留；記住的 Email 預設留著，勾選才一起清除）。", ["complete", "記憶清單"]],
   ["Email 要打幾次才會被記住？", "只要在中英混打模式下完整輸入並送出 1 次就會自動記住。下次只需打出開頭前 3 個字元，後方就會浮現完整提示，按 Tab 鍵即可補完。", ["complete", "自動記憶常用英文與 Email"]],
   ["英文單字要打幾次才會被記住？", "4 個字母以上的英文單字，在中英混打模式下輸入並送出滿 2 次就會記住，下次輸入前 3 個字母即可按 Tab 補完。（註：若按 Shift 切換至「純英文模式」下打字，則不會納入記憶。）", ["complete", "自動記憶常用英文與 Email"]],
   ["換電腦時，怎麼帶走打字習慣和個人詞庫？", "到「關於」頁的「匯出與匯入」，把選字記憶、個人詞庫和設定存成一個檔案，在新電腦匯入即可。匯入時可以勾選要匯入哪幾項：選字記憶和個人詞庫是合併，新電腦上已有的不會被刪除；勾選「設定」時，設定會換成檔案裡的。", ["about", "匯出與匯入"]],
