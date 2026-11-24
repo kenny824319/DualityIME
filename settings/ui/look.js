@@ -8,7 +8,7 @@ const LOOK_PRESETS = [
   ["墨黑", "#151515", "#f0f0f0", "#3a82f6"]];
 // [key, tab name] (each window's photo frame: frame.js lookFrame)
 const LOOK_WINDOWS = [
-  ["cand", "候選字視窗"], ["tip", "補字提示"], ["mode", "中英提示"],
+  ["cand", "候選字視窗"], ["tip", "補字提示"], ["mode", "模式提示"],
   ["fill", "快速填入清單"], ["keyboard", "符號鍵盤"], ["bar", "替換列"]];
 const LOOK_NEW_PHOTO = { image: "", fade: 45, zoom: 100, x: 0.5, y: 0.5 };
 
@@ -318,6 +318,6 @@ function lookCard() {
   }
   draw();
   return card(
-    row("自訂外觀", "候選字視窗、補字提示、中英提示、快速填入清單、符號鍵盤、替換列與注音提示，換成自己的顏色或照片", mode),
+    row("自訂外觀", "候選字視窗、補字提示、模式提示、快速填入清單、符號鍵盤、替換列與注音提示，換成自己的顏色或照片", mode),
     body);
 }
