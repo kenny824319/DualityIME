@@ -115,14 +115,81 @@ static class SettingsTest {
             File.WriteAllText(Path.Combine(dir, "keys.json"),
                 "{\"format\": 1, \"standard\": {\"picks\": {\"817\": {\"\": 2}, \"mp3\": {\"en\": 2}}, \"used\": {}}}", new UTF8Encoding(false));
             state = (Dictionary<string, object>)call("state", null);
-            Check("remembered counts", (int)state["remembered"] == 3 + 1 + 1 + 2 && (int)state["rememberedEmails"] == 2, json.Serialize(state));
+            // (#65: the count is 記憶清單's rows - 3 picks, claude (2 uses), kfc and mp3 as English; 817 as typed acts only
+            // with 注音自動校正 on, off here: not listed, not counted)
+            Check("remembered counts", (int)state["remembered"] == 3 + 1 + 2 && (int)state["rememberedEmails"] == 2, json.Serialize(state));
             Check("no user_simplified.json: no Simplified count", state["rememberedSimplified"] == null, json.Serialize(state));
+            // 記憶清單 (#65): 刪除 appends to forget_list; the count leaves out at once what the engine is about to remove
+            int added = (int)call("forgetMemory", new Dictionary<string, object> { { "items", new object[] {
+                new object[] { "email", "me@example.com", "" }, new object[] { "pick", "ㄅㄨˋ", "布" } } } });
+            var saved65 = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(Path.Combine(dir, "config.json"), Encoding.UTF8));
+            var list65 = (object[])saved65["forget_list"];
+            Check("forgetMemory appends ids 1, 2", added == 2 && list65.Length == 2 &&
+                  (int)((Dictionary<string, object>)list65[0])["id"] == 1 && (int)((Dictionary<string, object>)list65[1])["id"] == 2 &&
+                  (string)((Dictionary<string, object>)list65[1])["kind"] == "pick", json.Serialize(saved65["forget_list"]));
+            state = (Dictionary<string, object>)call("state", null);
+            Check("rows waiting in forget_list are not counted", (int)state["remembered"] == 2 + 1 + 2 &&
+                  (int)state["rememberedEmails"] == 1, json.Serialize(state));
+            string backup65 = Path.Combine(dir, "backup65.json");
+            b.WriteBackup(backup65);
+            var bk65 = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(backup65, Encoding.UTF8));
+            var mem65 = (Dictionary<string, object>)bk65["memory"];
+            Check("a backup carries no forget_list and leaves out the rows waiting in it",
+                  !((Dictionary<string, object>)bk65["config"]).ContainsKey("forget_list") &&
+                  !((Dictionary<string, object>)mem65["emails"]).ContainsKey("me@example.com") &&
+                  ((Dictionary<string, object>)mem65["emails"]).ContainsKey("you@example.com") &&
+                  !((Dictionary<string, object>)mem65["phrases"]).ContainsKey("ㄅㄨˋ"), File.ReadAllText(backup65, Encoding.UTF8));
+            File.WriteAllText(Path.Combine(dir, "forgot.json"), "{\"format\": 1, \"applied\": 2}", new UTF8Encoding(false));
+            call("forgetMemory", new Dictionary<string, object> { { "items", new object[] { new object[] { "word", "claude", "" } } } });
+            saved65 = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(Path.Combine(dir, "config.json"), Encoding.UTF8));
+            list65 = (object[])saved65["forget_list"];
+            Check("the ids the engine applied are dropped, the next one goes on", list65.Length == 1 &&
+                  (int)((Dictionary<string, object>)list65[0])["id"] == 3, json.Serialize(saved65["forget_list"]));
+            var cfg65 = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(Path.Combine(dir, "config.json"), Encoding.UTF8));
+            cfg65["forget_list"] = "garbage";
+            File.WriteAllText(Path.Combine(dir, "config.json"), json.Serialize(cfg65), new UTF8Encoding(false));
+            call("forgetMemory", new Dictionary<string, object> { { "items", new object[] { new object[] { "word", "x", "" } } } });
+            saved65 = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(Path.Combine(dir, "config.json"), Encoding.UTF8));
+            Check("a forget_list that is no list becomes one", saved65["forget_list"] is object[] &&
+                  ((object[])saved65["forget_list"]).Length == 1, json.Serialize(saved65["forget_list"]));
+            cfg65["forget_list"] = new object[0];
+            File.WriteAllText(Path.Combine(dir, "config.json"), json.Serialize(cfg65), new UTF8Encoding(false));
+            File.Delete(Path.Combine(dir, "forgot.json"));
+            File.Delete(backup65);
+            // the list's rows, the same as the engine's (engine/lexicon.py memory_list): one fixture, one expected file
+            string fixture = Directory.GetCurrentDirectory();
+            while (fixture != null && !Directory.Exists(Path.Combine(fixture, "tests", "data", "memory_list")))
+                fixture = Path.GetDirectoryName(fixture);
+            if (fixture == null) Check("tests\\data\\memory_list found", false, Directory.GetCurrentDirectory());
+            else {
+                fixture = Path.Combine(fixture, "tests", "data", "memory_list");
+                string mdir = Path.Combine(dir, "memory_list");
+                Directory.CreateDirectory(mdir);
+                foreach (string name in new[] { "user.json", "keys.json", "user_simplified.json", "config.json" })
+                    File.Copy(Path.Combine(fixture, name), Path.Combine(mdir, name), true);
+                var want = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(Path.Combine(fixture, "expected.json"), Encoding.UTF8));
+                want.Remove("_about");
+                var mb = new Backend(null, mdir);
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                string gotList = json.Serialize(mb.MemoryList(20800));
+                watch.Stop();
+                Check("記憶清單 rows as the engine's (tests\\data\\memory_list\\expected.json)", gotList == json.Serialize(want), gotList);
+                // a thousand picks: listed quickly (the page opens on it)
+                var many = new StringBuilder("{\"phrases\": {");
+                for (int i = 0; i < 1000; i++) many.Append((i > 0 ? ", " : "") + "\"ㄅㄚ" + i + "\": {\"八\": 2}");
+                File.WriteAllText(Path.Combine(mdir, "user.json"), many.Append("}}").ToString(), new UTF8Encoding(false));
+                watch = System.Diagnostics.Stopwatch.StartNew();
+                int rows = ((List<Dictionary<string, object>>)mb.MemoryList(20800)["picks"]).Count;
+                watch.Stop();
+                Console.WriteLine("      (a thousand picks listed in " + watch.ElapsedMilliseconds + " ms)");
+                Check("a thousand picks listed in under 200 ms", rows == 1000 && watch.ElapsedMilliseconds < 200, rows + " rows, " + watch.ElapsedMilliseconds + " ms");
+            }
             // 簡體輸出 (#32): Simplified mode's own picks (a forgetting, count 0, not) and its Mainland words, apart
             File.WriteAllText(Path.Combine(dir, "user_simplified.json"),
                 "{\"format\": 1, \"phrases\": {\"ㄧㄥˇ-ㄆㄧㄢˋ\": {\"影片\": 2, \"映片\": 0}, \"ㄋㄧˇ\": {\"妳\": 1}}, \"used\": {}, " +
                 "\"replacements\": {\"影片\": {\"視頻\": 2}}, \"replacements_used\": {}}", new UTF8Encoding(false));
             state = (Dictionary<string, object>)call("state", null);
-            Check("Simplified mode's memory counted apart", (int)state["remembered"] == 3 + 1 + 1 + 2 &&
+            Check("Simplified mode's memory counted apart", (int)state["remembered"] == 3 + 1 + 2 &&
                   state["rememberedSimplified"] != null && (int)state["rememberedSimplified"] == 3, json.Serialize(state));
             // 全部清除: the engine clears at its next key; until then the count is already what it will leave
             call("forgetWords", new Dictionary<string, object> { { "emails", false } });

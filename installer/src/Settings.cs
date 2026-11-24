@@ -211,7 +211,7 @@ public class Backend {
         { "autocorrect", false }, { "long_sentence", true }, { "lm_context", true }, { "lm_model", "light" },
         { "lm_context_len_plus", 64 }, { "lm_context_len_max", 64 }, { "punctuation", "half" }, { "space", "half" },
         { "full_width", false }, { "ctrl_full_punct", true }, { "symbols_stay_open", false }, { "preview", "keys_hint" }, { "shift_toggle", true }, { "start_mode", "mixed" },
-        { "completion", true }, { "remember_words", true }, { "forget_words", 0 }, { "forget_emails", 0 }, { "import_memory", 0 }, { "lookup", true },
+        { "completion", true }, { "remember_words", true }, { "forget_words", 0 }, { "forget_emails", 0 }, { "forget_list", new object[0] }, { "import_memory", 0 }, { "lookup", true },
         { "lookup_size", "small" }, { "game_keys", true }, { "cand_font", "Microsoft JhengHei UI" },
         { "cand_font_size", 18 }, { "cand_per_row", 1 }, { "cand_layout", "" }, { "cand_keys", "123456789" },
         { "cand_columns", 0 },
@@ -240,6 +240,8 @@ public class Backend {
                 WriteConfig(c);
                 return 0;
             }
+            case "memory": return MemoryList(Today());  // 記憶清單 (#65)
+            case "forgetMemory": return ForgetMemory(a);
             case "system": return RunSystem("state", 0);
             case "setSystem": return RunSystem(Str(a, "action"), Bool(a, "on") ? 1 : 0);
             case "openDataFolder":
@@ -369,70 +371,226 @@ public class Backend {
         }
     }
 
-    // 已記憶項目: { N, M, S }. N = the typing habits 全部清除 clears: phrase picks (each reading and
-    // phrase), keys learned as English (one letter or digit is not: the engine ignores it), English words, and
-    // the key strings in 校正記憶 / 代碼記憶 (keys.json). M = the remembered e-mail addresses. S = what Simplified
-    // mode learned of its own (user_simplified.json: its picks, a forgetting not, and its Mainland words), -1 without
-    // the file (簡體輸出 never used: the page shows N and M as before, #32).
-    // 全部清除 asked and the engine not there yet (it clears at its next key: config.json's forget_words
-    // above the forgot it noted in user.json, the same test as the engine's): N counts 0, and M too
-    // for forget_emails, so the page shows at once what the engine is about to leave.
-    public int[] RememberedCount() {
-        int habits = 0, emails = 0;
-        Dictionary<string, object> user = null, keys = null;
-        try { user = json.DeserializeObject(File.ReadAllText(Path.Combine(dataDir, "user.json"), Encoding.UTF8)) as Dictionary<string, object>; } catch { }
-        try { keys = json.DeserializeObject(File.ReadAllText(Path.Combine(dataDir, "keys.json"), Encoding.UTF8)) as Dictionary<string, object>; } catch { }
-        Dictionary<string, object> simp = null;
-        int simplified = -1;
-        string simpPath = Path.Combine(dataDir, "user_simplified.json");
-        if (File.Exists(simpPath)) {
-            simplified = 0;
-            try { simp = json.DeserializeObject(File.ReadAllText(simpPath, Encoding.UTF8)) as Dictionary<string, object>; } catch { }
-        }
+    // 已記憶項目: { N, M, S } - the rows of 記憶清單 (#65, the user 2026-11-24: the count agrees with the list): N =
+    // 選字 + 英文字 + 按鍵, M = Email, S = 簡體模式, -1 without user_simplified.json (簡體輸出 never used, #32).
+    public int[] RememberedCount() { return RememberedCount(MemoryList(Today())); }
+
+    static int[] RememberedCount(Dictionary<string, object> list) {
+        Func<string, int> n = k => list[k] == null ? -1 : ((List<Dictionary<string, object>>)list[k]).Count;
+        return new[] { n("picks") + n("words") + n("keys"), n("emails"), n("simplified") };
+    }
+
+    // ---- 記憶清單 (#65): what the memory holds that affects typing, as the engine reads it -------------------------
+    // The same rows as engine/lexicon.py memory_list (tests/data/memory_list/expected.json holds the rule for both):
+    // counts faded (each FORGET_DAYS days unused halve them; e-mails never fade), rounded, at least 1; English words
+    // from WORD_MIN_USES uses, a 校正記憶 choice from CORRECTION_MIN_USES and above the next, a Mainland word from
+    // REPLACE_MIN_USES; with 注音自動校正 off only the codes read as English and the split keys act. What the engine is
+    // about to remove is left out already: 全部清除 asked (forget_words above the forgot in user.json, M for
+    // forget_emails) and the rows waiting in forget_list (an id above forgot.json's applied).
+    const int ForgetDays = 20, WordMinUses = 2, CorrectionMinUses = 2, ReplaceMinUses = 2;
+    const string SplitMark = "→", AsEnglish = "en";
+
+    public static int Today() {
+        return (int)Math.Floor((DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalDays);
+    }
+
+    static Dictionary<string, object> Sub(Dictionary<string, object> d, string k) {
+        return d != null && d.ContainsKey(k) ? d[k] as Dictionary<string, object> : null;
+    }
+
+    static double Num(object v) {
+        if (v == null || v is bool || v is string) return double.NaN;
+        try { return Convert.ToDouble(v); } catch { return double.NaN; }
+    }
+
+    static int? DayOf(Dictionary<string, object> days, string key) {
+        double d = Num(days != null && days.ContainsKey(key) ? days[key] : null);
+        return double.IsNaN(d) ? (int?)null : (int)d;
+    }
+
+    static double Faded(double count, int? day, int today) {
+        return day == null ? count : count / Math.Pow(2, Math.Floor((today - day.Value) / (double)ForgetDays));
+    }
+
+    static Dictionary<string, object> MemoryRow(string kind, string key, string value, string shown, string reading,
+                                                double? count, int? day, string note) {
+        return new Dictionary<string, object> {
+            { "kind", kind }, { "key", key }, { "value", value }, { "shown", shown }, { "reading", reading },
+            { "count", count == null ? null : (object)Math.Max(1, (int)Math.Floor(count.Value + 0.5)) },
+            { "day", day == null ? null : (object)day.Value }, { "note", note }
+        };
+    }
+
+    static List<Dictionary<string, object>> Ordered(List<Dictionary<string, object>> rows) {
+        return rows.OrderBy(r => r["day"] == null ? 1 : 0).ThenByDescending(r => r["day"] == null ? 0 : (int)r["day"])
+                   .ThenBy(r => (string)r["shown"], StringComparer.Ordinal).ToList();
+    }
+
+    Dictionary<string, object> ReadData(string name) { return ReadJson(Path.Combine(dataDir, name)); }
+
+    // forgot.json's applied: the last forget_list id the engine applied (0 without the file)
+    int AppliedForget() { return (int)Long(ReadData("forgot.json"), "applied"); }
+
+    public Dictionary<string, object> MemoryList(int today) {
+        var user = ReadData("user.json");
+        var keys = Sub(ReadData("keys.json"), "standard");
+        bool simpFile = File.Exists(Path.Combine(dataDir, "user_simplified.json"));
+        var simp = simpFile ? ReadData("user_simplified.json") : null;
         var config = ReadConfig();
+        bool autocorrect = config.ContainsKey("autocorrect") && config["autocorrect"] is bool && (bool)config["autocorrect"];
         bool clearHabits = Long(config, "forget_words") > Long(user, "forgot");
         bool clearEmails = Long(config, "forget_emails") > Long(user, "forgot_emails");
-        if (clearHabits) {
-            keys = null;
-            simp = null;
-            if (user != null) { user.Remove("phrases"); user.Remove("english"); user.Remove("words"); }
+        var waiting = new HashSet<string>();  // "kind\0key\0value" of the rows forget_list is about to remove
+        int applied = AppliedForget();
+        foreach (object o in (config.ContainsKey("forget_list") ? config["forget_list"] as object[] : null) ?? new object[0]) {
+            var it = o as Dictionary<string, object>;
+            double id = Num(it != null && it.ContainsKey("id") ? it["id"] : null);
+            if (double.IsNaN(id) || id <= applied || !(it.ContainsKey("kind") && it["kind"] is string) ||
+                !(it.ContainsKey("key") && it["key"] is string) || !(it.ContainsKey("value") && it["value"] is string))
+                continue;
+            waiting.Add(it["kind"] + "\0" + it["key"] + "\0" + it["value"]);
         }
-        if (clearEmails && user != null) user.Remove("emails");
-        if (user != null) {
-            var phrases = user.ContainsKey("phrases") ? user["phrases"] as Dictionary<string, object> : null;
+        Func<Dictionary<string, object>, bool> kept = r =>
+            !waiting.Contains(r["kind"] + "\0" + r["key"] + "\0" + r["value"]);
+
+        var picks = new List<Dictionary<string, object>>();
+        var words = new List<Dictionary<string, object>>();
+        var emails = new List<Dictionary<string, object>>();
+        var keyRows = new List<Dictionary<string, object>>();
+        var used = Sub(user, "used");
+        if (!clearHabits) {
+            var phrases = Sub(user, "phrases");
+            var phraseUsed = Sub(used, "phrases");
             if (phrases != null)
-                foreach (object bucket in phrases.Values) {
-                    var b = bucket as Dictionary<string, object>;
-                    if (b != null) habits += b.Count;
+                foreach (var r in phrases) {
+                    var bucket = r.Value as Dictionary<string, object>;
+                    if (bucket == null) continue;
+                    var days = Sub(phraseUsed, r.Key);
+                    foreach (var p in bucket) {
+                        double n = Num(p.Value);
+                        if (double.IsNaN(n) || n <= 0) continue;
+                        int? day = DayOf(days, p.Key);
+                        picks.Add(MemoryRow("pick", r.Key, p.Key, p.Key, r.Key.Replace("-", " "), Faded(n, day, today), day, ""));
+                    }
                 }
-            var english = user.ContainsKey("english") ? user["english"] as object[] : null;
-            if (english != null)
-                foreach (object e in english) {
-                    string s = e as string;
-                    if (s != null && !Migrate.IsOneKey(s)) habits++;
+            var wordCounts = Sub(user, "words");
+            if (wordCounts != null)
+                foreach (var w in wordCounts) {
+                    double n = Num(w.Value);
+                    int? day = DayOf(Sub(used, "words"), w.Key);
+                    if (!double.IsNaN(n) && Faded(n, day, today) >= WordMinUses)
+                        words.Add(MemoryRow("word", w.Key, "", w.Key, "", Faded(n, day, today), day, ""));
                 }
-            var words = user.ContainsKey("words") ? user["words"] as Dictionary<string, object> : null;
-            if (words != null) habits += words.Count;
-            var mails = user.ContainsKey("emails") ? user["emails"] as Dictionary<string, object> : null;
-            if (mails != null) emails = mails.Count;
-        }
-        var part = keys != null && keys.ContainsKey("standard") ? keys["standard"] as Dictionary<string, object> : null;
-        var picks = part != null && part.ContainsKey("picks") ? part["picks"] as Dictionary<string, object> : null;
-        if (picks != null) habits += picks.Count;
-        foreach (string name in new[] { "phrases", "replacements" }) {
-            var table = simp != null && simp.ContainsKey(name) ? simp[name] as Dictionary<string, object> : null;
-            if (table == null) continue;
-            foreach (object bucket in table.Values) {
-                var b = bucket as Dictionary<string, object>;
-                if (b == null) continue;
-                foreach (object count in b.Values) {
-                    double n;
-                    try { n = Convert.ToDouble(count); } catch { continue; }
-                    if (n > 0) simplified++;
+            var englishDone = new HashSet<string>();
+            var keyPicks = Sub(keys, "picks");
+            var keyUsed = Sub(keys, "used");
+            if (keyPicks != null)
+                foreach (var k in keyPicks) {
+                    var bucket = k.Value as Dictionary<string, object>;
+                    if (bucket == null) continue;
+                    var days = Sub(keyUsed, k.Key);
+                    // CorrectionMemory.choice: the best faded count, CorrectionMinUses or more and above the next one
+                    string best = null;
+                    double top = double.NegativeInfinity, second = double.NegativeInfinity;
+                    foreach (var c in bucket) {
+                        double n = Num(c.Value);
+                        double f = double.IsNaN(n) || n == 0 ? 0 : Faded(n, DayOf(days, c.Key), today);
+                        if (f > top) { second = top; top = f; best = c.Key; }
+                        else if (f > second) second = f;
+                    }
+                    if (best == null || top < CorrectionMinUses || top <= second) continue;
+                    bool split = k.Key.Contains(SplitMark);
+                    string shown = k.Key.Replace(SplitMark, " ");
+                    int? when = DayOf(days, best);
+                    if (best == AsEnglish) {
+                        keyRows.Add(MemoryRow("english", k.Key, "", shown, "", top, when, "照打成英文"));
+                        englishDone.Add(k.Key);
+                        continue;
+                    }
+                    if (!autocorrect && !split) continue;
+                    string note = best == "" ? "照打，不校正" :
+                        split ? "英文後面的 " + k.Key.Substring(k.Key.IndexOf(SplitMark) + SplitMark.Length) + " 讀成這個音" :
+                        "打錯時照這個改（注音自動校正）";
+                    keyRows.Add(MemoryRow("correction", k.Key, best, shown, best.Replace("-", " "), top, when, note));
                 }
+            foreach (object e in (user != null && user.ContainsKey("english") ? user["english"] as object[] : null) ?? new object[0]) {
+                string s = e as string;
+                if (s != null && !Migrate.IsOneKey(s) && !englishDone.Contains(s))
+                    keyRows.Add(MemoryRow("english", s, "", s, "", null, null, "照打成英文"));
             }
         }
-        return new[] { habits, emails, simplified };
+        if (!clearEmails) {
+            var mails = Sub(user, "emails");
+            if (mails != null)
+                foreach (var m in mails) {
+                    double n = Num(m.Value);
+                    if (!double.IsNaN(n) && n > 0) emails.Add(MemoryRow("email", m.Key, "", m.Key, "", n, DayOf(Sub(used, "emails"), m.Key), ""));
+                }
+        }
+        List<Dictionary<string, object>> simpRows = null;
+        if (simpFile) {
+            simpRows = new List<Dictionary<string, object>>();
+            if (!clearHabits && simp != null) {
+                var simpUsed = Sub(Sub(simp, "used"), "phrases");
+                var phrases = Sub(simp, "phrases");
+                if (phrases != null)
+                    foreach (var r in phrases) {
+                        var bucket = r.Value as Dictionary<string, object>;
+                        if (bucket == null) continue;
+                        foreach (var p in bucket) {
+                            double n = Num(p.Value);
+                            if (double.IsNaN(n) || n <= 0) continue;
+                            int? day = DayOf(Sub(simpUsed, r.Key), p.Key);
+                            simpRows.Add(MemoryRow("simp_pick", r.Key, p.Key, p.Key, r.Key.Replace("-", " "), Faded(n, day, today), day, "簡體選字"));
+                        }
+                    }
+                var terms = Sub(simp, "replacements");
+                var termUsed = Sub(simp, "replacements_used");
+                if (terms != null)
+                    foreach (var w in terms) {
+                        var bucket = w.Value as Dictionary<string, object>;
+                        if (bucket == null) continue;
+                        foreach (var t in bucket) {
+                            double n = Num(t.Value);
+                            int? day = DayOf(Sub(termUsed, w.Key), t.Key);
+                            if (!double.IsNaN(n) && Faded(n, day, today) >= ReplaceMinUses)
+                                simpRows.Add(MemoryRow("simp_term", w.Key, t.Key, w.Key, t.Key, Faded(n, day, today), day, "大陸用詞"));
+                        }
+                    }
+            }
+            simpRows = Ordered(simpRows.Where(kept).ToList());
+        }
+        return new Dictionary<string, object> {
+            { "picks", Ordered(picks.Where(kept).ToList()) }, { "words", Ordered(words.Where(kept).ToList()) },
+            { "emails", Ordered(emails.Where(kept).ToList()) }, { "keys", Ordered(keyRows.Where(kept).ToList()) },
+            { "simplified", simpRows }
+        };
+    }
+
+    // 記憶清單's 刪除: each row [kind, key, value] appended to config.json's forget_list with the next id; the items the
+    // engine applied already (forgot.json) dropped, so the list stays short. Returns how many were added.
+    int ForgetMemory(Dictionary<string, object> a) {
+        var c = ReadConfig();
+        int applied = AppliedForget();
+        var list = new List<object>();
+        int next = applied;
+        foreach (object o in (c.ContainsKey("forget_list") ? c["forget_list"] as object[] : null) ?? new object[0]) {
+            var it = o as Dictionary<string, object>;
+            double id = Num(it != null && it.ContainsKey("id") ? it["id"] : null);
+            if (double.IsNaN(id) || id <= applied) continue;  // (applied, or nothing the engine would read)
+            list.Add(it);
+            next = Math.Max(next, (int)id);
+        }
+        int added = 0;
+        foreach (object o in (a.ContainsKey("items") ? a["items"] as object[] : null) ?? new object[0]) {
+            var row = o as object[];
+            if (row == null || row.Length != 3 || !row.All(x => x is string)) continue;
+            list.Add(new Dictionary<string, object> { { "id", ++next }, { "kind", row[0] }, { "key", row[1] }, { "value", row[2] } });
+            added++;
+        }
+        c["forget_list"] = list;
+        WriteConfig(c);
+        return added;
     }
 
     // a counter in config.json or user.json (0 when missing or not a number)
@@ -775,7 +933,60 @@ public class Backend {
     // ---- 匯出與匯入: one file with the learned picks (user.json), 個人詞庫 and the settings ----------
     // {"app": "兩儀輸入法", "format": 1, "created": "...", "memory": {...}, "dictionary": {...}, "config": {...}}
     const int BackupFormat = 1;
-    static readonly string[] Counters = { "forget_words", "forget_emails", "import_memory" };  // this computer's own, never copied
+    static readonly string[] Counters = { "forget_words", "forget_emails", "forget_list", "import_memory" };  // this computer's own, never copied
+
+    // A backup leaves out the rows waiting in forget_list (deleted in 記憶清單, the engine not there yet), from where
+    // each kind is kept - as engine/lexicon.py forget_items removes them (the list itself is a Counter: never copied)
+    void DropWaiting(Dictionary<string, object> memory) {
+        var config = ReadConfig();
+        int applied = AppliedForget();
+        Action<Dictionary<string, object>, string, string> nested = (table, key, value) => {
+            var bucket = Sub(table, key);
+            if (bucket == null) return;
+            bucket.Remove(value);
+            if (bucket.Count == 0) table.Remove(key);
+        };
+        var used = Sub(memory, "used");
+        var keys = Sub(Sub(memory, "keys"), "standard");
+        var simp = Sub(memory, "simplified");
+        foreach (object o in (config.ContainsKey("forget_list") ? config["forget_list"] as object[] : null) ?? new object[0]) {
+            var it = o as Dictionary<string, object>;
+            double id = Num(it != null && it.ContainsKey("id") ? it["id"] : null);
+            if (double.IsNaN(id) || id <= applied) continue;
+            string kind = it.ContainsKey("kind") ? it["kind"] as string : null;
+            string key = it.ContainsKey("key") ? it["key"] as string : null;
+            string value = it.ContainsKey("value") ? it["value"] as string : null;
+            if (kind == null || key == null || value == null) continue;
+            switch (kind) {
+                case "pick":
+                    if (Sub(memory, "phrases") != null) nested(Sub(memory, "phrases"), key, value);
+                    if (Sub(used, "phrases") != null) nested(Sub(used, "phrases"), key, value);
+                    break;
+                case "word": case "email": {
+                    string name = kind == "word" ? "words" : "emails";
+                    if (Sub(memory, name) != null) Sub(memory, name).Remove(key);
+                    if (Sub(used, name) != null) Sub(used, name).Remove(key);
+                    break;
+                }
+                case "correction": case "english": {
+                    string choice = kind == "english" ? AsEnglish : value;
+                    if (Sub(keys, "picks") != null) nested(Sub(keys, "picks"), key, choice);
+                    if (Sub(keys, "used") != null) nested(Sub(keys, "used"), key, choice);
+                    if (kind == "english" && memory.ContainsKey("english") && memory["english"] is object[])
+                        memory["english"] = ((object[])memory["english"]).Where(e => (e as string) != key).ToArray();
+                    break;
+                }
+                case "simp_pick":
+                    if (Sub(simp, "phrases") != null) nested(Sub(simp, "phrases"), key, value);
+                    if (Sub(Sub(simp, "used"), "phrases") != null) nested(Sub(Sub(simp, "used"), "phrases"), key, value);
+                    break;
+                case "simp_term":
+                    if (Sub(simp, "replacements") != null) nested(Sub(simp, "replacements"), key, value);
+                    if (Sub(simp, "replacements_used") != null) nested(Sub(simp, "replacements_used"), key, value);
+                    break;
+            }
+        }
+    }
 
     public bool WriteBackup(string path) {
         var config = ReadConfig();
@@ -804,6 +1015,7 @@ public class Backend {
             if (memory == null) memory = new Dictionary<string, object>();
             memory["simplified"] = simplified;
         }
+        if (memory != null) DropWaiting(memory);  // 記憶清單 (#65): rows deleted, the engine not there yet
         var data = new Dictionary<string, object> {
             { "app", Migrate.AppName }, { "format", BackupFormat }, { "created", DateTime.Now.ToString("yyyy-MM-dd HH:mm") },
             { "memory", memory ?? new Dictionary<string, object>() }, { "dictionary", ReadDictionary() }, { "config", config },
