@@ -12,3 +12,8 @@ su3{^,}{HOME}{DOWN}2{ENTER} => 妳，
 ji3ap7vu0 fm4t z04{^,}{LEFT}{LEFT}{LEFT}{DOWN}2{END}y94fm4d042u04u/3{ENTER} => 我們先去喫飯，再去看電影
 # a pick after the caret stays when the mark goes in before it, and when it is taken out (the mark is no syllable)
 ji3cl3{LEFT}{DOWN}2{HOME}{RIGHT}{^,}{BACK}{HOME}{RIGHT}{^.}{ENTER} => 我。郝
+# #53: the caret before a mark, ↓ lists its row and a pick swaps it; a bracket's partner follows (Ctrl + a mark: full width
+# whatever the punctuation setting)
+ji3{^,}{LEFT}{DOWN}{DOWN}{ENTER}{ENTER} => 我、
+su3{^[}cl3{^]}{HOME}{RIGHT}{DOWN}2{ENTER} => 你『好』
+ji3{^.}{LEFT}{DOWN}2{ENTER} => 我！
