@@ -46,17 +46,20 @@ PUNCT_SWAPS = {
     "\uff3c": ("\uff3c", "\uff0f", "\\"), "\uff5c": ("\uff5c", "\ufe31", "|"),
 }
 BRACKETS = {"\u300c": "\u300d", "\u300e": "\u300f", "\uff08": "\uff09", "\u3010": "\u3011", "\u300a": "\u300b", "\u3008": "\u3009", "\u201c": "\u201d", "\u3014": "\u3015", "(": ")"}
+SWAP_MARKS = frozenset(m for row in PUNCT_SWAPS.values() for m in row)  # (every mark of a row: a swap's text)
 
 
 def punct_choices(shown):
     """The marks a mark shown so can become (#53), itself first; [] when it is in no row. A half-width one (a value of
-    HALF_WIDTH: , . ? ...) takes its full-width mark's row with itself first."""
+    HALF_WIDTH: , . ? ...) takes its full-width mark's row with itself first; one with no row of its own (\u3010 \u2026 \u2047,
+    picked from a row) the first row holding it, itself first, so it can be swapped back (findings #110)."""
     if shown in PUNCT_SWAPS:
         return list(PUNCT_SWAPS[shown])
     full = next((f for f, h in HALF_WIDTH.items() if h == shown), None)
-    if full not in PUNCT_SWAPS:
+    row = PUNCT_SWAPS.get(full) or next((r for r in PUNCT_SWAPS.values() if shown in r), None)
+    if not row:
         return []
-    return [shown] + [m for m in PUNCT_SWAPS[full] if m != shown]
+    return [shown] + [m for m in row if m != shown]
 
 
 def bracket_partner_text(old, new):
@@ -3147,25 +3150,23 @@ class Composer:
         return tok.value if tok.kind == "fix" else None
 
     def _bracket_partner(self, tok):
-        """The other bracket of the pair `tok` opens or closes (#53): for an opening one the first closing one after it
-        at depth 0, for a closing one the last opening one before it; only marks in the text count. None: alone."""
-        opening = set(BRACKETS)
-        closing = set(BRACKETS.values())
+        """The other bracket of the pair `tok` opens or closes (#53): for an opening one the first of its own closing
+        ones after it at depth 0, for a closing one the last of its own opening ones before it - brackets of another
+        kind in between do not count (findings #109: 「好:)」); only marks in the text. None: alone."""
         shown = self._shown_mark(tok)
-        marks = [t for t in self.tokens if self._shown_mark(t) in opening | closing]
-        i = marks.index(tok)
-        step, mine, other = (1, opening, closing) if shown in opening else (-1, closing, opening)
+        if shown in BRACKETS:
+            mine, other, step = shown, BRACKETS[shown], 1
+        else:
+            mine, other, step = shown, next(o for o, c in BRACKETS.items() if c == shown), -1
+        marks = [t for t in self.tokens if self._shown_mark(t) in (mine, other)]
         depth = 0
-        k = i + step
-        while 0 <= k < len(marks):
-            s = self._shown_mark(marks[k])
-            if s in mine:
+        for t in (marks[marks.index(tok) + 1:] if step == 1 else reversed(marks[:marks.index(tok)])):
+            if self._shown_mark(t) == mine:
                 depth += 1
-            elif s in other:
-                if depth == 0:
-                    return marks[k]
+            elif depth == 0:
+                return t
+            else:
                 depth -= 1
-            k += step
         return None
 
     def _punct_list(self):
@@ -5113,7 +5114,8 @@ class Composer:
         zh_punct = None
         for i, t in enumerate(self.tokens[:-1]):
             nxt = self.tokens[i + 1]
-            if t.kind == "partial" and nxt.kind == "fix" and nxt.raw == NAME_MARK_KEY:
+            # (and before a mark a swap left there: findings #108, 我「你好。」 with 「 swapped sent 我『你好.』)
+            if t.kind == "partial" and nxt.kind == "fix" and (nxt.raw == NAME_MARK_KEY or nxt.value in SWAP_MARKS):
                 zh_punct = zh_punct or zhuyin_punct(self.table)
                 if t.raw in zh_punct and self._chinese_before(t):
                     self.tokens[i] = Token("lit", t.raw, zh_punct[t.raw], t.start)

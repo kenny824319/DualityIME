@@ -73,6 +73,17 @@ const std::vector<std::pair<ustr, ustr>>& BRACKETS() {  // opening -> closing
     };
     return v;
 }
+// the rows in the table's order (std::map sorts its keys): the first row holding a mark with no row of its own
+const std::vector<ustr>& PUNCT_ROW_ORDER() {
+    static const std::vector<ustr> v = {U"，", U"、", U"。", U"？", U"！", U"：", U"；", U"「", U"」", U"『", U"』", U"（", U"）",
+                                        U"……", U"——", U"＼", U"｜"};
+    return v;
+}
+bool swap_mark(const ustr& s) {  // a mark of some row: a swap's text (engine/composer.py SWAP_MARKS)
+    for (auto& [k, row] : PUNCT_SWAPS())
+        if (std::find(row.begin(), row.end(), s) != row.end()) return true;
+    return false;
+}
 bool is_opening(const ustr& s) {
     for (auto& [o, c] : BRACKETS())
         if (o == s) return true;
@@ -3297,19 +3308,30 @@ int Composer::caret_index() const {
 
 static std::vector<ustr> punct_choices(const ustr& shown) {
     // the marks a mark shown so can become (#53), itself first; empty when it is in no row. A half-width one (a value
-    // of HALF_WIDTH: , . ? ...) takes its full-width mark's row with itself first.
+    // of HALF_WIDTH: , . ? ...) takes its full-width mark's row with itself first; one with no row of its own (【 … ⁇,
+    // picked from a row) the first row holding it, itself first, so it can be swapped back (findings #110)
     auto it = PUNCT_SWAPS().find(shown);
     if (it != PUNCT_SWAPS().end()) return it->second;
+    const std::vector<ustr>* row = nullptr;
     for (auto& [full, half] : HALF_WIDTH())
         if (half == shown) {
-            auto row = PUNCT_SWAPS().find(full);
-            if (row == PUNCT_SWAPS().end()) return {};
-            std::vector<ustr> out{shown};
-            for (auto& m : row->second)
-                if (m != shown) out.push_back(m);
-            return out;
+            auto r = PUNCT_SWAPS().find(full);
+            if (r != PUNCT_SWAPS().end()) row = &r->second;
+            break;
         }
-    return {};
+    if (!row)
+        for (auto& key : PUNCT_ROW_ORDER()) {
+            auto& r = PUNCT_SWAPS().at(key);
+            if (std::find(r.begin(), r.end(), shown) != r.end()) {
+                row = &r;
+                break;
+            }
+        }
+    if (!row) return {};
+    std::vector<ustr> out{shown};
+    for (auto& m : *row)
+        if (m != shown) out.push_back(m);
+    return out;
 }
 
 static std::optional<ustr> bracket_partner_text(const ustr& /*old_text*/, const ustr& new_text) {
@@ -3331,23 +3353,27 @@ std::optional<ustr> Composer::shown_mark(const Token* tok) const {
 }
 
 const Token* Composer::bracket_partner(const Token& tok) const {
-    // the other bracket of the pair tok opens or closes (#53): for an opening one the first closing one after it at
-    // depth 0, for a closing one the last opening one before it; only marks in the text count. nullptr: alone
+    // the other bracket of the pair tok opens or closes (#53): for an opening one the first of its own closing ones
+    // after it at depth 0, for a closing one the last of its own opening ones before it - brackets of another kind in
+    // between do not count (findings #109: 「好:)」); only marks in the text. nullptr: alone
+    ustr mine = *shown_mark(&tok), other;
+    bool open = is_opening(mine);
+    for (auto& [o, c] : BRACKETS())
+        if (open ? o == mine : c == mine) other = open ? c : o;
     std::vector<const Token*> marks;
     for (auto& t : tokens) {
         auto s = shown_mark(&t);
-        if (s && (is_opening(*s) || is_closing(*s))) marks.push_back(&t);
+        if (s && (*s == mine || *s == other)) marks.push_back(&t);
     }
     auto at = std::find(marks.begin(), marks.end(), &tok);
     if (at == marks.end()) return nullptr;
-    bool open = is_opening(*shown_mark(&tok));
     int step = open ? 1 : -1, depth = 0;
     for (long long k = (at - marks.begin()) + step; k >= 0 && k < static_cast<long long>(marks.size()); k += step) {
-        ustr s = *shown_mark(marks[static_cast<size_t>(k)]);
-        if (open ? is_opening(s) : is_closing(s)) {
+        if (*shown_mark(marks[static_cast<size_t>(k)]) == mine) {
             ++depth;
-        } else if (open ? is_closing(s) : is_opening(s)) {
-            if (depth == 0) return marks[static_cast<size_t>(k)];
+        } else if (depth == 0) {
+            return marks[static_cast<size_t>(k)];
+        } else {
             --depth;
         }
     }
@@ -7002,7 +7028,10 @@ void Composer::marks_before_symbols() {
     for (size_t i = 0; i + 1 < tokens.size(); ++i) {
         const Token& t = tokens[i];
         const Token& next = tokens[i + 1];
-        if (t.kind != Kind::Partial || next.kind != Kind::Fix || next.raw != std::string(1, NAME_MARK_KEY)) continue;
+        // (and before a mark a swap left there: findings #108, 我「你好。」 with 「 swapped sent 我『你好.』)
+        if (t.kind != Kind::Partial || next.kind != Kind::Fix ||
+            (next.raw != std::string(1, NAME_MARK_KEY) && !swap_mark(next.value)))
+            continue;
         if (!zp) zp = zhuyin_punct(table_);
         auto key = t.raw.size() == 1 ? zp->find(t.raw[0]) : zp->end();
         if (key != zp->end() && chinese_before(i)) tokens[i] = Token{Kind::Lit, t.raw, key->second, t.start};

@@ -44,10 +44,14 @@ CASES = [
     # 10th): 因 back. Later cases teach 因該, and there it never swaps (#45). {RESET} after it: with 注音自動校正 off the
     # list does not open and Enter sends the text - its context must not reach the 接續前文選字 case next (#46)
     "up e9 vu;g4ru042l354h3h42k7ru,6eji3{HOME}{RIGHT}{RIGHT}" + "{DOWN}" * 10 + "{ENTER}{RESET}",
-    # #53 (second to tenth: --cases 10 runs them): the caret before a mark, ↓ lists its row; a pick swaps it, a
+    # #53 (second to thirteenth: --cases 13 runs them): the caret before a mark, ↓ lists its row; a pick swaps it, a
     # bracket's partner follows; at the end, as before; a mark in no row (<, the symbol keyboard's ●) nothing; the swap
-    # stays through typing and Backspace. {RESET} after them: what they send is no context for the cases after
-    "su3{^,}{LEFT}{DOWN}{DOWN}{ENTER}{ENTER}", "su3,cl3{LEFT}{LEFT}{DOWN}2{ENTER}", "su3.{LEFT}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}",
+    # stays through typing and Backspace; a mark typed right before a swapped one stays a mark (findings #108, full
+    # width); brackets pair by kind (#109); a mark with no row of its own swaps back through the row it came from (#110).
+    # {RESET} after them: what they send is no context for the cases after
+    "su3{^,}{LEFT}{DOWN}{DOWN}{ENTER}{ENTER}", "su3,cl3{LEFT}{LEFT}{DOWN}2{ENTER}", "su3{^.}{LEFT}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}",
+    "ji3[su3cl3.]{HOME}{RIGHT}{DOWN}2{ENTER}", "su3{^[}cl3:){^]}{HOME}{RIGHT}{DOWN}2{ENTER}",
+    "su3{^[}cl3{LEFT}{LEFT}{DOWN}4{LEFT}{DOWN}2{ENTER}",
     "su3{^[}cl3{^[}ji3{^]}{^]}{HOME}{RIGHT}{DOWN}2{ENTER}", "su3{^[}cl3{LEFT}{LEFT}{DOWN}3{ENTER}", "su3{^,}{DOWN}{ESC}{ENTER}",
     "su3<{LEFT}{DOWN}{ENTER}", "su3`f{LEFT}{DOWN}{ENTER}", "su3{^,}{LEFT}{DOWN}2{END}cl3{BACK}{ENTER}{RESET}",
     # 接續前文選字 (#37): 我們先去吃飯 sent, then ㄗㄞˋ去看電影 read after it; after {CL} (the caret moved) and after

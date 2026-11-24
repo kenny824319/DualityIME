@@ -5251,6 +5251,67 @@ class PunctuationSwapTest(Base):
         finally:
             c.user.set_simplified(False)
 
+    def test_a_mark_typed_right_before_a_swapped_one_stays_a_mark(self):
+        # (findings #108: the swap cut the text there, and a full-width 。 or ， typed with its key right before it read
+        # as an unfinished syllable: 我「你好。」 sent 我『你好.』)
+        c = self.c
+        c.config.set(punctuation="full")
+        self.press(*"ji3[su3cl3.]")
+        self.assertEqual(c.composition, "我「你好。」")
+        self.press("HOME", "RIGHT", "DOWN", "2")
+        self.assertEqual(c.composition, "我『你好。』")
+        self.press("ENTER")
+        self.assertEqual(c.commit, "我『你好。』")
+        self.press(*"su3,,cl3", "LEFT", "LEFT", "DOWN", "1")  # (the second comma for itself)
+        self.assertEqual(c.composition, "你，，好")
+
+    def test_brackets_pair_with_their_own_kind(self):
+        # (findings #109: one depth for every bracket - 「好:)」 swapped the smiley's ) instead of 」)
+        c = self.c
+        self.press("s", "u", "3"); c.type_full_punct("["); self.press(*"cl3:)"); c.type_full_punct("]")
+        self.assertEqual(c.composition, "你「好:)」")
+        self.press("HOME", "RIGHT", "DOWN", "2")
+        self.assertEqual(c.composition, "你『好:)』")
+
+    def test_a_mark_swapped_in_without_a_row_takes_the_row_it_came_from(self):
+        # (findings #110: 【 or … have no row of their own: once picked, nothing could bring the mark back)
+        c = self.c
+        self.press("s", "u", "3"); c.type_full_punct("["); self.press(*"cl3", "LEFT", "LEFT", "DOWN", "4")
+        self.assertEqual(c.composition, "你【好")
+        self.press("LEFT", "DOWN")  # (the pick left the caret before 好: one step back is 【)
+        self.assertEqual(c.candidates, ["【", "「", "『", "（", "《", "〈", "“"])
+        self.press("2")
+        self.assertEqual(c.composition, "你「好")
+
+    def test_every_row(self):
+        # (findings #111: each row of the user's table swapped once - every mark Ctrl + a key types)
+        from engine.composer import PUNCT, PUNCT_KEYS, PUNCT_SWAPS
+        c = self.c
+        for key, mark in list(PUNCT_KEYS.items()) + list(PUNCT.items()):
+            if mark not in PUNCT_SWAPS:
+                continue
+            with self.subTest(key=key, mark=mark):
+                c.reset()
+                self.press("s", "u", "3")
+                self.assertTrue(c.type_full_punct(key))
+                self.press("LEFT", "DOWN")
+                self.assertEqual(c.candidates, list(PUNCT_SWAPS[mark]))
+                self.press("2")
+                self.assertEqual(c.composition, "你" + PUNCT_SWAPS[mark][1])
+        self.assertEqual({m for k, m in list(PUNCT_KEYS.items()) + list(PUNCT.items())}, set(PUNCT_SWAPS))
+
+    def test_the_two_engines_hold_the_same_table(self):
+        # (findings #111: compare.py would not see a row changed on one side only)
+        import re
+        from engine.composer import PUNCT_SWAPS
+        src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cpp", "engine",
+                                "composer.cpp"), encoding="utf-8").read()
+        body = src[src.index("PUNCT_SWAPS() {"):src.index("return m;", src.index("PUNCT_SWAPS() {"))]
+        rows = re.findall(r'\{U"((?:[^"\\]|\\.)*)", \{((?:U"(?:[^"\\]|\\.)*"(?:, )?)+)\}\}', body)
+        cpp = {k.replace("\\\\", "\\"): tuple(v.replace("\\\\", "\\") for v in re.findall(r'U"((?:[^"\\]|\\.)*)"', m))
+               for k, m in rows}
+        self.assertEqual(cpp, PUNCT_SWAPS)
+
 
 class CandidateGridTest(Base):
     """→ in the list spreads it out to the right, like the Windows 注音: columns of 9, four shown."""
