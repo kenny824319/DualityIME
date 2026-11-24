@@ -1,0 +1,6 @@
+# End-to-end check of 記憶清單 (#65): memory_list_user.json remembers two e-mails, memory_list_config.json deletes the
+# first (forget_list, as the settings tool writes it); the engine applies it when it starts: the deleted one is no
+# longer completed with Tab, the other still is.
+# e2e-args: -Config cpp\tools\memory_list_config.json -User cpp\tools\memory_list_user.json
+B077{TAB}{ENTER} => B07745678@example.org
+A063{TAB}{ENTER} => A063
