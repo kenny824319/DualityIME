@@ -1,0 +1,6 @@
+# e2e-args: -Config cpp\tools\punct_full_config.json
+# 標點全形 (#53, findings #108): a , . ; typed with its key right before a swapped mark stays the mark (it went out as
+# an unfinished syllable: 我『你好.』), and brackets swap by their own kind
+ji3[su3cl3.]{HOME}{RIGHT}{DOWN}2{ENTER} => 我『你好。』
+ji3,,cl3{LEFT}{LEFT}{DOWN}1{ENTER} => 我，，好
+su3{^[}cl3:){^]}{HOME}{RIGHT}{DOWN}2{ENTER} => 你『好：）』
