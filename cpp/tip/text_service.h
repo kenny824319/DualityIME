@@ -64,7 +64,7 @@ public:
     // ITfCompartmentEventSink
     STDMETHODIMP OnChange(REFGUID guid) override;
     // ITfThreadFocusSink
-    STDMETHODIMP OnSetThreadFocus() override { return S_OK; }
+    STDMETHODIMP OnSetThreadFocus() override;
     STDMETHODIMP OnKillThreadFocus() override;
     // ITfTextLayoutSink: the app knows where the text is now (after it changed)
     STDMETHODIMP OnLayoutChange(ITfContext* ctx, TfLayoutCode code, ITfContextView* view) override;

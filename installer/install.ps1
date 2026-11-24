@@ -111,7 +111,7 @@ try {
     # what goes into the install folder (payload path = installed path)
     $files = @("DualityIME64.dll", "DualityIME32.dll", "DualityIMEEngine.exe", "lookup.exe", "settings.exe",
                "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "WebView2Loader.dll",
-               "uninstall.exe", "icon.ico", "settings-system.ps1", "language.ps1", "uninstall.ps1", "user.ps1", "remove-pime.ps1",
+               "uninstall.exe", "icon.ico", "tray.ico", "tray-light.ico", "settings-system.ps1", "language.ps1", "uninstall.ps1", "user.ps1", "remove-pime.ps1",
                "data\lexicon.txt", "data\names.txt", "data\bigram.bin", "data\lm.bin", "data\english.txt", "data\english_tech.txt", "data\after_english.txt", "data\LICENSE-McBopomofo.txt",
                # 簡體輸出 (#32): OpenCC's tables and their licence
                "data\opencc\TSPhrases.txt", "data\opencc\TSCharacters.txt", "data\opencc\TWVariantsRev.txt",
@@ -151,6 +151,12 @@ try {
     Ok "程式檔已放到 $Dst（$Version）"
 
     # ---- 3. tell Windows about the input method (the same GUIDs as 2.x: now pointing here) ---------------
+    # its own taskbar icon is a file Windows reads (registered as %ProgramData%\DualityIME\tray.ico): each user's
+    # engine puts the white or the black one there with the taskbar's theme, so every user may write it
+    $Tray = Join-Path $env:ProgramData "DualityIME"
+    New-Item -ItemType Directory -Force $Tray | Out-Null
+    & "$env:SystemRoot\System32\icacls.exe" $Tray /grant "*S-1-5-32-545:(OI)(CI)M" | Out-Null   # Users: modify
+    if (-not (Test-Path (Join-Path $Tray "tray.ico"))) { Copy-Item (Join-Path $Dst "tray.ico") (Join-Path $Tray "tray.ico") -Force }
     Register-Dlls $Dst
     # the engine starts at sign-in for every user (with that user's rights); user.ps1 starts it now
     $engine = Join-Path $Dst "DualityIMEEngine.exe"

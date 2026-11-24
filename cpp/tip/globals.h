@@ -3,6 +3,8 @@
 #include <windows.h>
 #include <msctf.h>
 
+#include <string>
+
 namespace sz {
 
 extern HINSTANCE g_module;
@@ -24,7 +26,15 @@ inline void DllRelease() { InterlockedDecrement(&g_refs); }
 
 // resources (tip.rc)
 constexpr int IDI_PROFILE = 100;  // first icon: the input method's own
-constexpr int IDI_ZH = 101;
+constexpr int IDI_ZH = 101;        // the mode button, white: for a dark taskbar
 constexpr int IDI_EN = 102;
+constexpr int IDI_ZH_LIGHT = 103;  // ...and black: for a light taskbar
+constexpr int IDI_EN_LIGHT = 104;
+
+// Where Windows reads the input method's own taskbar icon from (register_profile). A file, not a
+// resource of the DLL: the engine puts the white or the black one there as the taskbar's theme
+// changes (Windows reads the file again each time it shows the icon, but asks no code of ours).
+// %ProgramData%\DualityIME\tray.ico; "" if that folder cannot be found.
+std::wstring tray_icon_path();
 
 }  // namespace sz

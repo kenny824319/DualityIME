@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <msctf.h>
 #include <olectl.h>
+#include <shlobj.h>
 #include <wrl/client.h>
 
 #include <string>
@@ -20,6 +21,15 @@ const CLSID CLSID_DualityIME = {0x7F9854C9, 0xF3D8, 0x42DB, {0xBB, 0x12, 0x9F, 0
 const GUID GUID_Profile = {0xBFDAC825, 0xE67C, 0x4E87, {0xB6, 0x44, 0xE6, 0xB5, 0xF7, 0xB3, 0xD0, 0x8B}};
 const GUID GUID_AttrInput = {0xB784454C, 0xECC8, 0x4381, {0x8D, 0x91, 0xA9, 0x51, 0x30, 0x17, 0x6C, 0xA7}};
 const GUID GUID_LangBarButton = {0x603B367C, 0x53D2, 0x4F99, {0xA2, 0xBD, 0x0C, 0x1F, 0x3B, 0x13, 0x1F, 0x37}};
+
+std::wstring tray_icon_path() {
+    wchar_t* dir = nullptr;
+    std::wstring path;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_ProgramData, 0, nullptr, &dir)))
+        path = std::wstring(dir) + L"\\DualityIME\\tray.ico";
+    CoTaskMemFree(dir);
+    return path;
+}
 
 namespace {
 
@@ -96,9 +106,13 @@ HRESULT register_profile(const std::wstring& path) {
     ComPtr<ITfInputProcessorProfileMgr> mgr;
     HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&mgr));
     if (FAILED(hr)) return hr;
+    // the icon: the file the engine keeps white or black with the taskbar's theme (globals.h); the
+    // DLL's own first icon (IDI_PROFILE, the white one) only if that folder cannot be found
+    std::wstring icon = tray_icon_path();
+    if (icon.empty()) icon = path;
     for (LANGID lang : {kLangId, kLangIdHK}) {
         hr = mgr->RegisterProfile(CLSID_DualityIME, lang, GUID_Profile, kName, static_cast<ULONG>(wcslen(kName)),
-                                  path.c_str(), static_cast<ULONG>(path.size()), 0 /* first icon: IDI_PROFILE */, nullptr, 0,
+                                  icon.c_str(), static_cast<ULONG>(icon.size()), 0, nullptr, 0,
                                   FALSE /* only where the installer adds it: enabled by default, Windows also
                                            lists it under every 中文(台灣) user's own input methods (twice) */,
                                   0);

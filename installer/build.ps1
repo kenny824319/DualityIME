@@ -61,6 +61,8 @@ $files = [ordered]@{
     "DualityIMEEngine.exe" = "bin\DualityIMEEngine.exe"
     "lookup.exe" = "out\payload\lookup.exe"; "settings.exe" = "out\payload\settings.exe"; "uninstall.exe" = "out\payload\uninstall.exe"
     "icon.ico" = "installer\app.ico"
+    # the input method's own taskbar icon, for a dark and a light taskbar (the engine puts the right one in place)
+    "tray.ico" = "cpp\tip\icon_profile.ico"; "tray-light.ico" = "cpp\tip\icon_profile_light.ico"
     "settings-system.ps1" = "installer\settings-system.ps1"; "language.ps1" = "installer\language.ps1"
     "install.ps1" = "installer\install.ps1"; "user.ps1" = "installer\user.ps1"; "uninstall.ps1" = "installer\uninstall.ps1"
     "remove-pime.ps1" = "installer\remove-pime.ps1"

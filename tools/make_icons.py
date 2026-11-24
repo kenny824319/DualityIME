@@ -1,10 +1,10 @@
-"""Regenerate every icon from icons/*.svg (needs Pillow):
+"""Regenerate the program's own icon from icons/中英混打.svg (needs Pillow):
 
     python tools/make_icons.py
 
-cpp/tip/icon_profile.ico (中英混打, the input method's own; installer/app.ico is the same) and
-icon.ico (its inverse, the mode button) from icons/中英混打.svg, icon_en.ico (全英輸入, the mode
-button in English mode) from icons/全英輸入.svg, and settings/ui/logo.svg a copy of icons/中英混打.svg.
+installer/app.ico (setup.exe, settings.exe, the Start menu, Settings > Apps) and settings/ui/logo.svg,
+a copy of icons/中英混打.svg. The three icons on the taskbar (cpp/tip/icon_profile.ico, icon.ico,
+icon_en.ico) are drawn by tools/make_tray_icons.ps1 instead.
 """
 import os
 import shutil
@@ -188,17 +188,10 @@ def svg_frames(name, pixels={}):
 
 
 def make_mixed_icons():
-    """icons/中英混打.svg as a multi-size .ico, and again with every colour flipped for the mode
-    button (light on dark, so it stands apart from the input method's own icon beside it);
-    icons/全英輸入.svg as it is (dark on light) for the English mode."""
-    from PIL import ImageOps
+    """icons/中英混打.svg as a multi-size .ico: the program's own icon (setup.exe, settings.exe,
+    the Start menu, Settings > Apps). Not the taskbar's: see tools/make_tray_icons.ps1."""
     frames = svg_frames("中英混打", MIXED_ICON_PIXELS)
-    tip = os.path.join(ROOT, "cpp", "tip")
-    save_ico(frames, os.path.join(tip, "icon_profile.ico"))
-    # the program's own icon too: setup.exe, settings.exe, the Start menu, Settings > Apps
     save_ico(frames, os.path.join(ROOT, "installer", "app.ico"))
-    save_ico([ImageOps.invert(f) for f in frames], os.path.join(tip, "icon.ico"))
-    save_ico(svg_frames("全英輸入", ENGLISH_ICON_PIXELS), os.path.join(tip, "icon_en.ico"))
     # the settings app's own logo (its side bar and 關於 page)
     shutil.copyfile(os.path.join(ROOT, "icons", "中英混打.svg"), os.path.join(ROOT, "settings", "ui", "logo.svg"))
 

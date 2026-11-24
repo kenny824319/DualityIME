@@ -37,7 +37,7 @@
 | `settings/ui/` | 設定工具的畫面（HTML／CSS／JS；直接用瀏覽器開 `index.html` 可以預覽，資料是假的） |
 | `data/` | 詞庫 `lexicon.txt`、前後文模型 `bigram.bin`、英文字表（`english_tech.txt` 補上一般字表沒有的電腦用語） |
 | `third_party/webview2/` | 微軟的 WebView2 元件（BSD 授權，跟設定工具一起散布） |
-| `icons/` | 圖示的向量原稿；`py tools/make_icons.py` 產生所有 .ico 和設定工具的標誌 |
+| `icons/` | 圖示的向量原稿；`py tools/make_icons.py` 產生程式本身的圖示（`installer/app.ico`）和設定工具的標誌。工作列上的圖示（`cpp/tip/*.ico`：儀／兩／英，各有白字與黑字兩個，跟著工作列的深色、淺色主題換）由 `tools/make_tray_icons.ps1` 用微軟正黑體畫出 |
 | `tools/` | 產生資料、評估、試打、測試、發版 |
 | `tests/` | 測試 |
 | `VERSION` | 版本號 |

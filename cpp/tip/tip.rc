@@ -4,6 +4,9 @@
 100 ICON "icon_profile.ico"
 101 ICON "icon.ico"
 102 ICON "icon_en.ico"
+// the mode button on a light taskbar
+103 ICON "icon_light.ico"
+104 ICON "icon_en_light.ico"
 
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION 2,0,0,0

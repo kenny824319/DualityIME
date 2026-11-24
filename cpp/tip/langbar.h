@@ -14,6 +14,7 @@ public:
     explicit LangBarButton(TextService* service);
     void detach() { service_ = nullptr; }
     void update();  // the mode changed: new icon and text
+    void check_theme();  // the taskbar went light or dark since the icon was last given: a new icon
 
     STDMETHODIMP QueryInterface(REFIID riid, void** ppv) override;
     STDMETHODIMP_(ULONG) AddRef() override;
@@ -36,6 +37,7 @@ public:
 private:
     LONG refs_ = 1;
     TextService* service_;
+    bool light_ = false;  // the taskbar's theme the icon was last given for
     Microsoft::WRL::ComPtr<ITfLangBarItemSink> sink_;
 };
 

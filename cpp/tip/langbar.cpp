@@ -11,6 +11,14 @@ namespace {
 // the input mode button Windows shows on the taskbar
 const GUID GUID_LBI_INPUTMODE_ = {0x2C77A81E, 0x41CC, 0x4178, {0xA3, 0xA7, 0x5F, 0x8A, 0x98, 0x75, 0x68, 0xE6}};
 constexpr DWORD kSinkCookie = 0x5A;
+
+// the taskbar is light (Settings > Personalization > Colors: the Windows mode, not the apps' one)
+bool light_taskbar() {
+    DWORD light = 0, size = sizeof light;
+    RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                 L"SystemUsesLightTheme", RRF_RT_REG_DWORD, nullptr, &light, &size);
+    return light != 0;
+}
 }
 
 LangBarButton::LangBarButton(TextService* service) : service_(service) { DllAddRef(); }
@@ -74,8 +82,11 @@ STDMETHODIMP LangBarButton::OnClick(TfLBIClick click, POINT pt, const RECT*) {
 STDMETHODIMP LangBarButton::GetIcon(HICON* icon) {
     if (!icon) return E_INVALIDARG;
     bool english = service_ && service_->english_mode();
+    // white on a dark taskbar, black on a light one, as Windows draws its own input methods' buttons
+    light_ = light_taskbar();
+    int id = light_ ? (english ? IDI_EN_LIGHT : IDI_ZH_LIGHT) : (english ? IDI_EN : IDI_ZH);
     // a fresh copy each time: the caller destroys it
-    *icon = static_cast<HICON>(LoadImageW(g_module, MAKEINTRESOURCEW(english ? IDI_EN : IDI_ZH), IMAGE_ICON,
+    *icon = static_cast<HICON>(LoadImageW(g_module, MAKEINTRESOURCEW(id), IMAGE_ICON,
                                           GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0));
     return *icon ? S_OK : E_FAIL;
 }
@@ -102,6 +113,10 @@ STDMETHODIMP LangBarButton::UnadviseSink(DWORD cookie) {
 
 void LangBarButton::update() {
     if (sink_) sink_->OnUpdate(TF_LBI_ICON | TF_LBI_TEXT | TF_LBI_TOOLTIP);
+}
+
+void LangBarButton::check_theme() {
+    if (sink_ && light_taskbar() != light_) sink_->OnUpdate(TF_LBI_ICON);
 }
 
 }  // namespace sz

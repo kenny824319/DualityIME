@@ -441,6 +441,15 @@ void TextService::leave_field() {
     hide_ui();
 }
 
+STDMETHODIMP TextService::OnSetThreadFocus() {
+    // the taskbar's theme may have changed while another program was in front: the mode button follows
+    try {
+        if (button_) button_->check_theme();
+    } catch (...) {
+    }
+    return S_OK;
+}
+
 STDMETHODIMP TextService::OnKillThreadFocus() {
     try {
         HWND fg = GetForegroundWindow();
@@ -482,6 +491,7 @@ void TextService::reset_engine() {
 STDMETHODIMP TextService::OnTestKeyDown(ITfContext* ctx, WPARAM wp, LPARAM lp, BOOL* eaten) {
     *eaten = FALSE;
     try {
+        if (button_) button_->check_theme();  // (the taskbar's theme changed while this program stayed in front)
         *eaten = test_key_down(ctx, wp, lp);
     } catch (...) {
     }

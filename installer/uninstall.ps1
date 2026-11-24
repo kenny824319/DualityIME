@@ -113,6 +113,7 @@ try {
 
     # ---- 3. the files, Settings > Apps, the Start menu --------------------------------------------------
     Remove-Tree $Dst
+    Remove-Tree (Join-Path $env:ProgramData "DualityIME")   # (the taskbar icon the engine kept there)
     if (Test-Path $Dst) { Warn "$Dst 還有東西正在使用中，會在下次開機時刪除" }
     else { Ok "已刪除程式檔（$Dst）" }
     if (Test-Path $UninstallKey) { Remove-Item $UninstallKey -Recurse -Force }

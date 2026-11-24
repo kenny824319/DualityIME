@@ -406,6 +406,47 @@ bool restart_unelevated() {
     return started;
 }
 
+// ---- the input method's own icon on the taskbar ------------------------------------------------------
+// Windows reads it from a file each time it shows it (%ProgramData%\DualityIME\tray.ico, where the
+// input method is registered to have it: tray_icon_path() in the DLL) and asks no code of ours, so it
+// cannot be drawn for the theme the way the mode button is. This process puts the right file there
+// instead: tray.ico (white, for a dark taskbar) or tray-light.ico (black) from the install folder, at
+// start and whenever the taskbar's theme changes, and tells Windows the file changed (it keeps the
+// picture it read otherwise). Windows shows it the next time it draws the icon (switching input methods).
+const wchar_t kPersonalize[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
+
+void put_tray_icon() {
+    DWORD light = 0, size = sizeof light;
+    RegGetValueW(HKEY_CURRENT_USER, kPersonalize, L"SystemUsesLightTheme", RRF_RT_REG_DWORD, nullptr, &light, &size);
+    wchar_t* base = nullptr;
+    std::wstring dir;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_ProgramData, 0, nullptr, &base))) dir = std::wstring(base) + L"\\DualityIME";
+    CoTaskMemFree(base);
+    if (dir.empty()) return;
+    CreateDirectoryW(dir.c_str(), nullptr);  // (the installer makes it, writable by every user; a developer's build has none)
+    std::wstring from = module_dir(nullptr) + (light ? L"tray-light.ico" : L"tray.ico");
+    std::wstring to = dir + L"\\tray.ico";
+    // whole or not at all: Windows may be reading the file
+    std::wstring tmp = to + L"." + std::to_wstring(GetCurrentProcessId());
+    if (!CopyFileW(from.c_str(), tmp.c_str(), FALSE)) return;
+    if (!MoveFileExW(tmp.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        DeleteFileW(tmp.c_str());
+        return;
+    }
+    SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW, to.c_str(), nullptr);
+}
+
+void follow_theme() {
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kPersonalize, 0, KEY_NOTIFY, &key) != ERROR_SUCCESS) key = nullptr;
+    for (;;) {
+        put_tray_icon();
+        // (waits here until a value of the key changes)
+        if (!key || RegNotifyChangeKeyValue(key, FALSE, REG_NOTIFY_CHANGE_LAST_SET, nullptr, FALSE) != ERROR_SUCCESS) break;
+    }
+    if (key) RegCloseKey(key);
+}
+
 }  // namespace
 
 // DualityIMEEngine.exe [--user-dir <folder>]  (another folder for user.json etc.: tests)
@@ -450,6 +491,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
         g->config->keep_file();
     }
     if (!g->res.lexicon->ok()) return 1;
+    if (!own_dir) std::thread(follow_theme).detach();  // (not the tests' engines: one icon for the computer)
     if (g->config->flag("long_sentence")) g->res.lm->get();  // (now, not on the first key typed)
 
     for (;;) {
