@@ -217,6 +217,8 @@ private:
         ustr reading;      // a candidate's reading (the "next" suggestion: readings, one a character of text)
         std::vector<CustomUnit> units;  // "name": the name's units from syllable s (#14)
         ustr term;  // "term" (簡體輸出, #32): the Mainland word shown for the phrase `text`
+        int pair_start = -1, pair_end = 0;  // "punct" (#53): the bracket that pairs with the mark, -1 none
+        ustr pair_text;                     // ...and what it becomes
     };
     // 簡體輸出 (#32): a Mainland word picked for a phrase: span -> (Taiwan phrase, what is shown for it)
     using TermPicks = std::map<std::pair<int, int>, std::pair<ustr, ustr>>;
@@ -271,6 +273,10 @@ private:
     std::vector<int> stops() const;
     int caret_index() const;
     const Token* caret_token() const;
+    std::optional<ustr> shown_mark(const Token* tok) const;  // #53
+    const Token* bracket_partner(const Token& tok) const;
+    bool punct_list();
+    void swap_punct(const Action& a);
     int width(const Token& t) const;
     int tok_offset(int start) const;
     void splice(int p, int q, const std::string& text);

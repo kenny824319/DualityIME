@@ -53,6 +53,36 @@ const std::map<ustr, ustr>& HALF_WIDTH() {
     return m;
 }
 const ustr FULL_SPACE = U"　";
+// #53: a mark in the text being typed, the caret before it, ↓ lists its row (first the mark itself; the user's table,
+// 2026-11-24, docs/superpowers/specs/2026-11-24-switch-punctuation-design.md); nothing is remembered
+const std::map<ustr, std::vector<ustr>>& PUNCT_SWAPS() {
+    static const std::map<ustr, std::vector<ustr>> m = {
+        {U"，", {U"，", U"、", U"；", U"：", U","}}, {U"、", {U"、", U"，", U"；"}}, {U"。", {U"。", U"！", U"？", U"…", U"."}},
+        {U"？", {U"？", U"！", U"。", U"⁇", U"?"}}, {U"！", {U"！", U"？", U"。", U"‼", U"!"}}, {U"：", {U"：", U"；", U"，", U":"}},
+        {U"；", {U"；", U"：", U"，", U";"}}, {U"「", {U"「", U"『", U"（", U"【", U"《", U"〈", U"“"}},
+        {U"」", {U"」", U"』", U"）", U"】", U"》", U"〉", U"”"}}, {U"『", {U"『", U"「", U"（", U"【", U"《", U"〈"}},
+        {U"』", {U"』", U"」", U"）", U"】", U"》", U"〉"}}, {U"（", {U"（", U"〔", U"【", U"「", U"("}},
+        {U"）", {U"）", U"〕", U"】", U"」", U")"}}, {U"……", {U"……", U"…", U"⋯⋯", U"‥", U"——"}},
+        {U"——", {U"——", U"—", U"～", U"－"}}, {U"＼", {U"＼", U"／", U"\\"}}, {U"｜", {U"｜", U"︱", U"|"}},
+    };
+    return m;
+}
+const std::vector<std::pair<ustr, ustr>>& BRACKETS() {  // opening -> closing
+    static const std::vector<std::pair<ustr, ustr>> v = {
+        {U"「", U"」"}, {U"『", U"』"}, {U"（", U"）"}, {U"【", U"】"}, {U"《", U"》"}, {U"〈", U"〉"}, {U"“", U"”"}, {U"〔", U"〕"}, {U"(", U")"},
+    };
+    return v;
+}
+bool is_opening(const ustr& s) {
+    for (auto& [o, c] : BRACKETS())
+        if (o == s) return true;
+    return false;
+}
+bool is_closing(const ustr& s) {
+    for (auto& [o, c] : BRACKETS())
+        if (c == s) return true;
+    return false;
+}
 
 constexpr double COST_PARTIAL = 0.2;
 constexpr double COST_SPACE = 0.3;
@@ -3265,6 +3295,113 @@ int Composer::caret_index() const {
     return c;
 }
 
+static std::vector<ustr> punct_choices(const ustr& shown) {
+    // the marks a mark shown so can become (#53), itself first; empty when it is in no row. A half-width one (a value
+    // of HALF_WIDTH: , . ? ...) takes its full-width mark's row with itself first.
+    auto it = PUNCT_SWAPS().find(shown);
+    if (it != PUNCT_SWAPS().end()) return it->second;
+    for (auto& [full, half] : HALF_WIDTH())
+        if (half == shown) {
+            auto row = PUNCT_SWAPS().find(full);
+            if (row == PUNCT_SWAPS().end()) return {};
+            std::vector<ustr> out{shown};
+            for (auto& m : row->second)
+                if (m != shown) out.push_back(m);
+            return out;
+        }
+    return {};
+}
+
+static std::optional<ustr> bracket_partner_text(const ustr& /*old_text*/, const ustr& new_text) {
+    // what the other bracket of a pair becomes when one becomes new_text (#53); none when it is no bracket (a row
+    // holds only openings or only closings: old and new are on one side)
+    for (auto& [o, c] : BRACKETS()) {
+        if (o == new_text) return c;
+        if (c == new_text) return o;
+    }
+    return std::nullopt;
+}
+
+std::optional<ustr> Composer::shown_mark(const Token* tok) const {
+    // the text a mark token shows (#53): a typed punctuation key in the width chosen, a joined one as joined
+    if (!tok) return std::nullopt;
+    if (tok->kind == Kind::Lit) return lit_text(tok->value, tok->raw);
+    if (tok->kind == Kind::Fix) return tok->value;
+    return std::nullopt;
+}
+
+const Token* Composer::bracket_partner(const Token& tok) const {
+    // the other bracket of the pair tok opens or closes (#53): for an opening one the first closing one after it at
+    // depth 0, for a closing one the last opening one before it; only marks in the text count. nullptr: alone
+    std::vector<const Token*> marks;
+    for (auto& t : tokens) {
+        auto s = shown_mark(&t);
+        if (s && (is_opening(*s) || is_closing(*s))) marks.push_back(&t);
+    }
+    auto at = std::find(marks.begin(), marks.end(), &tok);
+    if (at == marks.end()) return nullptr;
+    bool open = is_opening(*shown_mark(&tok));
+    int step = open ? 1 : -1, depth = 0;
+    for (long long k = (at - marks.begin()) + step; k >= 0 && k < static_cast<long long>(marks.size()); k += step) {
+        ustr s = *shown_mark(marks[static_cast<size_t>(k)]);
+        if (open ? is_opening(s) : is_closing(s)) {
+            ++depth;
+        } else if (open ? is_closing(s) : is_opening(s)) {
+            if (depth == 0) return marks[static_cast<size_t>(k)];
+            --depth;
+        }
+    }
+    return nullptr;
+}
+
+bool Composer::punct_list() {
+    // the caret before a mark that is in the table (#53): its row as the candidates
+    if (!caret_) return false;  // (at the end: the last character's, as before - the user's 移到想改的字前方再按下)
+    const Token* tok = caret_token();
+    auto shown = shown_mark(tok);
+    std::vector<ustr> row = shown ? punct_choices(*shown) : std::vector<ustr>{};
+    if (row.empty()) return false;
+    const Token* partner = is_opening(*shown) || is_closing(*shown) ? bracket_partner(*tok) : nullptr;
+    std::vector<Action> actions;
+    for (auto& text : row) {
+        Action a;
+        a.type = "punct";
+        a.start = tok->start;
+        a.end = tok->start + static_cast<int>(tok->raw.size());
+        a.text = text;
+        if (partner) {
+            if (auto other = bracket_partner_text(*shown, text)) {
+                a.pair_start = partner->start;
+                a.pair_end = partner->start + static_cast<int>(partner->raw.size());
+                a.pair_text = *other;
+            }
+        }
+        actions.push_back(std::move(a));
+    }
+    candidates = row;
+    cand_actions_ = std::move(actions);
+    cand_index = 0;
+    return true;
+}
+
+void Composer::swap_punct(const Action& a) {
+    // a mark picked from its row (#53): shown so from now on (fixed, as the replacement bar keeps what it puts), the
+    // bracket it pairs with too; the caret past it; nothing learned
+    std::vector<std::tuple<int, int, ustr>> swaps{{a.start, a.end, a.text}};
+    if (a.pair_start >= 0) swaps.emplace_back(a.pair_start, a.pair_end, a.pair_text);
+    for (auto& [s, e, t] : swaps) {
+        Fixed fixed;
+        for (auto& [b, v] : fixed_)
+            if (v.first <= s || b >= e) fixed[b] = v;
+        fixed[s] = {e, t};
+        fixed_ = std::move(fixed);
+    }
+    candidates.clear();
+    cand_actions_.clear();
+    refresh();
+    caret_past(a.end);
+}
+
 const Token* Composer::caret_token() const {
     // the token the caret is before or inside
     if (!caret_) return nullptr;
@@ -4077,6 +4214,7 @@ static std::map<int, char32_t> chars_of(const std::vector<Segment>& segments);  
 bool Composer::open_list() {
     cand_expanded = false;
     cand_first = 0;
+    if (punct_list()) return true;
     std::vector<ustr> labels;
     std::vector<Action> actions;
     shortcut_candidates(labels, actions);
@@ -5342,6 +5480,10 @@ bool Composer::key_fill(std::optional<char32_t> ch, const std::string& special) 
 }
 
 void Composer::pick(int i, bool from_bar) {
+    if (cand_actions_[i].type == "punct") {  // (#53: a mark from its row - nothing else to do, nothing learned)
+        swap_punct(cand_actions_[i]);
+        return;
+    }
     settle_soft();
     Action action = cand_actions_[i];
     std::optional<ustr> term;  // 簡體輸出 (#32): what is shown for the phrase picked
