@@ -701,7 +701,7 @@ class SymbolKeyboardTest(Base):
         c.config.values = dict(DEFAULTS)
         self.press("`", " ")
         self.assertIsNotNone(c.fill_shown())
-        self.press("ESC", *keys("ㄨㄛˇ"), "`", "RIGHT", " ")
+        self.press("ESC", "ESC", *keys("ㄨㄛˇ"), "`", "RIGHT", " ")  # (#68: Esc back to the keyboard, then closed)
         self.assertEqual((c.commit, c.composition), ("", "我 "))  # (it joins what is being typed too: #52)
         self.press("ENTER")
         self.assertEqual(c.commit, "我 ")
@@ -5329,6 +5329,134 @@ class ZhuyinTextTest(Base):
         self.assertEqual(c.candidates, ["ㄅㄨㄚ"])
         c.key("1")
         self.assertEqual(c.commit, "ㄅㄨㄚ")
+
+
+class EscCancelsTest(Base):
+    """#68 (the user 2026-11-24): Esc takes back only the last box opened - the text and the caret stay as they were,
+    no other box comes up - and Space picks nothing in the replacement bar, the candidate list or the spread-out grid
+    (Enter and the candidate keys do). The bar is shown only after ↑ (repl_index >= 0: the DLL draws it then)."""
+
+    def typing(self, raw):
+        for ch in raw:
+            self.c.key(ch)
+        return self.c
+
+    def state(self):
+        c = self.c
+        return (c.composition, c.cursor, list(c.candidates), c.cand_index, c.cand_expanded, c.repl_index,
+                c.symbol_page, c.fill is not None)
+
+    def test_space_in_the_bar_picks_nothing(self):
+        c = self.typing(keys("ㄨㄛˇ ㄏㄠˇ ㄒㄧㄥˋ"))
+        c.key(special="LEFT")
+        c.key(special="LEFT")
+        c.key(special="UP")
+        self.assertEqual(c.repl_index, 0)
+        before = self.state()
+        c.key(" ")
+        self.assertEqual(self.state(), before)
+        c.key(special="ENTER")  # (Enter takes it)
+        self.assertNotEqual(c.composition, before[0])
+
+    def test_space_in_the_list_picks_nothing(self):
+        c = self.typing(keys("ㄨㄛˇ ㄏㄠˇ ㄒㄧㄥˋ"))
+        text = c.composition
+        c.key(special="DOWN")
+        c.key(special="DOWN")
+        before = self.state()
+        c.key(" ")
+        self.assertEqual(self.state(), before)
+        c.key(special="ESC")
+        self.assertEqual((c.composition, c.candidates), (text, []))
+
+    def test_space_in_the_grid_picks_nothing(self):
+        c = self.typing("g4")
+        c.key(special="DOWN")
+        c.key(special="RIGHT")
+        c.key(special="RIGHT")
+        self.assertTrue(c.cand_expanded)
+        before = self.state()
+        c.key(" ")
+        self.assertEqual(self.state(), before)
+
+    def test_esc_in_the_grid_goes_back_to_the_list_as_it_was(self):
+        c = self.typing("g4")
+        c.key(special="DOWN")
+        c.key(special="DOWN")
+        text, index = c.composition, c.cand_index
+        c.key(special="RIGHT")  # spread out...
+        c.key(special="RIGHT")  # ...and the next column
+        self.assertTrue(c.cand_expanded)
+        c.key(special="ESC")
+        self.assertTrue(c.candidates)  # the list is still open, as before →
+        self.assertEqual((c.cand_expanded, c.cand_index, c.cand_first, c.composition), (False, index, 0, text))
+        c.key(special="ESC")  # the next Esc closes it
+        self.assertEqual((c.candidates, c.composition), ([], text))
+
+    def test_esc_in_quick_fill_goes_back_to_the_symbol_keyboard(self):
+        c = self.typing(keys("ㄨㄛˇ"))
+        text = c.composition
+        c.key("`")
+        self.assertEqual(c.symbol_page, 0)
+        c.key(" ")  # Space as the first key: 快速填入
+        self.assertIsNotNone(c.fill)
+        self.assertIsNone(c.symbol_page)
+        c.key(special="ESC")
+        self.assertIsNone(c.fill)
+        self.assertEqual(c.symbol_page, 0)  # the keyboard as it was opened
+        self.assertTrue(c.symbol_fresh)
+        c.key(special="ESC")
+        self.assertIsNone(c.symbol_page)
+        self.assertEqual(c.composition, text)  # nothing typed
+
+    def test_esc_in_the_list_leaves_the_caret_and_opens_no_bar(self):
+        c = self.typing(keys("ㄨㄛˇ ㄏㄠˇ ㄒㄧㄥˋ"))
+        c.key(special="LEFT")
+        c.key(special="LEFT")
+        before = (c.composition, c.cursor, c.repl_index)
+        c.key(special="DOWN")
+        c.key(special="ESC")
+        self.assertEqual((c.composition, c.cursor, c.repl_index, c.candidates), before + ([],))
+        self.assertEqual(c.repl_index, -1)
+
+    def test_a_pick_going_back_opens_no_bar(self):
+        c = self.typing(keys("ㄨㄛˇ ㄏㄠˇ ㄒㄧㄥˋ"))
+        c.key(special="LEFT")
+        c.key(special="LEFT")
+        c.key(special="DOWN")
+        c.key(special="DOWN")
+        c.key(special="ENTER")
+        self.assertEqual(c.candidates, [])
+        self.assertEqual(c.repl_index, -1)  # the caret before the next character, no bar open
+
+    def test_close_boxes_closes_all_and_picks_nothing(self):
+        # (the C++ engine's flush, switching to English with a box open: its Enter sends the text as it is - by keys
+        # the grid's Esc only folded it and the bar took the Enter, dropping the sentence: code-reviewer 2026-11-24)
+        c = self.c
+        # (and the symbol keyboard, whose Enter typed a symbol into the text: switched from the taskbar, /code-review)
+        for raw, setup in (("g4", ["DOWN", "DOWN", "RIGHT", "RIGHT"]), (keys("ㄋㄧˇ ㄏㄠˇ"), ["LEFT", "UP"]),
+                           (keys("ㄨㄛˇ"), ["`", " ", "ESC"]), (keys("ㄋㄧˇ ㄏㄠˇ"), ["`"]),
+                           (keys("ㄨㄛˇ"), ["`", " "])):  # (快速填入 itself open: its Enter sent its first item)
+            with self.subTest(raw=raw, setup=setup):
+                c.reset()
+                self.typing(raw)
+                text = c.composition
+                for k in setup:
+                    c.key(k) if len(k) == 1 else c.key(special=k)
+                c.close_boxes()
+                self.assertEqual((c.candidates, c.cand_expanded, c.repl_index, c.symbol_page, c.fill, c.composition),
+                                 ([], False, -1, None, None, text))
+                c.key(special="ENTER")
+                self.assertEqual(c.commit, text)
+
+    def test_esc_in_the_bar_from_the_end_puts_the_caret_back(self):
+        c = self.typing(keys("ㄨㄛˇ ㄏㄠˇ"))
+        end = c.cursor
+        c.key(special="UP")  # at the end: the last character's bar
+        self.assertEqual(c.repl_index, 0)
+        self.assertLess(c.cursor, end)
+        c.key(special="ESC")
+        self.assertEqual((c.repl_index, c.cursor), (-1, end))
 
 
 class BareZhuyinTest(Base):

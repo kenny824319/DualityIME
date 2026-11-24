@@ -4700,6 +4700,22 @@ std::optional<std::pair<std::string, int>> Composer::raw_alternative(int i) cons
     return std::nullopt;
 }
 
+void Composer::close_boxes() {
+    // (not by keys: Esc in the spread-out grid only folds it back to the list now, and the replacement bar takes an
+    // Enter as a pick - either way the Enter after it sent nothing and the sentence was dropped, #68; the symbol keyboard
+    // too: its Enter typed a symbol into the text - switched from the taskbar, which closes nothing, /code-review)
+    close_fill();
+    if (symbol_page) {
+        close_symbols();
+        render();
+    }
+    if (repl_index >= 0) {
+        repl_index = -1;
+        leave_bar();
+    }
+    if (!candidates.empty()) close_candidates();
+}
+
 void Composer::close_candidates() {
     candidates.clear();
     cand_actions_.clear();
@@ -5029,9 +5045,11 @@ bool Composer::key_bar(std::optional<char32_t> ch, const std::string& special) {
         repl_index = std::max(repl_index - 1, 0);
     } else if (special == "RIGHT") {
         repl_index = std::min(repl_index + 1, static_cast<int>(replacements.size()) - 1);
-    } else if (special == "ENTER" || (ch && *ch == ' ')) {
+    } else if (special == "ENTER") {
         pick_replacement(repl_index);
         leave_bar();
+    } else if (ch && *ch == ' ') {
+        // (#68: Space picks nothing, the user 2026-11-24)
     } else {
         repl_index = -1;  // anything else leaves the bar
         leave_bar();
@@ -5252,7 +5270,7 @@ void Composer::pick_fill(int i) {
 
 bool Composer::key_fill(std::optional<char32_t> ch, const std::string& special) {
     // letters and digits narrow it, Backspace takes one back (nothing typed: closes it), up and down move,
-    // Enter sends, Esc closes (see engine/composer.py _key_fill)
+    // Enter sends, Esc goes back to the symbol keyboard it was opened from (#68; see engine/composer.py _key_fill)
     Fill& f = *fill_;
     if (ch && *ch < 0x80 && (is_alpha(static_cast<char>(*ch)) || is_digit(static_cast<char>(*ch)))) {
         f.typed.push_back(static_cast<char>(*ch));
@@ -5270,7 +5288,9 @@ bool Composer::key_fill(std::optional<char32_t> ch, const std::string& special) 
     } else if (special == "ENTER") {
         pick_fill(f.index);
     } else if (special == "ESC") {
+        // (#68: back to the box it was opened from - the symbol keyboard, just opened: Space as its first key)
         close_fill();
+        open_symbols();
     }
     return true;
 }
@@ -7108,13 +7128,21 @@ bool Composer::key_candidates(std::optional<char32_t> ch, const std::string& spe
     }
     std::string layout = cand_layout(config);
     bool arrow = special == "UP" || special == "DOWN" || special == "LEFT" || special == "RIGHT";
-    if (special == "ESC") close_candidates();
-    else if (special == "ENTER" || (ch && *ch == ' ')) pick(cand_index);
-    else if (cand_expanded) key_grid(special);
+    if (special == "ESC" && cand_expanded) {
+        // (#68: Esc takes back the last box opened - the spread-out list: back to the list as it was)
+        cand_expanded = false;
+        cand_first = 0;
+        cand_index = cand_index_before_grid_;
+    } else if (special == "ESC") close_candidates();
+    else if (special == "ENTER") pick(cand_index);
+    else if (ch && *ch == ' ') {
+        // (#68: Space picks nothing, the user 2026-11-24)
+    } else if (cand_expanded) key_grid(special);
     else if (layout == "grid" && arrow) key_cand_grid(special);
     else if (special == "RIGHT" && count > size && layout == "column") {
         cand_expanded = true;  // (like the Windows 注音; one row keeps → for the next one)
         cand_first = cand_index / size;
+        cand_index_before_grid_ = cand_index;
     } else if (special == "DOWN" || special == "RIGHT") cand_index = std::min(cand_index + 1, count - 1);
     else if (special == "UP" || special == "LEFT") cand_index = std::max(cand_index - 1, 0);
     else if (special == "PGDN") cand_index = std::min(page + size, count - 1);

@@ -1620,7 +1620,9 @@ void TextService::place_ui(TfEditCookie ec, ITfContext* ctx) {
     } else if (cand_win_) {
         cand_win_->hide();
     }
-    if (!state_.replacements.empty() && state_.candidates.empty() && state_.symbol_page < 0) {
+    // only while it is open - after ↑ (repl_index >= 0): never by itself when the caret comes before a character,
+    // after a pick or after Esc closed another box (#68, the user 2026-11-24)
+    if (!state_.replacements.empty() && state_.repl_index >= 0 && state_.candidates.empty() && state_.symbol_page < 0) {
         // above the character after the caret
         RECT at_rc = comp_rc;
         if (rect_of(state_.cursor, rc)) at_rc = rc;

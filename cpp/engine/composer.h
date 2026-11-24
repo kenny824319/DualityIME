@@ -168,6 +168,8 @@ public:
     };
     void open_fill();
     void close_fill();
+    // every box closed at once, nothing picked: engine_main's flush (switching to English sends the text as it is, #68)
+    void close_boxes();
     std::optional<FillShown> fill_shown() const;
     void pick_fill(int i);  // item i of the list as shown goes out
     bool can_undo() const { return raw.empty() && last_commit_.has_value(); }
@@ -373,6 +375,7 @@ private:
     void auto_commit();
     void commit_head();
     int lm_action_depth_ = 0;  // (#59: entry points of the action being handled, LmAction in composer.cpp)
+    int cand_index_before_grid_ = 0;  // the list's selection when → spread it out: Esc goes back to it (#68)
     bool key_special(const std::string& special);
     bool key_candidates(std::optional<char32_t> ch, const std::string& special);
     void key_grid(const std::string& special);

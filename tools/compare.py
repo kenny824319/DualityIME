@@ -241,9 +241,13 @@ CASES = [
     "{CAPS}usb{CAPS} ", "`1", "`{TAB}{DOWN}{ENTER}", "~", "su3~cl3", "{FW}~{FW}", "y4u.6{ENTER}vu04vu;4{ENTER}ji3y4u.6{ENTER}", "su3{LEFT}{DOWN}2", "su3cl3{HOME}{DOWN}{DOWN}{ENTER}",
     "up {UNDO}", "up {DOWN}1", "look up ", "ssu3", "us3", "su3{BACK}", "su3cl3{BACK}{BACK}", "{#1}{#2}",
     "su3{#5}", "1", "1{DOWN}1", "Python寫", "su3 cl3!", "a\"b", "{FW}abc {FW}", "su3[", "{LB}", "you are 18",
-    "ji3 m/4 google n. vu04", "ru,4ru,4", "5j/ ej/4 5j/ ej/4 ", "su3{DOWN}{PGDN}{PGUP}{DOWN}{DOWN} ",
+    "ji3 m/4 google n. vu04", "ru,4ru,4", "5j/ ej/4 5j/ ej/4 ", "su3{DOWN}{PGDN}{PGUP}{DOWN}{DOWN}{ENTER}",
     "0 5j; pime103", "0 5j; pime103{LEFT}{DOWN}2", "0 5j; pime103{LEFT}{LEFT}{LEFT}{RIGHT}{RIGHT}{DOWN}1",
-    "room104{LEFT}{DOWN}1", "m/4pime{#1}{#0}{#3}{DOWN}1", "m/4hello{DOWN}", "m/4pime103{DOWN}2{DOWN}1{DOWN}2{DOWN}{ESC}", "look up {DOWN}2{DOWN}1", "m/4pime103{DOWN}{PGDN}{DOWN}{DOWN}{DOWN} {LEFT}{LEFT}{DOWN}{ESC}{END}{DOWN}2{DOWN}",
+    "room104{LEFT}{DOWN}1", "m/4pime{#1}{#0}{#3}{DOWN}1", "m/4hello{DOWN}", "m/4pime103{DOWN}2{DOWN}1{DOWN}2{DOWN}{ESC}", "look up {DOWN}2{DOWN}1", "m/4pime103{DOWN}{PGDN}{DOWN}{DOWN}{DOWN}{ENTER}{LEFT}{LEFT}{DOWN}{ESC}{END}{DOWN}2{DOWN}",
+    # (#68: Space picks nothing in the list, the grid or the bar; Esc takes back one box: the grid, then the list, then
+    # the text; 快速填入 back to the symbol keyboard)
+    "su3{DOWN}{DOWN} {ENTER}", "g4{DOWN}{RIGHT}{RIGHT} {ESC}{ESC}{ESC}", "ji3cl3{LEFT}{UP} {ESC}{ENTER}",
+    "ji3` {ESC}q{ENTER}",
     "m/4pime103{DOWN}{PGDN}4", "m/4pime103{DOWN}{PGDN}4{LEFT}{LEFT}{DOWN}2", "m/4pime103{DOWN}{PGDN}4{DOWN}2{ENTER}",
     "m/4pime103{DOWN}2{DOWN}{PGDN}4{LEFT}{LEFT}{DOWN}2{DOWN}{PGDN}4",
     "m/4pime103{DOWN}2{LEFT}{LEFT}{DOWN}1", "m/4pime103{DOWN}2{LEFT}{BACK}", "m/4pime103{HOME}{DEL}a{RIGHT}{RIGHT}b",

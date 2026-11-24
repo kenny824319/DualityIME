@@ -2163,6 +2163,7 @@ class Composer:
         self.cand_index = 0
         self.cand_expanded = False   # → spread the list out to the right: columns of a page, GRID_COLUMNS shown
         self.cand_first = 0          # the first column shown then
+        self._cand_index_before_grid = 0  # the list's selection when → spread it out: Esc goes back to it (#68)
         self.symbol_page = None      # symbol keyboard page while it is open
         self.symbol_fresh = False    # ...and nothing pressed in it yet (Space then opens 快速填入, #21)
         self.fill = None             # 快速填入 while open: {"items": as opened, "typed": str, "index": int}
@@ -3432,9 +3433,11 @@ class Composer:
             self.repl_index = max(self.repl_index - 1, 0)
         elif special == "RIGHT":
             self.repl_index = min(self.repl_index + 1, len(self.replacements) - 1)
-        elif special == "ENTER" or ch == " ":
+        elif special == "ENTER":
             self._pick_replacement(self.repl_index)
             self._leave_bar()
+        elif ch == " ":
+            pass  # (#68: Space picks nothing, the user 2026-11-24)
         else:
             self.repl_index = -1  # anything else leaves the bar
             self._leave_bar()
@@ -3714,6 +3717,20 @@ class Composer:
             self.user.learn_phrase(ZHUYIN_TEXT + text, text)
             self.user.save()
 
+    def close_boxes(self):
+        """Every box closed at once, nothing picked: the C++ engine's flush (switching to English sends the text as it
+        is). Not by keys: Esc in the spread-out grid only folds it now, and the bar takes an Enter as a pick (#68); the
+        symbol keyboard too, whose Enter typed a symbol into the text (switched from the taskbar, /code-review)."""
+        self.close_fill()
+        if self.symbol_page is not None:
+            self.close_symbols()
+            self._render()
+        if self.repl_index >= 0:
+            self.repl_index = -1
+            self._leave_bar()
+        if self.candidates:
+            self._close_candidates()
+
     def _close_candidates(self):
         self.candidates, self._cand_actions = [], []
         self.cand_expanded, self.cand_first = False, 0
@@ -3890,7 +3907,8 @@ class Composer:
 
     def _key_fill(self, ch, special):
         """Keys while 快速填入 is open: letters and digits narrow it (the shortcuts starting so, whatever the
-        case), Backspace takes one back (nothing typed: closes it), up and down move, Enter sends, Esc closes."""
+        case), Backspace takes one back (nothing typed: closes it), up and down move, Enter sends, Esc goes back to
+        the symbol keyboard it was opened from (#68)."""
         f = self.fill
         if ch and ch.isascii() and ch.isalnum():
             f["typed"] += ch
@@ -3906,7 +3924,9 @@ class Composer:
         elif special == "ENTER":
             self.pick_fill(f["index"])
         elif special == "ESC":
+            # (#68: back to the box it was opened from - the symbol keyboard, just opened: Space as its first key)
             self.close_fill()
+            self.open_symbols()
         return True
 
     def _pick(self, i, from_bar=False):
@@ -5188,10 +5208,15 @@ class Composer:
                     self.cand_expanded, self.cand_first = False, 0
                 return True
         layout = candlayout.cand_layout(self.config)
-        if special == "ESC":
+        if special == "ESC" and self.cand_expanded:
+            # (#68: Esc takes back the last box opened - the spread-out list: back to the list as it was)
+            self.cand_expanded, self.cand_first, self.cand_index = False, 0, self._cand_index_before_grid
+        elif special == "ESC":
             self._close_candidates()
-        elif special in ("ENTER",) or ch == " ":
+        elif special == "ENTER":
             self._pick(self.cand_index)
+        elif ch == " ":
+            pass  # (#68: Space picks nothing, the user 2026-11-24)
         elif self.cand_expanded:
             self._key_grid(special)
         elif layout == "grid" and special in ("UP", "DOWN", "LEFT", "RIGHT"):
@@ -5199,6 +5224,7 @@ class Composer:
         elif special == "RIGHT" and len(self.candidates) > size and layout == "column":
             self.cand_expanded = True  # (like the Windows 注音; one row keeps → for the next one)
             self.cand_first = self.cand_index // size
+            self._cand_index_before_grid = self.cand_index
         elif special in ("DOWN", "RIGHT"):
             self.cand_index = min(self.cand_index + 1, len(self.candidates) - 1)
         elif special in ("UP", "LEFT"):

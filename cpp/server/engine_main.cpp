@@ -261,10 +261,10 @@ Json handle(Session& s, const Json& req) {
         ++g->cfg_gen;  // (saved by the engine: config_gen does not see it - review 2026-11-13)
     } else if (op == "flush") {
         // first key after switching to English with text still being typed:
-        // send that text, plus the character of this key (快速填入 still open, e.g. switched from the
-        // taskbar: closed first, or the Enter below would send its first item)
-        c.close_fill();
-        if (!c.candidates.empty()) c.key(std::nullopt, "ESC");
+        // send that text, plus the character of this key (a box still open - 快速填入, e.g. switched from the
+        // taskbar, the candidates, the spread-out grid, the replacement bar - closed first, nothing picked, or the
+        // Enter below would pick in it and send nothing, #68)
+        c.close_boxes();
         ustr out;
         if (!flag("esc")) {
             c.key(std::nullopt, "ENTER");
