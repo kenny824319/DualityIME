@@ -5163,6 +5163,95 @@ class CtrlPunctuationTest(Base):
             self.assertFalse(c.type_full_punct(key), key)
 
 
+class PunctuationSwapTest(Base):
+    """#53: the caret before a mark in the text being typed, ↓ lists the marks of its row (the table the user chose,
+    2026-11-24), a pick replaces it, a bracket's partner follows; nothing is remembered."""
+
+    def press(self, *seq):
+        for k in seq:
+            self.c.key(k) if len(k) == 1 else self.c.key(special=k)
+
+    def test_the_row_of_the_mark_before_the_caret(self):
+        c = self.c
+        self.press("s", "u", "3"); c.type_full_punct(","); self.press("LEFT", "DOWN")
+        self.assertEqual(c.candidates, ["，", "、", "；", "：", ","])
+        self.press("DOWN", "ENTER")
+        self.assertEqual((c.composition, c.candidates), ("你、", []))
+        self.press("ENTER")
+        self.assertEqual(c.commit, "你、")
+
+    def test_half_width_mark_row_starts_with_itself(self):
+        c = self.c  # (punctuation "half" as it comes: , shown as typed)
+        self.press("s", "u", "3", ",", "c", "l", "3", "LEFT", "LEFT", "DOWN")
+        self.assertEqual(c.candidates, [",", "，", "、", "；", "："])
+        self.press("2")
+        self.assertEqual(c.composition, "你，好")
+
+    def test_full_width_typed_mark(self):
+        self.c.config.set(punctuation="full")
+        self.press("s", "u", "3", ",", "c", "l", "3", "LEFT", "LEFT", "DOWN", "2")
+        self.assertEqual(self.c.composition, "你、好")
+
+    def test_brackets_change_in_pairs_nested_too(self):
+        # (a character first: Ctrl + a mark with nothing typed goes out at once, #52)
+        c = self.c
+        self.press("s", "u", "3"); c.type_full_punct("["); self.press("c", "l", "3"); c.type_full_punct("[")
+        self.press("j", "i", "3"); c.type_full_punct("]"); c.type_full_punct("]")
+        self.assertEqual(c.composition, "你「好「我」」")
+        self.press("HOME", "RIGHT", "DOWN", "2")
+        self.assertEqual(c.composition, "你『好「我」』")
+
+    def test_a_lone_bracket_changes_alone(self):
+        c = self.c
+        self.press("s", "u", "3"); c.type_full_punct("["); self.press("c", "l", "3", "LEFT", "LEFT", "DOWN", "3")
+        self.assertEqual(c.composition, "你（好")
+
+    def test_at_the_end_down_is_as_before(self):
+        c = self.c
+        self.press("s", "u", "3"); c.type_full_punct(","); self.press("DOWN")
+        self.assertEqual(c.candidates[0], "你")
+
+    def test_not_in_the_table_nothing_happens(self):
+        c = self.c
+        self.press("s", "u", "3", "<", "LEFT", "DOWN")  # (half-width: < shown as typed)
+        self.assertEqual(c.candidates, [])
+
+    def test_nothing_learned_and_the_order_never_changes(self):
+        c = self.c
+        memory = lambda: copy.deepcopy((c.user.phrases, c.user.phrase_used, sorted(c.user.english),
+                                        c.user.corrections.picks))  # (what user.json and keys.json save)
+        self.press("s", "u", "3", "ENTER")  # (你 itself learned first: only the swaps are compared)
+        before = memory()
+        for _ in range(3):
+            self.press("s", "u", "3"); c.type_full_punct(","); self.press("LEFT", "DOWN", "3", "ENTER")
+        self.assertEqual(memory()[2:], before[2:])
+        self.press("s", "u", "3"); c.type_full_punct(","); self.press("LEFT", "DOWN")
+        self.assertEqual(c.candidates[0], "，")
+        self.assertFalse(any("；" in p for v in c.user.phrases.values() for p in v))
+
+    def test_the_swap_stays_through_more_typing_and_backspace(self):
+        c = self.c
+        self.press("s", "u", "3"); c.type_full_punct(","); self.press("LEFT", "DOWN", "2")
+        self.press("END", "c", "l", "3")
+        self.assertEqual(c.composition, "你、好")
+        self.press("BACK")  # (a finished syllable goes whole: 好)
+        self.assertEqual(c.composition, "你、")
+
+    def test_esc_closes_only_the_list(self):
+        c = self.c
+        self.press("s", "u", "3"); c.type_full_punct(","); self.press("LEFT", "DOWN", "ESC")
+        self.assertEqual((c.candidates, c.composition), ([], "你，"))
+
+    def test_simplified_mode_lists_the_same_row(self):
+        c = self.c
+        c.user.set_simplified(True)
+        try:
+            self.press("s", "u", "3"); c.type_full_punct(","); self.press("LEFT", "DOWN")
+            self.assertEqual(c.candidates, ["，", "、", "；", "：", ","])
+        finally:
+            c.user.set_simplified(False)
+
+
 class CandidateGridTest(Base):
     """→ in the list spreads it out to the right, like the Windows 注音: columns of 9, four shown."""
 

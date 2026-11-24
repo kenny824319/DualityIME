@@ -35,6 +35,36 @@ HALF_WIDTH = {"，": ",", "。": ".", "？": "?", "！": "!", "：": ":", "；":
 # in full-width mode; going through HALF_WIDTH would turn " into ; and leave 、
 HALF_AS_TYPED = {"'", '"'}
 FULL_SPACE = "\u3000"
+# #53: a mark in the text being typed, the caret before it, \u2193 lists its row (first the mark itself; the user's table,
+# 2026-11-24, docs/superpowers/specs/2026-11-24-switch-punctuation-design.md); nothing is remembered
+PUNCT_SWAPS = {
+    "\uff0c": ("\uff0c", "\u3001", "\uff1b", "\uff1a", ","), "\u3001": ("\u3001", "\uff0c", "\uff1b"), "\u3002": ("\u3002", "\uff01", "\uff1f", "\u2026", "."),
+    "\uff1f": ("\uff1f", "\uff01", "\u3002", "\u2047", "?"), "\uff01": ("\uff01", "\uff1f", "\u3002", "\u203c", "!"), "\uff1a": ("\uff1a", "\uff1b", "\uff0c", ":"),
+    "\uff1b": ("\uff1b", "\uff1a", "\uff0c", ";"), "\u300c": ("\u300c", "\u300e", "\uff08", "\u3010", "\u300a", "\u3008", "\u201c"), "\u300d": ("\u300d", "\u300f", "\uff09", "\u3011", "\u300b", "\u3009", "\u201d"),
+    "\u300e": ("\u300e", "\u300c", "\uff08", "\u3010", "\u300a", "\u3008"), "\u300f": ("\u300f", "\u300d", "\uff09", "\u3011", "\u300b", "\u3009"), "\uff08": ("\uff08", "\u3014", "\u3010", "\u300c", "("),
+    "\uff09": ("\uff09", "\u3015", "\u3011", "\u300d", ")"), "\u2026\u2026": ("\u2026\u2026", "\u2026", "\u22ef\u22ef", "\u2025", "\u2014\u2014"), "\u2014\u2014": ("\u2014\u2014", "\u2014", "\uff5e", "\uff0d"),
+    "\uff3c": ("\uff3c", "\uff0f", "\\"), "\uff5c": ("\uff5c", "\ufe31", "|"),
+}
+BRACKETS = {"\u300c": "\u300d", "\u300e": "\u300f", "\uff08": "\uff09", "\u3010": "\u3011", "\u300a": "\u300b", "\u3008": "\u3009", "\u201c": "\u201d", "\u3014": "\u3015", "(": ")"}
+
+
+def punct_choices(shown):
+    """The marks a mark shown so can become (#53), itself first; [] when it is in no row. A half-width one (a value of
+    HALF_WIDTH: , . ? ...) takes its full-width mark's row with itself first."""
+    if shown in PUNCT_SWAPS:
+        return list(PUNCT_SWAPS[shown])
+    full = next((f for f, h in HALF_WIDTH.items() if h == shown), None)
+    if full not in PUNCT_SWAPS:
+        return []
+    return [shown] + [m for m in PUNCT_SWAPS[full] if m != shown]
+
+
+def bracket_partner_text(old, new):
+    """What the other bracket of a pair becomes when one becomes `new` (#53): its closing or opening counterpart;
+    None when `new` is no bracket. (A row holds only openings or only closings: old and new are on one side.)"""
+    if new in BRACKETS:
+        return BRACKETS[new]
+    return next((o for o, c in BRACKETS.items() if c == new), None)
 
 
 def to_full_width(text):
@@ -3108,8 +3138,69 @@ class Composer:
             actions.append(action)
         self.candidates, self._cand_actions, self.cand_index = out, actions, 0
 
+    def _shown_mark(self, tok):
+        """The text a mark token shows (#53): a typed punctuation key in the width chosen, a joined one as joined."""
+        if tok is None:
+            return None
+        if tok.kind == "lit":
+            return self._lit_text(tok.value, tok.raw)
+        return tok.value if tok.kind == "fix" else None
+
+    def _bracket_partner(self, tok):
+        """The other bracket of the pair `tok` opens or closes (#53): for an opening one the first closing one after it
+        at depth 0, for a closing one the last opening one before it; only marks in the text count. None: alone."""
+        opening = set(BRACKETS)
+        closing = set(BRACKETS.values())
+        shown = self._shown_mark(tok)
+        marks = [t for t in self.tokens if self._shown_mark(t) in opening | closing]
+        i = marks.index(tok)
+        step, mine, other = (1, opening, closing) if shown in opening else (-1, closing, opening)
+        depth = 0
+        k = i + step
+        while 0 <= k < len(marks):
+            s = self._shown_mark(marks[k])
+            if s in mine:
+                depth += 1
+            elif s in other:
+                if depth == 0:
+                    return marks[k]
+                depth -= 1
+            k += step
+        return None
+
+    def _punct_list(self):
+        """The caret before a mark that is in the table (#53): its row as the candidates."""
+        if self.caret is None:
+            return False  # (at the end: the last character's, as before - the user's 移到想改的字前方再按下)
+        tok = self._caret_token()
+        shown = self._shown_mark(tok)
+        row = punct_choices(shown) if shown else []
+        if not row:
+            return False
+        partner = self._bracket_partner(tok) if shown in BRACKETS or shown in BRACKETS.values() else None
+        actions = []
+        for text in row:
+            other = bracket_partner_text(shown, text) if partner is not None else None
+            actions.append(("punct", tok.start, tok.start + len(tok.raw), text,
+                            (partner.start, partner.start + len(partner.raw), other) if other else None))
+        self.candidates, self._cand_actions, self.cand_index = row, actions, 0
+        return True
+
+    def _swap_punct(self, action):
+        """A mark picked from its row (#53): shown so from now on (fixed, as the replacement bar keeps what it puts),
+        the bracket it pairs with too; the caret past it; nothing learned."""
+        _, start, end, text, partner = action
+        for a, b, t in [(start, end, text)] + ([partner] if partner else []):
+            self.fixed = {s: v for s, v in self.fixed.items() if v[0] <= a or s >= b}
+            self.fixed[a] = (b, t)
+        self.candidates, self._cand_actions = [], []
+        self._refresh()
+        self._caret_past(end)
+
     def _open_list(self):
         self.cand_expanded, self.cand_first = False, 0
+        if self._punct_list():
+            return True
         labels, actions = self._shortcut_candidates()
         if not labels:  # (a code 代碼記憶 reads as English: back as before first, mp3 允)
             at = self._caret_token() if self.caret is not None else (self.tokens[-1] if self.tokens else None)
@@ -3969,6 +4060,9 @@ class Composer:
         return True
 
     def _pick(self, i, from_bar=False):
+        if self._cand_actions[i][0] == "punct":  # (#53: a mark from its row - nothing else to do, nothing learned)
+            self._swap_punct(self._cand_actions[i])
+            return
         self._settle_soft()
         self._loose_words = []  # (#60: what this pick's keeping frees, from the first keeping to the one after the refresh)
         action = self._cand_actions[i]
