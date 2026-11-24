@@ -184,6 +184,7 @@ public:
     std::vector<Change> record(const std::string& keys, const ustr& choice);
     void restore(const std::vector<Change>& changes);
     void forget();                 // 全部清除 (on or off)
+    bool forget_choice(const std::string& keys, const ustr& choice);  // 記憶清單 (#65): one choice, true if there
     void merge(const Json& raw);   // a backup restored (on or off)
     size_t size() const;
     void save();
@@ -262,6 +263,8 @@ public:
     void learn_word(const std::string& word);  // an English word or an e-mail sent (a URL is not remembered)
     void forget_words(int counter);   // 全部清除: every kind of typing memory but the e-mails
     void forget_emails(int counter);  // ...with 一併清除記住的 Email ticked
+    // 記憶清單 (#65): config.json's forget_list - the items above the id last applied (forgot.json) removed, once
+    bool forget_items(const Json& items);
     // a backup restored (counter bumped): merge import-memory.json next to user.json, then remove it
     void import_memory(int counter);
     std::vector<std::string> words_starting(const std::string& prefix, size_t limit = 3) const;
@@ -302,6 +305,7 @@ public:
     OrderedMap<std::string, int> email_used;
     int forgot = 0;         // last Config forget_words handled
     int forgot_emails = 0;  // last Config forget_emails handled
+    int forgot_applied = -1;  // 記憶清單 (#65): the last forget_list id applied (forgot.json), -1 until read
     int imported = 0;  // last Config import_memory handled (not kept: the file is gone once merged)
     std::unordered_map<ustr, std::vector<ustr>> custom;  // 個人詞庫: reading key -> phrases
     std::vector<ustr> custom_order;                      // ...its reading keys in dictionary.json's order

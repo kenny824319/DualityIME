@@ -498,6 +498,14 @@ CONFIGS = [
     {"cand_keys": "1234qweras", "cand_layout": "grid",  # other candidate keys, a grid (#23)
      "no_quick_fill": True},  # (not a setting: no quick_fill.json, so 快速填入 lists its samples, #33)
     {"simplified": True},  # 簡體輸出 (#32): shown and sent in Simplified characters, its memory in user_simplified.json
+    {"seed_user": 1,  # (not a setting: SEEDED_USER as user.json before typing) 記憶清單 (#65): rows deleted while the
+     "autocorrect": True,  # engine was off go when it starts - each kind once; typing after shows them gone
+     "forget_list": [{"id": 1, "kind": "pick", "key": "ㄋㄧˇ", "value": "妳"},
+                     {"id": 2, "kind": "word", "key": "python", "value": ""},
+                     {"id": 3, "kind": "email", "key": "a@example.com", "value": ""},
+                     {"id": 4, "kind": "correction", "key": "si3", "value": "ㄋㄧˇ"},
+                     {"id": 5, "kind": "english", "key": "mp3", "value": ""},
+                     {"id": 6, "kind": "bogus", "key": "x", "value": ""}, "garbage"]},
     {"lm_context": False},  # 接續前文選字 off ({} above: on, the default; #37)
     # 選字模型 (#41), each tier twice (the spec: its default and 接續前文選字 off); its default here reads 64 characters,
     # plus with 注音自動校正 on too, so the order check reads 64 as well (a tier without its file uses light's model)
@@ -542,6 +550,15 @@ IMPORTED = {"phrases": {"ㄊㄞˊ-ㄨㄢ": {"臺灣": 30}, "ㄋㄧˇ-ㄏㄠˇ": 
                            "replacements": {"影片": {"視頻": 3}}, "replacements_used": {"影片": {"視頻": 20000}}}}
 
 
+# 記憶清單 (#65): the memory the forget_list setting deletes from (user.json; keys.json is AUTOCORRECT as always)
+SEEDED_USER = {"phrases": {"ㄋㄧˇ": {"妳": 10}, "ㄕˋ-ㄩㄥˋ": {"適用": 8}}, "english": ["mp3", "up"],
+               "words": {"python": 5, "refactor": 3}, "emails": {"kazumasan@example.com": 3, "a@example.com": 1},
+               "forgot": 0, "forgot_emails": 0,
+               "used": {"phrases": {"ㄋㄧˇ": {"妳": 20000}, "ㄕˋ-ㄩㄥˋ": {"適用": 20000}},
+                        "words": {"python": 20000, "refactor": 20000},
+                        "emails": {"kazumasan@example.com": 20000, "a@example.com": 20000}}}
+
+
 def run(cmd):
     return subprocess.run(cmd, capture_output=True, check=True).stdout.decode("utf-8").split("\n")
 
@@ -556,11 +573,13 @@ def compare(cases, config, tmp):
         f.write("\n".join(cases) + "\n")
     for side in ("py", "cpp"):  # each its own files: 全形 on/off is saved in config.json
         os.makedirs(os.path.join(tmp, side), exist_ok=True)
-        for name in ("user.json", "keys.json", "custom_picks.json", "user_simplified.json"):
+        for name in ("user.json", "keys.json", "custom_picks.json", "user_simplified.json", "forgot.json"):
             if os.path.exists(os.path.join(tmp, side, name)):
                 os.remove(os.path.join(tmp, side, name))
-        settings = {k: v for k, v in config.items() if k != "no_quick_fill"}
+        settings = {k: v for k, v in config.items() if k not in ("no_quick_fill", "seed_user")}
         files = [("config.json", settings), ("dictionary.json", DICTIONARY)]
+        if config.get("seed_user"):
+            files.append(("user.json", SEEDED_USER))
         if config.get("no_quick_fill"):
             if os.path.exists(os.path.join(tmp, side, "quick_fill.json")):  # (an earlier setting's)
                 os.remove(os.path.join(tmp, side, "quick_fill.json"))
@@ -624,6 +643,12 @@ def compare(cases, config, tmp):
             simp.append(None)
     if simp[0] != simp[1]:
         sys.exit(f"DIFFERENT user_simplified.json with {config}")
+    forgot = []  # 記憶清單 (#65): the last deletion applied, the same on both sides
+    for side in ("py", "cpp"):
+        path = os.path.join(tmp, side, "forgot.json")
+        forgot.append(json.load(open(path, encoding="utf-8")) if os.path.exists(path) else None)
+    if forgot[0] != forgot[1]:
+        sys.exit(f"DIFFERENT forgot.json with {config}")
     return keys
 
 

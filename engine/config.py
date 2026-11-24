@@ -23,6 +23,7 @@ DEFAULTS = {
     "remember_words": True,     # remember English words and e-mail addresses typed
     "forget_words": 0,          # bumped by the settings tool to clear the typing memory (全部清除)
     "forget_emails": 0,         # ...and this one too to clear the remembered e-mail addresses
+    "forget_list": [],          # 記憶清單 (#65): rows deleted in the settings, [{"id", "kind", "key", "value"}], applied once
     "import_memory": 0,         # bumped by the settings tool after it put import-memory.json next to user.json
     "lookup": True,             # 框選查詢: select text, tap Ctrl twice
     "lookup_size": "small",     # its window: "small", "medium", "large"

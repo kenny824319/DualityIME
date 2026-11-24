@@ -23,6 +23,7 @@ const Json& Config::defaults() {
         j["remember_words"] = Json(true);    // remember English words and e-mail addresses typed
         j["forget_words"] = Json(0);         // bumped by the settings tool to clear the typing memory (全部清除)
         j["forget_emails"] = Json(0);        // ...and this one too to clear the remembered e-mail addresses
+        j["forget_list"] = Json::array();    // 記憶清單 (#65): rows deleted in the settings, applied once
         j["import_memory"] = Json(0);        // bumped by the settings tool after it put import-memory.json next to user.json
         j["lookup"] = Json(true);            // 框選查詢: select text, tap Ctrl twice
         j["lookup_size"] = Json("small");    // its window: "small", "medium", "large"

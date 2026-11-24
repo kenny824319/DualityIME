@@ -373,6 +373,29 @@ def split_keys(english, keys):
     """The keys.json key of a syllable typed right after English (CP, 56: CP→56)."""
     return english + SPLIT_MARK + keys
 REPLACE_MIN_USES = 2  # 簡體輸出 (#32): a Mainland word picked this many times for a Taiwan one comes by itself
+FORGOT_FILE = "forgot.json"  # 記憶清單 (#65): {"format": 1, "applied": the last forget_list id applied}
+
+
+def _drop(counts, days, key, value):
+    """counts[key][value] and days[key][value] removed (an emptied key goes too); True when it was there."""
+    if value not in counts.get(key, {}):
+        return False
+    for table in (counts, days):
+        bucket = table.get(key)
+        if isinstance(bucket, dict):
+            bucket.pop(value, None)
+            if not bucket:
+                del table[key]
+    return True
+
+
+def _drop_word(counts, days, word):
+    """counts[word] and days[word] removed; True when it was there."""
+    if word not in counts:
+        return False
+    counts.pop(word, None)
+    days.pop(word, None)
+    return True
 
 # 快速填入 until quick_fill.json is first saved (#33, as ASUS 快捷文字本 ships them; the same list in
 # cpp/engine/lexicon.cpp, installer/src/Settings.cs and settings/ui/bridge.js: tests.test_engine checks them)
@@ -542,6 +565,20 @@ class CorrectionMemory:
         self.version += 1
         self.save()
 
+    def forget_choice(self, keys, choice):
+        """記憶清單 (#65): one choice of these keys deleted; True when it was there (the caller saves)."""
+        self._load()
+        if choice not in self.picks.get(keys, {}):
+            return False
+        for table in (self.picks, self.used):
+            bucket = table.get(keys)
+            if bucket is not None:
+                bucket.pop(choice, None)
+                if not bucket:
+                    del table[keys]
+        self.version += 1
+        return True
+
     def merge(self, raw):
         """A backup restored (on or off): the higher count and the later day of each, so the
         same backup twice adds nothing."""
@@ -686,6 +723,7 @@ class UserModel:
         self.email_used = {}   # e-mail -> day
         self.forgot = 0  # last Config.forget_words handled
         self.forgot_emails = 0  # last Config.forget_emails handled
+        self.forgot_applied = None  # 記憶清單 (#65): the last forget_list id applied (forgot.json), read when first needed
         self.imported = 0  # last Config.import_memory handled (not kept: the file is gone once merged)
         # 個人詞庫, edited in the settings window (dictionary.json next to user.json)
         self.custom = {}       # reading key -> [phrase]
@@ -1077,6 +1115,138 @@ class UserModel:
         if counter > self.forgot_emails:
             self.emails, self.email_used, self.forgot_emails = {}, {}, counter
             self.save()
+
+    # ---- 記憶清單 (#65): the rows deleted in the settings, and what the list shows ---------------------------------
+    FORGET_KINDS = ("pick", "word", "email", "correction", "english", "simp_pick", "simp_term")
+
+    def _forgot_path(self):
+        return os.path.join(os.path.dirname(self.path), FORGOT_FILE) if self.path else None
+
+    def _applied(self):
+        """The id of the last deletion applied (forgot.json, a file of its own: an older engine rewriting user.json
+        would drop a field it does not know); 0 when there is none or it cannot be read."""
+        if self.forgot_applied is None:
+            self.forgot_applied = 0
+            try:
+                with open(self._forgot_path(), encoding="utf-8") as f:
+                    n = json.load(f).get("applied")
+                if isinstance(n, int) and not isinstance(n, bool):
+                    self.forgot_applied = n
+            except (OSError, ValueError, AttributeError, TypeError):
+                pass
+        return self.forgot_applied
+
+    def forget_items(self, items):
+        """config.json's forget_list: the items with an id above the last applied are removed - each kind from where
+        it is kept (english: user.json's and keys.json's AS_ENGLISH alike) - once; a malformed item is skipped. True
+        when something was removed."""
+        if not isinstance(items, list) or not self.path:
+            return False
+        applied = self._applied()
+        ids = [it["id"] for it in items if isinstance(it, dict) and isinstance(it.get("id"), int)
+               and not isinstance(it.get("id"), bool)]
+        if not ids or max(ids) <= applied:
+            return False
+        simplified = self.simplified
+        self.set_simplified(False)  # (the shared memory itself, not the view Simplified mode lays over it)
+        changed = keys_changed = simp_changed = False
+        for it in items:
+            if not (isinstance(it, dict) and isinstance(it.get("id"), int) and not isinstance(it.get("id"), bool)
+                    and it["id"] > applied and it.get("kind") in self.FORGET_KINDS
+                    and isinstance(it.get("key"), str) and isinstance(it.get("value"), str)):
+                continue
+            kind, key, value = it["kind"], it["key"], it["value"]
+            if kind == "pick":
+                changed |= _drop(self.phrases, self.phrase_used, key, value)
+            elif kind == "word":
+                changed |= _drop_word(self.words, self.word_used, key)
+            elif kind == "email":
+                changed |= _drop_word(self.emails, self.email_used, key)
+            elif kind == "correction":
+                keys_changed |= self.corrections.forget_choice(key, value)
+            elif kind == "english":
+                if key in self.english:
+                    self.english.discard(key)
+                    changed = True
+                keys_changed |= self.corrections.forget_choice(key, AS_ENGLISH)
+            elif kind == "simp_pick":
+                simp_changed |= _drop(self._simp_phrases, self._simp_used, key, value)
+            elif kind == "simp_term":
+                simp_changed |= _drop(self.replacements, self.replacement_used, key, value)
+        if changed:
+            self.save()
+        if simp_changed and self.simplified_path:
+            self._save_simplified()
+        if keys_changed:
+            self.corrections.save()
+        self.set_simplified(simplified)
+        self.forgot_applied = max(ids)
+        try:
+            with open(self._forgot_path(), "w", encoding="utf-8") as f:
+                json.dump({"format": 1, "applied": self.forgot_applied}, f)
+        except OSError:
+            pass
+        return changed or keys_changed or simp_changed
+
+    def memory_list(self, autocorrect):
+        """What the memory holds that affects typing, as the settings page lists it (#65; the settings tool lists the
+        same - tests/data/memory_list/expected.json): {"picks", "words", "emails", "keys", "simplified" (None without
+        user_simplified.json)}, each a list of rows {kind, key, value, shown, reading, count, day, note}, newest first.
+        Counts faded and rounded (at least 1; e-mails never fade); with 注音自動校正 off only the codes read as English
+        and the split keys act, so the other correction rows are left out."""
+        def shown_count(x):
+            return max(1, int(math.floor(x + 0.5)))
+
+        def row(kind, key, value, shown, reading, count, day, note):
+            return {"kind": kind, "key": key, "value": value, "shown": shown, "reading": reading,
+                    "count": None if count is None else shown_count(count), "day": day, "note": note}
+
+        def ordered(rows):
+            return sorted(rows, key=lambda r: (r["day"] is None, -(r["day"] or 0), r["shown"]))
+
+        simplified = self.simplified
+        self.set_simplified(False)
+        try:
+            picks = [row("pick", r, p, p, r.replace("-", " "), self.phrase_count(r, p),
+                         self.phrase_used.get(r, {}).get(p), "")
+                     for r, bucket in self.phrases.items() for p, n in bucket.items() if n > 0]
+            words = [row("word", w, "", w, "", self.word_count(w), self.word_used.get(w), "")
+                     for w in self.words if self.word_count(w) >= WORD_MIN_USES]
+            emails = [row("email", w, "", w, "", n, self.email_used.get(w), "") for w, n in self.emails.items() if n > 0]
+            keys, english_done = [], set()
+            self.corrections.enable(True)
+            for k in self.corrections.picks:
+                choice = self.corrections.choice(k)
+                if choice is None:
+                    continue
+                split = SPLIT_MARK in k
+                shown = k.replace(SPLIT_MARK, " ")
+                count, day = self.corrections.count(k, choice), self.corrections.used.get(k, {}).get(choice)
+                if choice == AS_ENGLISH:
+                    keys.append(row("english", k, "", shown, "", count, day, "照打成英文"))
+                    english_done.add(k)
+                    continue
+                if not autocorrect and not split:
+                    continue
+                note = "照打，不校正" if choice == "" else \
+                    f"英文後面的 {k.split(SPLIT_MARK, 1)[1]} 讀成這個音" if split else "打錯時照這個改（注音自動校正）"
+                keys.append(row("correction", k, choice, shown, choice.replace("-", " "), count, day, note))
+            keys += [row("english", w, "", w, "", None, None, "照打成英文") for w in self.english if w not in english_done]
+            simp = None
+            if self.simplified_path and os.path.exists(self.simplified_path):
+                simp = [row("simp_pick", r, p, p, r.replace("-", " "), self._faded(n, self._simp_used.get(r, {}).get(p)),
+                            self._simp_used.get(r, {}).get(p), "簡體選字")
+                        for r, bucket in self._simp_phrases.items() for p, n in bucket.items() if n > 0]
+                for w, bucket in self.replacements.items():
+                    for t, n in bucket.items():
+                        day = self.replacement_used.get(w, {}).get(t)
+                        if self._faded(n, day) >= REPLACE_MIN_USES:
+                            simp.append(row("simp_term", w, t, w, t, self._faded(n, day), day, "大陸用詞"))
+                simp = ordered(simp)
+        finally:
+            self.set_simplified(simplified)
+        return {"picks": ordered(picks), "words": ordered(words), "emails": ordered(emails), "keys": ordered(keys),
+                "simplified": simp}
 
     def import_memory(self, counter):
         """The settings tool restored a backup (counter bumped): merge import-memory.json, put next

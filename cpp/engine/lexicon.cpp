@@ -671,6 +671,22 @@ void CorrectionMemory::forget() {
     save();
 }
 
+bool CorrectionMemory::forget_choice(const std::string& keys, const ustr& choice) {
+    // 記憶清單 (#65): one choice of these keys deleted; true when it was there (the caller saves)
+    load();
+    auto p = data_.picks.find(keys);
+    if (p == data_.picks.end() || !p->second.count(choice)) return false;
+    p->second.erase(choice);
+    if (p->second.empty()) data_.picks.erase(p);
+    auto u = data_.used.find(keys);
+    if (u != data_.used.end()) {
+        u->second.erase(choice);
+        if (u->second.empty()) data_.used.erase(u);
+    }
+    ++version_;
+    return true;
+}
+
 void CorrectionMemory::merge(const Json& raw) {
     // the higher count and the later day of each: the same backup twice adds nothing
     load();
@@ -1469,6 +1485,100 @@ void UserModel::forget_emails(int counter) {
         forgot_emails = counter;
         save();
     }
+}
+
+namespace {
+// counts[key][value] and days[key][value] removed (an emptied key goes too); true when it was there
+template <class C, class D>
+bool drop_nested(C& counts, D& days, const ustr& key, const ustr& value) {
+    auto* bucket = counts.find(key);
+    if (!bucket || !bucket->contains(value)) return false;
+    bucket->erase(value);
+    if (bucket->empty()) counts.erase(key);
+    if (auto* d = days.find(key)) {
+        d->erase(value);
+        if (d->empty()) days.erase(key);
+    }
+    return true;
+}
+}  // namespace
+
+bool UserModel::forget_items(const Json& items) {
+    // see engine/lexicon.py forget_items: the items with an id above the last applied removed, each kind from where it
+    // is kept (english: user.json's and keys.json's AS_ENGLISH alike), once; a malformed item skipped
+    if (!items.is_array() || path_.empty()) return false;
+    std::wstring forgot_path = path_.substr(0, path_.find_last_of(L"\\/") + 1) + L"forgot.json";
+    if (forgot_applied < 0) {
+        forgot_applied = 0;
+        std::string text;
+        bool ok = false;
+        if (read_file(forgot_path, text)) {
+            Json raw = Json::parse(text, &ok);
+            const Json* n = ok && raw.is_object() ? raw.get("applied") : nullptr;
+            if (n && n->is_int()) forgot_applied = static_cast<int>(n->as_number());
+        }
+    }
+    auto id_of = [](const Json& it, int& id) {
+        const Json* v = it.is_object() ? it.get("id") : nullptr;
+        if (!v || !v->is_int()) return false;
+        id = static_cast<int>(v->as_number());
+        return true;
+    };
+    int top = -1;
+    for (auto& it : items.items()) {
+        int id;
+        if (id_of(it, id)) top = std::max(top, id);
+    }
+    if (top <= forgot_applied) return false;
+    bool was_simplified = simplified;
+    set_simplified(false);  // (the shared memory itself, not the view Simplified mode lays over it)
+    bool changed = false, keys_changed = false, simp_changed = false;
+    static const std::set<std::string> kinds = {"pick", "word", "email", "correction", "english", "simp_pick", "simp_term"};
+    for (auto& it : items.items()) {
+        int id;
+        if (!id_of(it, id) || id <= forgot_applied) continue;
+        const Json* kind = it.get("kind");
+        const Json* key = it.get("key");
+        const Json* value = it.get("value");
+        if (!kind || !kind->is_string() || !kinds.count(kind->as_string()) || !key || !key->is_string() || !value ||
+            !value->is_string())
+            continue;
+        const std::string& k = kind->as_string();
+        const std::string& key8 = key->as_string();
+        const std::string& value8 = value->as_string();
+        if (k == "pick") {
+            changed |= drop_nested(phrases, phrase_used, from_utf8(key8), from_utf8(value8));
+        } else if (k == "word" || k == "email") {
+            auto& counts = k == "word" ? words : emails;
+            auto& days = k == "word" ? word_used : email_used;
+            if (counts.erase(key8)) {
+                days.erase(key8);
+                changed = true;
+                if (k == "word") ++words_version_;
+            }
+        } else if (k == "correction") {
+            keys_changed |= corrections.forget_choice(key8, from_utf8(value8));
+        } else if (k == "english") {
+            if (english.erase(key8)) changed = true;
+            keys_changed |= corrections.forget_choice(key8, U("en"));
+        } else if (k == "simp_pick") {
+            simp_changed |= drop_nested(simp_phrases_, simp_used_, from_utf8(key8), from_utf8(value8));
+        } else if (k == "simp_term") {
+            simp_changed |= drop_nested(replacements, replacement_used, from_utf8(key8), from_utf8(value8));
+        }
+    }
+    if (changed) save();
+    if (simp_changed && !simplified_path_.empty()) save_simplified();
+    if (keys_changed) corrections.save();
+    set_simplified(was_simplified);
+    forgot_applied = top;
+    if (!keep_files_) {
+        Json out = Json::object();
+        out["format"] = Json(1);
+        out["applied"] = Json(top);
+        write_file_atomic(forgot_path, out.dump());
+    }
+    return changed || keys_changed || simp_changed;
 }
 
 void UserModel::import_memory(int counter) {

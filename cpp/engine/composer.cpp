@@ -2736,6 +2736,7 @@ Composer::Composer(SyllableTable& table, const Lexicon& lexicon, const English& 
     table_.autocorrect = config.flag("autocorrect");
     table_.set_custom(user.custom_order);  // (the readings of 個人詞庫 are syllables too)
     user.corrections.enable(true);  // (代碼記憶 counts with the setting off too)
+    user.forget_items(config.get("forget_list"));  // 記憶清單 (#65): rows deleted while the engine was off
     user.import_memory(config.number("import_memory"));  // a backup restored while the engine was off
     user.set_simplified(config.flag("simplified"));  // 簡體輸出 (#32)
     reset();
@@ -2853,6 +2854,7 @@ bool Composer::toggle_simplified() {
 void Composer::settings_changed() {
     user.forget_words(config.number("forget_words"));
     user.forget_emails(config.number("forget_emails"));
+    user.forget_items(config.get("forget_list"));  // 記憶清單 (#65)
     user.import_memory(config.number("import_memory"));
     if (user.simplified != config.flag("simplified")) {  // 簡體輸出 switched in the settings (#32)
         user.set_simplified(config.flag("simplified"));

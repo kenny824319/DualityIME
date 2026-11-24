@@ -1,0 +1,25 @@
+{
+  "_about": "#65 記憶清單: what the engine's memory_list() and the settings tool's memory op list for this folder on day 20800 (both are tested against this file). Rows newest first (day, nulls last); counts faded (20 days halve), rounded, at least 1; e-mails never fade. Left out: kubernetes and recieve (fewer than 2 uses faded), xi3 (a tie), zz9 (one pick), 影片→視頻 (one pick).",
+  "picks": [
+    {"kind": "pick", "key": "ㄋㄧˇ", "value": "妳", "shown": "妳", "reading": "ㄋㄧˇ", "count": 3, "day": 20795, "note": ""},
+    {"kind": "pick", "key": "ㄧㄠˋ-ㄕ˙", "value": "鑰匙", "shown": "鑰匙", "reading": "ㄧㄠˋ ㄕ˙", "count": 1, "day": 20700, "note": ""}
+  ],
+  "words": [
+    {"kind": "word", "key": "refactor", "value": "", "shown": "refactor", "reading": "", "count": 5, "day": 20799, "note": ""}
+  ],
+  "emails": [
+    {"kind": "email", "key": "sample@example.com", "value": "", "shown": "sample@example.com", "reading": "", "count": 4, "day": 20800, "note": ""},
+    {"kind": "email", "key": "smaple@example.com", "value": "", "shown": "smaple@example.com", "reading": "", "count": 1, "day": 20750, "note": ""}
+  ],
+  "keys": [
+    {"kind": "correction", "key": "817", "value": "", "shown": "817", "reading": "", "count": 2, "day": 20799, "note": "照打，不校正"},
+    {"kind": "correction", "key": "si3", "value": "ㄋㄧˇ", "shown": "si3", "reading": "ㄋㄧˇ", "count": 3, "day": 20798, "note": "打錯時照這個改（注音自動校正）"},
+    {"kind": "correction", "key": "CP→56", "value": "ㄓˊ", "shown": "CP 56", "reading": "ㄓˊ", "count": 2, "day": 20797, "note": "英文後面的 56 讀成這個音"},
+    {"kind": "english", "key": "mp3", "value": "", "shown": "mp3", "reading": "", "count": 2, "day": 20796, "note": "照打成英文"},
+    {"kind": "english", "key": "gpt4", "value": "", "shown": "gpt4", "reading": "", "count": null, "day": null, "note": "照打成英文"}
+  ],
+  "simplified": [
+    {"kind": "simp_pick", "key": "ㄓㄜˋ", "value": "這", "shown": "這", "reading": "ㄓㄜˋ", "count": 6, "day": 20800, "note": "簡體選字"},
+    {"kind": "simp_term", "key": "軟體", "value": "軟件", "shown": "軟體", "reading": "軟件", "count": 3, "day": 20799, "note": "大陸用詞"}
+  ]
+}

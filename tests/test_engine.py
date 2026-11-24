@@ -5163,6 +5163,138 @@ class CtrlPunctuationTest(Base):
             self.assertFalse(c.type_full_punct(key), key)
 
 
+class ForgetListTest(unittest.TestCase):
+    """#65 記憶清單: rows the settings tool deletes go into config.json's forget_list (each with an id); the engine
+    removes the ones above the id it applied last at its next key and notes that id in forgot.json, so a deletion acts
+    once (relearned, or brought back by a backup, it stays)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.tmp.name, "user.json")
+        self.c = create_composer(self.path)
+        self.c.config.values = dict(DEFAULTS)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def forget(self, *items, first=1):
+        self.c.config.set(forget_list=[{"id": first + i, "kind": k, "key": key, "value": v}
+                                       for i, (k, key, v) in enumerate(items)])
+        self.c.settings_changed()
+
+    def read(self, name):
+        with open(os.path.join(self.tmp.name, name), encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_each_kind_goes_from_memory_and_the_files(self):
+        u = self.c.user
+        u.learn_word("a@example.com")
+        u.learn_word("refactor"); u.learn_word("refactor")
+        u.learn_phrase("ㄋㄧˇ", "妳")
+        u.corrections.enable(True)
+        for _ in range(2):
+            u.corrections.record("si3", "ㄋㄧˇ")
+            u.corrections.record("mp3", "en")
+        u.english.add("mp3")
+        u.save(); u.corrections.save()
+        self.forget(("email", "a@example.com", ""), ("word", "refactor", ""), ("pick", "ㄋㄧˇ", "妳"),
+                    ("correction", "si3", "ㄋㄧˇ"), ("english", "mp3", ""))
+        self.assertNotIn("a@example.com", u.emails)
+        self.assertNotIn("refactor", u.words)
+        self.assertNotIn("妳", u.phrases.get("ㄋㄧˇ", {}))
+        self.assertIsNone(u.corrections.choice("si3"))
+        self.assertNotIn("mp3", u.english)  # (both places of a code read as English: one row)
+        self.assertNotIn("en", u.corrections.picks.get("mp3", {}))
+        saved = self.read("user.json")
+        self.assertNotIn("a@example.com", saved["emails"])
+        self.assertNotIn("refactor", saved["words"])
+        self.assertNotIn("mp3", saved["english"])
+        self.assertNotIn("ㄋㄧˇ", self.read("keys.json")["standard"]["picks"].get("si3", {}))
+        self.assertEqual(self.read("forgot.json"), {"format": 1, "applied": 5})
+
+    def test_relearned_after_deleting_stays(self):
+        u = self.c.user
+        u.learn_word("a@example.com")
+        self.forget(("email", "a@example.com", ""))
+        u.learn_word("a@example.com")
+        self.c.settings_changed()  # (the same list, the next key)
+        self.assertIn("a@example.com", u.emails)
+
+    def test_applied_once_across_a_restart(self):
+        self.c.user.learn_word("a@example.com")
+        self.forget(("email", "a@example.com", ""))
+        self.c.user.learn_word("a@example.com")
+        self.c.user.save()
+        again = create_composer(self.path)
+        again.config.values = dict(DEFAULTS, forget_list=self.c.config.values["forget_list"])
+        again.settings_changed()
+        self.assertIn("a@example.com", again.user.emails)
+
+    def test_applied_when_the_engine_starts(self):
+        # (deleted while the engine was off: applied when it starts, as a backup restored then is)
+        self.c.user.learn_word("a@example.com")
+        self.c.user.save()
+        config = os.path.join(self.tmp.name, "config.json")
+        with open(config, "w", encoding="utf-8") as f:
+            json.dump({"forget_list": [{"id": 1, "kind": "email", "key": "a@example.com", "value": ""}]}, f)
+        started = create_composer(self.path, config)
+        self.assertNotIn("a@example.com", started.user.emails)
+        self.assertEqual(self.read("forgot.json"), {"format": 1, "applied": 1})
+
+    def test_an_imported_backup_brings_it_back(self):
+        u = self.c.user
+        u.learn_word("a@example.com")
+        u.save()
+        self.forget(("email", "a@example.com", ""))
+        with open(os.path.join(self.tmp.name, "import-memory.json"), "w", encoding="utf-8") as f:
+            json.dump({"emails": {"a@example.com": 1}}, f)
+        self.c.config.set(import_memory=1)
+        self.c.settings_changed()
+        self.assertIn("a@example.com", u.emails)
+
+    def test_malformed_items_are_skipped(self):
+        u = self.c.user
+        u.learn_word("a@example.com")
+        self.c.config.set(forget_list=[5, {"id": "x", "kind": "email", "key": "a@example.com", "value": ""},
+                                       {"id": 2, "kind": "nonsense", "key": "a", "value": ""},
+                                       {"id": 3, "kind": "email", "key": "a@example.com"},
+                                       {"id": 4, "kind": "email", "key": "a@example.com", "value": ""}])
+        self.c.settings_changed()
+        self.assertNotIn("a@example.com", u.emails)
+        self.c.config.set(forget_list="garbage")
+        self.c.settings_changed()  # (no crash)
+
+    def test_simplified_mode_on(self):
+        u = self.c.user
+        u.learn_phrase("ㄋㄧˇ", "妳")
+        u.set_simplified(True)
+        u.learn_phrase("ㄓㄜˋ", "這")
+        u.learn_replacement("軟體", "軟件"); u.learn_replacement("軟體", "軟件")
+        u.save()
+        self.c.config.set(simplified=True)
+        self.forget(("pick", "ㄋㄧˇ", "妳"), ("simp_pick", "ㄓㄜˋ", "這"), ("simp_term", "軟體", "軟件"))
+        self.assertTrue(u.simplified)
+        self.assertNotIn("這", u._simp_phrases.get("ㄓㄜˋ", {}))
+        self.assertNotIn("軟件", u.replacements.get("軟體", {}))
+        u.set_simplified(False)
+        self.assertNotIn("妳", u.phrases.get("ㄋㄧˇ", {}))
+
+    def test_memory_list_matches_the_fixture(self):
+        # (tests/data/memory_list/expected.json: the settings tool's memory op is tested against the same file)
+        import shutil
+        here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "memory_list")
+        with open(os.path.join(here, "expected.json"), encoding="utf-8") as f:
+            want = json.load(f)
+        want.pop("_about")
+        with tempfile.TemporaryDirectory() as d:
+            for name in ("user.json", "keys.json", "user_simplified.json"):
+                shutil.copy(os.path.join(here, name), d)
+            u = UserModel(os.path.join(d, "user.json"), today=lambda: 20800)
+            self.assertEqual(u.memory_list(autocorrect=True), want)
+            # (注音自動校正 off: only the codes read as English and the split keys still act - CLAUDE.md Invariants)
+            self.assertEqual([r["key"] for r in u.memory_list(autocorrect=False)["keys"]], ["CP→56", "mp3", "gpt4"])
+
+
 class PunctuationSwapTest(Base):
     """#53: the caret before a mark in the text being typed, ↓ lists the marks of its row (the table the user chose,
     2026-11-24), a pick replaces it, a bracket's partner follows; nothing is remembered."""

@@ -2151,6 +2151,7 @@ class Composer:
         self.table.autocorrect = self.config.autocorrect
         self.table.set_custom(self.user.custom)  # (the readings of 個人詞庫 are syllables too)
         self.user.corrections.enable(True)  # (代碼記憶 counts with the setting off too)
+        self.user.forget_items(self.config.forget_list)  # 記憶清單 (#65): rows deleted while the engine was off
         self.user.import_memory(self.config.import_memory)  # a backup restored while the engine was off
         self.user.set_simplified(self.config.simplified)  # 簡體輸出 (#32)
         self.reset()
@@ -2265,6 +2266,7 @@ class Composer:
         """Call after the config was reloaded."""
         self.user.forget_words(self.config.forget_words)
         self.user.forget_emails(self.config.forget_emails)
+        self.user.forget_items(self.config.forget_list)  # 記憶清單 (#65)
         self.user.import_memory(self.config.import_memory)
         if self.user.simplified != bool(self.config.simplified):  # 簡體輸出 switched in the settings (#32)
             self.user.set_simplified(self.config.simplified)
