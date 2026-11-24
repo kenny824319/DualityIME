@@ -163,6 +163,18 @@ CASES = [
     # (no punctuation key reordered before digits after English, but after Chinese; no tone put back right after English; a tone that
     # makes a word of the personal dictionary: 哲宇; ;e back as typed from the end of the list, twice)
     "no.2 ch.2 ji3.24{ENTER}v3.2 su3.2 {ENTER}you are 3.2 {ENTER}su5k1u0 ji35k1u0 {ENTER}5km3{ENTER}",
+    # (#61: a pick at a key next to the right one stays when more is typed - du3, which AUTOCORRECT's keys.json does not
+    # teach, 擬 picked, third whatever was learned: 我擬一個, 3.3.0 我禮儀個; a guess still leans on a syllable typed out
+    # of order (du3lc3 你好), on 校正記憶
+    # (si3, taught there: si3xi3 你裡) and on a key typed twice (謝謝你) - findings #76 #77, #80)
+    "ji3du3{DOWN}{DOWN}{DOWN}{ENTER}u6ek4{ENTER}du3lc3{ENTER}si3xi3{ENTER}vu,4vu,,4du3{ENTER}",
+    "ji3du3{DOWN}{ENTER}u6ek4{ENTER}",  # (#61: the guess picked as shown kept, 我你一個 - when 你 is first in the list)
+    # (findings #81-#83, #86, #87: 我你都; 814.2 as typed - 814 untaught by keys.json, digits out of order, 3.3.0 814都;
+    # du3;e 你剛; ;e du3 剛你)
+    "ji3du3.2 {ENTER}814.2 {ENTER}ji3814.2 {ENTER}du3;e {ENTER};e du3{ENTER}",
+    # (#62: a rare short word after English starts a word with one of the tones other: el + ㄒㄧㄥ 高興; Kung fu stays as
+    # it was, 七世 / 七是)
+    "Codex el vu/ {ENTER}Kung fu g4xl3q/6u.3{ENTER}",
     ("su3;e {HOME}{RIGHT}" + "{DOWN}" * 35 + "{ENTER}{ENTER}") * 2 + "su3;e {ENTER}",
     ("e;e; {HOME}" + "{DOWN}" * 36 + "{ENTER}{ENTER}") * 2 + "e;e; {ENTER}",  # (e; back as typed, last of 36, twice)
     # 匹配 typed ㄆㄧ ㄆㄟˋ (ㄆㄧˇ in the dictionary): 注音自動校正 leaves ㄆㄟˋ (not 批判); 匹 picked: 匹配 learned

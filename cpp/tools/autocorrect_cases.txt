@@ -67,3 +67,8 @@ up e9 vu;4g4ru042l354h3h42k7ru,6eji3vm ul4y94ru03wl3{ENTER} => 因該項事件�
 # without it, code-reviewer 2026-11-21)
 ru/3z; vu04y945/4y942ul4t86{ENTER}up e9 1j4au/6x96m06cji4qup31o4d.4xu.6{ENTER} => 警方現在正在調查因該不明來源貨品被扣留
 ji3up e9 ul4fm4{ENTER} => 我應該要去
+# a version number stays as typed (#61: v3 read as 史 - a key next to ㄕ's - and .2 as 都 after it, each holding the other up)
+v3.2 {ENTER} => v3.2 
+# a guess at the end still leans on 校正記憶 (si3 taught above), as in 3.3.0 (#61 review, findings #77; 3.3.0 sends 你李
+# in this file only because its v3.2 line above sent 史都 - without that line it sends 你裡 too)
+si3xi3{ENTER} => 你裡

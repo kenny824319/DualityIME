@@ -268,7 +268,8 @@ async function editList(kind) {
       const sync = () => {
         const en = ENGLISH.test(ia.value.trim()), zh = ZHUYIN.test(ia.value.trim());
         ib.disabled = en || zh;
-        ib.placeholder = en ? "英文無須注音" : zh ? "注音文無須注音" : "點擊「自動填入注音」即可自動帶入（破音字請手動修正）";
+        // (short enough for the box: the note on 破音字 is in the line above the table)
+        ib.placeholder = en ? "英文無須注音" : zh ? "注音文無須注音" : "可按「自動填入注音」帶入";
         if (en || zh) ib.value = "";
       };
       ia.addEventListener("input", sync);
@@ -284,7 +285,7 @@ async function editList(kind) {
   const rows = () => [...tbody.rows].map((r) => [r.cells[0].firstChild.value.trim(), r.cells[1].firstChild.value.trim()])
     .map(([a, b]) => [words ? a.replace(/ {2,}/g, " ") : a, b]).filter(([a, b]) => a || b);
   const body = h("div", {},
-    h("p", { class: "row-desc" }, words ? "輸入法會優先選用此清單中的詞彙。" : "可自定義詞彙映射關係（例：KFC → 肯德基）。中文那一邊打出來後按 ↓，也會出現另一邊（肯德基 → KFC）。"),
+    h("p", { class: "row-desc" }, words ? "輸入法會優先選用此清單中的詞彙。注音可按下方「自動填入注音」帶入，破音字請自行確認。" : "可自定義詞彙映射關係（例：KFC → 肯德基）。中文那一邊打出來後按 ↓，也會出現另一邊（肯德基 → KFC）。"),
     words ? null : mapPreview(),
     h("table", { class: "list" }, h("thead", {}, h("tr", {}, h("th", {}, words ? "詞彙" : "捷徑代碼"), h("th", {}, words ? "注音" : "展開內容"), h("th"))), tbody),
     h("button", { class: "btn", style: "margin-top:8px", onclick: () => addRow().focus() }, "＋ 新增一筆"),

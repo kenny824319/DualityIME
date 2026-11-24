@@ -1,0 +1,20 @@
+# End-to-end checks with 注音自動校正 on and nothing learned yet (a file of its own: autocorrect_cases.txt teaches si3 as
+# ㄋㄧˇ early, so si3 there is 校正記憶, no guess of a key next to the right one):
+#   powershell -ExecutionPolicy Bypass -File cpp\tools\e2e.ps1 cpp\tools\autocorrect_pick_cases.txt -Config cpp\tools\autocorrect_config.json
+# e2e-args: -Config cpp\tools\autocorrect_config.json
+# a guess picked as shown - ↓ Enter on the 你 shown for du3 - stays when more is typed (#61, the user 2026-11-24; 3.3.0 took
+# it for no pick: 我禮儀個). First in the file: nothing learned yet, so 你 is first in the list
+ji3du3{DOWN}{ENTER}u6ek4{ENTER} => 我你一個
+# a pick at a key next to the right one stays when more is typed (#61: si3 read as ㄋㄧˇ, 妳 picked; typing 是 on read it
+# ㄋㄚˇ, 我那是, in 3.3.0)
+ji3si3{DOWN}{DOWN}{ENTER}g4{ENTER} => 我妳是
+# the same with du3 (findings #80: a key next to the right one compare.py's keys.json does not teach; 擬 third in the
+# list whether 妳 was learned above or not, and no character shown: a pick of what is shown records nothing)
+ji3du3{DOWN}{DOWN}{DOWN}{ENTER}u6ek4{ENTER} => 我擬一個
+# a guess still leans on a syllable typed out of order and on a key typed twice, as in 3.3.0 (findings #76 #77)
+du3lc3{ENTER} => 你好
+vu,4vu,,4du3{ENTER} => 謝謝你
+# a guess leaning on Chinese before it holds up a punctuation key out of order (/code-review high, findings #82: 3.3.0 too);
+# keys from a punctuation key never lean on digits out of order (findings #83: 817.2 was 817都 in 3.3.0)
+ji3du3.2 {ENTER} => 我你都
+817.2 {ENTER} => 817.2 

@@ -72,12 +72,16 @@ COST_PARTIAL = 0.2
 COST_SPACE = 0.3
 SHORT_EN_WORD = -3.2  # a 1-2 letter word after English is zhuyin if it starts a word this common (up 因為)
 SHORT_EN_COMMON = 100  # ...for a letter (u 個) or one of the 100 most common words (up, no); a rarer 2-letter one, any word (co 黑色)
+SHORT_EN_RARE_TONES = True  # ...a rarer one's word read with one of the tones other too (Codex el vu/ is 高興, #62)
 COST_EN_CHAR = 1.0
 COST_PUNCT_KEY = 0.5    # "," as ， rather than the start of a zhuyin syllable
 COST_FORCED_TOKEN = -100.0  # the user picked "English/number" for these keys
 COST_DOUBLE_KEY = 1.0   # syllable read with one doubled key left out (ssu3)
 COST_REORDERED = 0.4    # zhuyin parts typed out of order ("us3" for ㄋㄧˇ)
 # 注音自動校正 (tuned with tools/autocorrect_eval.py)
+GUESSES = frozenset(("adjacent", "punct"))  # #61: corrections guessing what keys that spell nothing meant (a key next
+# to the right one, a punctuation key out of order): one never holds another up (v3.2 is no 史都); 校正記憶, a key
+# typed twice, a tone left out or digits out of order do, as before
 COST_ADJACENT = 1.5     # syllable read with one key swapped for the one next to it (si3 = 你), only
                         # with Chinese right before or after it (not gpt4 = 神4, pythong = 嗯thong)
 COST_NO_TONE = 1.0      # syllable typed without its tone key, another one right after it (5k1u0 = 這邊)
@@ -302,10 +306,11 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
         zhuyin to start (1 + 03 = 1俺, not 103 or 版), or a syllable picked to end."""
         return -COST_FORCED_TOKEN if any(i < c < j for c in cuts) else 0.0
 
-    def starts_phrase(j, reading, common=None):
+    def starts_phrase(j, reading, common=None, tones=False):
         """The syllable ending at j and the next one make a known word (sugatau,4au04:
         頁面, so sugata + 頁, not sugat + 滅). common: only a word scored at least this, also
-        one the dictionary reads with one of the tones other (因為 is ㄧㄣ ㄨㄟˋ there; typed ㄨㄟˊ)."""
+        one the dictionary reads with one of the tones other (因為 is ㄧㄣ ㄨㄟˋ there; typed ㄨㄟˊ).
+        tones (no common): any word, one read with one of the tones other too (#62)."""
         if lexicon is None:
             return False
         for k in range(j + 2, min(j + MAX_SYL_KEYS, n) + 1):
@@ -313,7 +318,7 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
             if not nxt:
                 continue
             if common is None:
-                if lexicon.lookup((reading, nxt[0])):
+                if lexicon.lookup((reading, nxt[0])) or (tones and lexicon.other_tones_words((reading, nxt[0]))):
                     return True
                 continue
             if any(s >= common for _, s in lexicon.lookup((reading, nxt[0]))):
@@ -322,6 +327,35 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
                    for p, s in lexicon.entries[r] if p == w):
                 return True
         return False
+
+    def leans(tokens):
+        """#61: the syllables at the end of these tokens hold a guess up (GUESSES: a key next to the right one, a
+        punctuation key out of order): the last one is no guess, or a guess right after syllables that do - a run of
+        guesses reaching back to one that is none (我你.2 is 我你都); nothing at the start of a run (v3 of v3.2). A
+        punctuation key out of order with no digit among its keys stands on its own (;e is 剛 anywhere): no guess here
+        (;e du3 is 剛你, findings #86)."""
+        for t in reversed(tokens):
+            if t.kind != "zh":
+                return False
+            if t.corrected not in GUESSES or (t.corrected == "punct" and not any(x.isdigit() for x in t.raw[1:-1])):
+                return True
+        return False
+
+    def holds(tokens, i):
+        """#61: these tokens hold up a guess at raw offset i: they lean on something, and keys from a punctuation key
+        never lean on digits out of order, which may turn back into a number (817.2 is no 817都 nor 817偶)."""
+        return bool(tokens) and leans(tokens) and not (tokens[-1].corrected == "order" and raw[i] in zh_punct)
+
+    def stands(j, k):
+        """#61: the keys raw[j:k] make a syllable that stands without the guess before it - not one from a punctuation
+        key out of order with digits (.2 of v3.2: it would lean on that guess itself), unless picked as one (校正記憶)."""
+        p = table.parse_syllable(raw[j:k])
+        if not p:
+            return False
+        if p[1] or raw[j] not in zh_punct or not any(x.isdigit() for x in raw[j + 1:k - 1]):
+            return True
+        got = memory.choice(raw[j:k]) if memory is not None and j not in exact else None
+        return got not in (None, "", AS_ENGLISH)
 
     def zh_before(tokens):
         """The readings of the syllables at the end of these tokens, nothing between them."""
@@ -494,10 +528,12 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
                 as_typed = parsed and (parsed[1] or not (ordered_only or raw[i:j - 1].isdigit()))
                 # 注音自動校正: a punctuation key out of order after all when the keys after it spell
                 # nothing (;e is ㄍㄤ: 剛; ,u3 stays ,以) - and with digits among them, only after
-                # Chinese (你.2 is 你都; no.2 stays)
+                # Chinese that leans on something (你.2 is 你都, 我你.2 我你都; no.2 stays, and v3.2 too: v3 read as 史,
+                # a key next to ㄕ's, leans on nothing, #61) - not digits out of order, which may turn back into a number
+                # (817.2 is no 817都, #61 review)
                 punct_order = parsed and not as_typed and ordered_only and correct and \
                     not table.parse_syllable(raw[i + 1:j]) and \
-                    (not any(k.isdigit() for k in raw[i + 1:j - 1]) or (prev[1] and prev[1][-1].kind == "zh"))
+                    (not any(k.isdigit() for k in raw[i + 1:j - 1]) or holds(prev[1], i))
                 if as_typed:
                     offer(j, syllable_cost(table, *parsed) + crosses(i, j), prev, Token("zh", raw[i:j], parsed[0], i))
                 picked = memory.choice(raw[i:j]) if memory is not None and i not in exact else None
@@ -536,8 +572,10 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
                         continue
                     # (a key becomes a tone key only with no digit after it: gpt4 is not 神4, h264 not 此64)
                     near = table.adjacent_parses(raw[i:j], can_end=j < n and not raw[j].isdigit())
-                    if near and ((prev[1] and prev[1][-1].kind == "zh") or any(
-                            table.parse_syllable(raw[j:k]) for k in range(j + 2, min(j + MAX_SYL_KEYS, n) + 1))):
+                    # (next to a syllable: Chinese before it that holds it up, or one after it that stands on its own -
+                    # never two guesses at the start holding each other up: v3.2 is no 史都 nor 使偶, #61)
+                    if near and (holds(prev[1], i) or any(
+                            stands(j, k) for k in range(j + 2, min(j + MAX_SYL_KEYS, n) + 1))):
                         cost = COST_ADJACENT + crosses(i, j)
                         # the most common of the syllables it may be (si3: 你, not 抹); the words
                         # around it may choose another one (_check_corrections)
@@ -613,7 +651,8 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
                 zh = table.parse_syllable(raw[i:j + 1])
                 common = j - i == 1 or (english.get(piece.lower(), SHORT_EN_COMMON) < SHORT_EN_COMMON
                                         if english else False)
-                if zh and zh[1] and starts_phrase(j + 1, zh[0], SHORT_EN_WORD if common else None):
+                if zh and zh[1] and starts_phrase(j + 1, zh[0], SHORT_EN_WORD if common else None,
+                                                  tones=SHORT_EN_RARE_TONES):
                     word_after = False
             cost = english_piece_cost(piece, english, learned, word_after, mine, () if i in exact else codes)
             if starts and word_start and j == end and user is not None and user.is_completion_start(piece):
@@ -3946,8 +3985,9 @@ class Composer:
             there = {a + k: q[k] for a, b, q in self.segments if len(q) == b for k in range(b)}
             # (what is there already: nothing to do - but a character's name shown without its ·, #14)
             # (a Mainland word picked: the phrase made one piece, whatever is there, so the word has a place, #32)
+            # (and what 注音自動校正 read otherwise than typed: the guess picked is kept as picked, #61)
             if "".join(there.get(k, "") for k in range(s, s + l)) != p or p in self.lexicon.name_written or \
-                    (term is not None and term != p and (s, l, p) not in self.segments):
+                    (term is not None and term != p and (s, l, p) not in self.segments) or self._guessed(s, l):
                 # drop overrides overlapped by the new pick, and what an earlier pick there kept
                 self.overrides = {sp: v for sp, v in self.overrides.items()
                                   if (sp[0] + sp[1] <= s or sp[0] >= s + l)
@@ -4559,6 +4599,15 @@ class Composer:
         if tok is not None and (end is None or start + len(tok.raw) == end):
             self.pending[start] = (tok.raw, "")
 
+    def _guessed(self, s, l):
+        """#61: one of the syllables s..s+l is one 注音自動校正 read otherwise than typed (a key next to the right one, a
+        tone left out...): a pick of what it shows there is a pick all the same - kept when more is typed (ji3du3, 你
+        picked as shown, then 一個: 我你一個, not 我禮儀個; the user 2026-11-24), a character typed right is not."""
+        if not self.table.autocorrect:
+            return False
+        zh = [t for t in self.tokens if t.kind == "zh"]
+        return any(k < len(zh) and zh[k].corrected for k in range(s, s + l))
+
     def _pin_reading(self, t, r):
         """A syllable picked on as r that 注音自動校正 now reads otherwise, the same keys: (value, orig, corrected)
         putting the pick's reading back, or None (_refresh's pinned; _keeps_picks)."""
@@ -4566,6 +4615,8 @@ class Composer:
             return t.orig, None, None
         if t.corrected == "tone" and r in self.table.toned_forms(t.raw):
             return r, t.orig, t.corrected  # (the tone of the pick, not the one the sentence now prefers)
+        if t.corrected == "adjacent" and r in self.table.adjacent_parses(t.raw):
+            return r, t.orig, t.corrected  # (#61: si3 picked as 妳's ㄋㄧˇ, not the ㄋㄚˇ of 那是 typed on)
         if not t.corrected and (r in self.table.adjacent_parses(t.raw) or r in self.table.nasal_swaps(t.value)):
             return r, t.value, "valid"  # (ㄣ/ㄥ too, #38)
         return None

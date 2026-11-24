@@ -58,12 +58,17 @@ constexpr double COST_PARTIAL = 0.2;
 constexpr double COST_SPACE = 0.3;
 constexpr double SHORT_EN_WORD = -3.2;  // a 1-2 letter word after English is zhuyin if it starts a word this common (up 因為)
 constexpr int SHORT_EN_COMMON = 100;  // ...for a letter (u 個) or one of the 100 most common words (up, no); a rarer 2-letter one, any word (co 黑色)
+constexpr bool SHORT_EN_RARE_TONES = true;  // ...a rarer one's word read with one of the tones other too (Codex el vu/ is 高興, #62)
 constexpr double COST_EN_CHAR = 1.0;
 constexpr double COST_PUNCT_KEY = 0.5;
 constexpr double COST_FORCED_TOKEN = -100.0;
 constexpr double COST_DOUBLE_KEY = 1.0;
 constexpr double COST_REORDERED = 0.4;
 // 注音自動校正 (tuned with tools/autocorrect_eval.py; the same as engine/composer.py)
+// #61: corrections guessing what keys that spell nothing meant (a key next to the right one, a punctuation key out of
+// order): one never holds another up (v3.2 is no 史都); 校正記憶, a key typed twice, a tone left out or digits out of
+// order do, as before (engine/composer.py GUESSES)
+static bool is_guess(const std::string& corrected) { return corrected == "adjacent" || corrected == "punct"; }
 constexpr double COST_ADJACENT = 1.5;  // a syllable read with one key swapped for the one next to it (si3 = 你), only
                                        // with Chinese right before or after it (not gpt4 = 神4, pythong = 嗯thong)
 constexpr double COST_NO_TONE = 1.0;  // a syllable typed without its tone key, another one right after it (5k1u0 = 這邊)
@@ -487,13 +492,17 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
     // so sugata + 頁, not sugat + 滅)
     // common: only a word scored at least this, also one the dictionary reads with one of the tones
     // other (因為 is ㄧㄣ ㄨㄟˋ there; typed ㄨㄟˊ)
-    auto starts_phrase = [&](size_t j, const ustr& reading, std::optional<double> common = std::nullopt) {
+    // tones (no common): any word, one read with one of the tones other too (#62)
+    auto starts_phrase = [&](size_t j, const ustr& reading, std::optional<double> common = std::nullopt,
+                             bool tones = false) {
         if (!lexicon) return false;
         for (size_t k = j + 2; k <= std::min(j + MAX_SYL_KEYS, n); ++k) {
             auto nxt = table.parse_syllable(rv0.substr(j, k - j));
             if (!nxt) continue;
             if (!common) {
-                if (!lexicon->lookup({reading, nxt->first}).empty()) return true;
+                if (!lexicon->lookup({reading, nxt->first}).empty() ||
+                    (tones && !lexicon->other_tones_words({reading, nxt->first}).empty()))
+                    return true;
                 continue;
             }
             for (auto& [p, s] : lexicon->lookup({reading, nxt->first}))
@@ -720,12 +729,33 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
                 }
                 // (digit keys read as zhuyin only in the normal order: 2024 is a number)
                 bool as_typed = parsed && (parsed->second || !(ordered_only || all_digit(rv.substr(i, j - 1 - i))));
+                // #61: the syllables before (the path ending at node cur) hold up a guess at i: they lean on something -
+                // the last no guess (is_guess), or a guess right after syllables that do (我你.2 is 我你都; v3 of v3.2,
+                // at the start, leans on nothing) - and keys from a punctuation key never lean on digits out of order,
+                // which may turn back into a number (817.2 is no 817都 nor 817偶) (engine/composer.py holds)
+                // (a punctuation key out of order with no digit among its keys stands on its own - ;e is 剛 anywhere -
+                // no guess here: ;e du3 is 剛你, findings #86)
+                auto holds = [&](size_t at) {
+                    if (cur == 0 || (nodes[cur].tok.corrected == "order" && zh_punct.count(raw[at]) > 0)) return false;
+                    for (size_t p = cur; p != 0; p = nodes[p].prev) {
+                        const Token& t = nodes[p].tok;
+                        if (t.kind != Kind::Zh) return false;
+                        if (!is_guess(t.corrected)) return true;
+                        if (t.corrected == "punct") {
+                            bool digit = false;
+                            for (size_t x = 1; x + 1 < t.raw.size(); ++x)
+                                if (is_digit(t.raw[x])) digit = true;
+                            if (!digit) return true;
+                        }
+                    }
+                    return false;
+                };
                 // 注音自動校正: a punctuation key out of order after all when the keys after it spell
                 // nothing (;e is ㄍㄤ: 剛; ,u3 stays ,以) - and with digits among them, only after
-                // Chinese (你.2 is 你都; no.2 stays)
+                // Chinese that holds it up (你.2 is 你都; no.2 stays, and v3.2 too, #61)
                 bool punct_order = parsed && !as_typed && ordered_only && correct &&
                                    !table.parse_syllable(rv.substr(i + 1, j - i - 1));
-                bool after_zh = cur != 0 && nodes[cur].tok.kind == Kind::Zh;
+                bool after_zh = holds(i);
                 for (size_t k = i + 1; punct_order && !after_zh && k + 1 < j; ++k)
                     if (is_digit(raw[k])) punct_order = false;
                 if (as_typed)
@@ -769,9 +799,24 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
                     }
                     // (a key becomes a tone key only with no digit after it: gpt4 is not 神4, h264 not 此64)
                     auto near = table.adjacent_parses(rv.substr(i, j - i), j < n && !is_digit(raw[j]));
-                    bool context = cur != 0 && nodes[cur].tok.kind == Kind::Zh;
+                    // (next to a syllable: Chinese before it that holds it up, or one after it that stands on its own -
+                    // never two guesses at the start holding each other up: v3.2 is no 史都 nor 使偶, #61)
+                    // stands: not keys from a punctuation key out of order with digits (.2 of v3.2: it would lean on
+                    // this guess itself), unless picked as a syllable (校正記憶) (engine/composer.py stands)
+                    auto stands = [&](size_t k) {
+                        auto p = table.parse_syllable(rv.substr(j, k - j));
+                        if (!p) return false;
+                        bool digit = false;
+                        for (size_t x = j + 1; x + 1 < k; ++x)
+                            if (is_digit(raw[x])) digit = true;
+                        if (p->second || zh_punct.count(raw[j]) == 0 || !digit) return true;
+                        if (!memory || contains(exact, static_cast<int>(j))) return false;
+                        auto got = memory->choice(raw.substr(j, k - j));
+                        return got && !got->empty() && *got != AS_ENGLISH;
+                    };
+                    bool context = holds(i);
                     for (size_t k = j + 2; !near.empty() && !context && k <= std::min(j + MAX_SYL_KEYS, n); ++k)
-                        if (table.parse_syllable(rv.substr(j, k - j))) context = true;
+                        if (stands(k)) context = true;
                     if (!near.empty() && context) {
                         double cost = COST_ADJACENT + crosses(i, j);
                         // the most common of the syllables it may be (si3: 你, not 抹); the words
@@ -873,7 +918,8 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
                 auto r = english.rank.find(lower(piece));
                 bool common = j - i == 1 || (r != english.rank.end() && r->second < SHORT_EN_COMMON);
                 if (zh && zh->second &&
-                    starts_phrase(j + 1, zh->first, common ? std::optional<double>(SHORT_EN_WORD) : std::nullopt))
+                    starts_phrase(j + 1, zh->first, common ? std::optional<double>(SHORT_EN_WORD) : std::nullopt,
+                                  SHORT_EN_RARE_TONES))
                     word_after = false;
             }
             double cost = english_piece_cost(piece, english, learned, word_after, mine, contains(exact, ii) ? none : codes);
@@ -5323,7 +5369,18 @@ void Composer::pick(int i, bool from_bar) {
         bool piece = false;
         for (auto& seg : segments_)
             if (seg.start == s && seg.length == l && seg.phrase == action.text) piece = true;
-        if (there != action.text || written || (term && *term != action.text && !piece)) {
+        // (and what 注音自動校正 read otherwise than typed: the guess picked is kept as picked, #61 -
+        // engine/composer.py _guessed)
+        bool guessed = false;
+        if (table_.autocorrect) {
+            int k = 0;
+            for (auto& t : tokens)
+                if (t.kind == Kind::Zh) {
+                    if (k >= s && k < s + l && !t.corrected.empty()) guessed = true;
+                    ++k;
+                }
+        }
+        if (there != action.text || written || (term && *term != action.text && !piece) || guessed) {
             Overrides kept;  // drop overrides overlapped by the new pick, and what an earlier pick there kept
             for (auto& [sp, v] : overrides_)
                 if ((sp.first + sp.second <= s || sp.first >= s + l) &&
@@ -6665,6 +6722,9 @@ std::optional<std::tuple<ustr, ustr, std::string>> Composer::pin_reading(const T
     if (t.corrected == "tone") {  // (the tone of the pick, not the one the sentence now prefers)
         auto forms = table_.toned_forms(t.raw);
         if (std::find(forms.begin(), forms.end(), r) != forms.end()) return std::make_tuple(r, t.orig, t.corrected);
+    } else if (t.corrected == "adjacent") {  // (#61: si3 picked as 妳's ㄋㄧˇ, not the ㄋㄚˇ of 那是 typed on)
+        auto alts = table_.adjacent_parses(t.raw);
+        if (std::find(alts.begin(), alts.end(), r) != alts.end()) return std::make_tuple(r, t.orig, t.corrected);
     } else if (t.corrected.empty()) {
         auto alts = table_.adjacent_parses(t.raw);
         for (auto& a : table_.nasal_swaps(t.value)) alts.push_back(a);  // (ㄣ/ㄥ too, #38)

@@ -463,6 +463,23 @@ class MixedEnglishTest(Base):
             with self.subTest(raw=raw):
                 self.assertEqual(self.type(raw), expected)
 
+    def test_rare_short_word_after_english_starts_a_word_with_a_tone_left_out(self):
+        # (#62, review-backlog L65: 興 typed without its tone, ㄒㄧㄥ, came out Codex el 星 - a rare short word looked
+        # at the tones typed only; measured on 242 + 300 real sentences, 2026-11-24: none worse, 5 better). After English
+        # as without it: 高星 by the dictionary alone, 高興 with 長句選字加強
+        c = self.c
+        try:
+            for long_sentence in (False, True):
+                c.config.set(long_sentence=long_sentence)
+                c.settings_changed()
+                with self.subTest(long_sentence=long_sentence):
+                    self.assertEqual(self.type("Codex el vu/ "), "Codex " + self.type("el vu/ "))
+                    self.assertEqual(self.type("Codex el vu/4"), "Codex 高興")
+            self.assertEqual(self.type("Codex el vu/ "), "Codex 高興")  # (the model on, as it ships: light's)
+        finally:
+            c.config.set(long_sentence=DEFAULTS["long_sentence"])
+            c.settings_changed()
+
     def test_english_sent_with_enter_does_not_carry_into_the_next_sentence(self):
         # (reported 2026-11-08: after Codex + Enter, 黑色 came out co 色, 高興 el 性: the short
         # word was read as English after the English sent before it, in another sentence)
@@ -5711,6 +5728,68 @@ class AutocorrectTest(Base):
 
     def test_a_punctuation_key_before_digits_after_chinese_is_reordered(self):
         self.assertEqual(self.type("su3.2 "), "你都")  # (2. typed .2)
+
+    def test_a_version_number_stays_as_typed(self):
+        # (#61, review-backlog L9: v3.2 read as 史 - v3 a key next to ㄕ's - and then .2 reordered as after Chinese, 都:
+        # digits reordered only after Chinese typed right, not after a guess)
+        for raw in ("v3.2 ", "v1.2 "):
+            with self.subTest(raw=raw):
+                self.assertEqual(self.type(raw), raw)
+        self.assertEqual(self.type("su3.2 "), "你都")
+
+    def test_a_guess_still_leans_on_a_syllable_typed_out_of_order_learned_or_doubled(self):
+        # (#61 review, findings #76 #77: only two guesses - a key next to the right one, a punctuation key out of order -
+        # never hold each other up; letters out of order are typed right (注音順序不限), 校正記憶 and a key typed twice
+        # are no guesses: all as in 3.3.0)
+        # (/code-review high, findings #81 #82: a guess leaning on Chinese before it still holds up the next one (我你都);
+        # one after it standing on its own - a punctuation key out of order without digits, digits out of order - holds
+        # a guess up, as in 3.3.0)
+        for raw, expected in (("si3lc3", "你好"), ("hello si3lc3", "hello 你好"), ("vu,4vu,,4si3", "謝謝你"),
+                              ("ji3du3.2 ", "我你都"), ("si3;e ", "你剛"), ("du3817 ", "你817 "),
+                              # (findings #86: ;e out of order stands on its own and holds a guess up, as in 3.3.0)
+                              (";e du3", "剛你"), ("si3;e du3", "你剛你")):
+            with self.subTest(raw=raw):
+                self.assertEqual(self.type(raw), expected)
+        # (findings #83: keys from a punctuation key never lean on digits out of order, which turn back into a number:
+        # 817.2 was 817都 in 3.3.0)
+        for raw in ("817.2 ", "ji3817.2 "):
+            with self.subTest(raw=raw):
+                self.assertTrue(self.type(raw).endswith("817.2 "))
+        for _ in range(3):
+            self.c.user.corrections.record("si3", "ㄋㄧˇ")
+            self.c.user.corrections.record("817", "ㄅㄚ˙")
+        for raw, expected in (("si3.2 ", "你都"), ("si3xi3", "你裡"), ("du3817 ", "你吧 ")):
+            with self.subTest(raw=raw, learned="si3, 817"):
+                self.assertEqual(self.type(raw), expected)
+
+    def test_a_guess_picked_as_shown_is_kept(self):
+        # (#61, the user 2026-11-24: 你 guessed for du3 - a key next to the right one - and picked as shown, ↓ Enter, was
+        # no pick: typing 一個 on read du3 as ㄌㄧˇ, 我禮儀個. A guess picked as shown is kept; a character typed right
+        # picked as shown is still nothing, as before)
+        c = self.c
+        self.type("ji3du3", enter=False)
+        c.key(special="DOWN")
+        self.assertEqual(c.candidates[c.cand_index], "你")
+        c.key(special="ENTER")
+        self.type("u6ek4", enter=False)
+        self.assertEqual(c.composition[:2], "我你")  # (一個 or 一箇: the dictionary alone here)
+        c.key(special="ESC")
+        self.type("g4", enter=False)
+        c.key(special="DOWN")
+        c.key(special="ENTER")
+        self.assertEqual(c.overrides, {})
+
+    def test_a_pick_at_a_key_next_to_the_right_one_is_kept(self):
+        # (#61, review-backlog L10: si3 read as ㄋㄧˇ, a key next to the right one; 妳 picked; typing on, the sentence read
+        # si3 as ㄋㄚˇ and the pick was gone - 我那是)
+        c = self.c
+        self.type("ji3si3", enter=False)
+        c.key(special="DOWN")
+        c.key(special="DOWN")
+        self.assertEqual(c.candidates[c.cand_index], "妳")
+        c.key(special="ENTER")
+        self.type("g4", enter=False)
+        self.assertEqual(c.composition, "我妳是")
 
     def test_a_punctuation_key_out_of_order_offers_the_keys_as_typed(self):
         c = self.c
