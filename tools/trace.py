@@ -25,6 +25,13 @@ def main(user_path, script_path, config_path=None):
     table, lexicon, english, user, bigram, config = load_resources(user_path, config_path)
     user.today = lambda: 20000
     c = Composer(table, lexicon, english, user, bigram, config)
+    # (not a setting: "ja_mixed" in the config file types every line in 中日混打, #36 - tools/compare.py)
+    if config_path and os.path.exists(config_path):
+        import json
+        with open(config_path, encoding="utf-8-sig") as f:
+            if json.load(f).get("ja_mixed"):
+                from engine.ja_mixed import JaMixed
+                c.set_japanese(JaMixed.load())
     out = []
     with open(script_path, encoding="utf-8") as f:
         lines = f.read().split("\n")

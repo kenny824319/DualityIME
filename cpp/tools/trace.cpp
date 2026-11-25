@@ -259,6 +259,24 @@ int main(int argc, char** argv) {
     Config config(argc > 4 ? widen(argv[4]) : L"");
     Composer c(*res.table, *res.lexicon, res.english, user, res.bigram.get(), config, res.lm.get());
     if (config.flag("long_sentence")) res.lm->get();  // (as the engine does at start)
+    // (not a setting: "ja_mixed" in the config file types every line in 中日混打, #36 - tools/compare.py)
+    std::unique_ptr<RomajiTable> ja_table;
+    std::unique_ptr<JaDict> ja_dict;
+    std::unique_ptr<JaMixed> ja_mixed;
+    if (argc > 4) {
+        std::string text;
+        bool ok = false;
+        Json j = read_file(widen(argv[4]), text) ? Json::parse(text, &ok) : Json();
+        const Json* flag = ok ? j.get("ja_mixed") : nullptr;
+        if (flag && flag->is_bool() && flag->as_bool()) {
+            ja_table = RomajiTable::load(widen(argv[1]));
+            ja_dict = JaDict::load(widen(argv[1]));
+            if (ja_table && ja_dict) {
+                ja_mixed = std::make_unique<JaMixed>(*ja_table, *ja_dict);
+                c.set_japanese(ja_mixed.get());
+            }
+        }
+    }
     double load_ms = ms_since(started);
     if (timing) print_memory("after loading");
     std::vector<KeyTime> times;

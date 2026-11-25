@@ -57,7 +57,13 @@ CASES = [
     "ji3[su3cl3.]{HOME}{RIGHT}{DOWN}2{ENTER}", "su3{^[}cl3:){^]}{HOME}{RIGHT}{DOWN}2{ENTER}",
     "su3{^[}cl3{LEFT}{LEFT}{DOWN}4{LEFT}{DOWN}2{ENTER}",
     "su3{^[}cl3{^[}ji3{^]}{^]}{HOME}{RIGHT}{DOWN}2{ENTER}", "su3{^[}cl3{LEFT}{LEFT}{DOWN}3{ENTER}", "su3{^,}{DOWN}{ESC}{ENTER}",
-    "su3<{LEFT}{DOWN}{ENTER}", "su3`f{LEFT}{DOWN}{ENTER}", "su3{^,}{LEFT}{DOWN}2{END}cl3{BACK}{ENTER}{RESET}",
+    "su3<{LEFT}{DOWN}{ENTER}", "su3`f{LEFT}{DOWN}{ENTER}",
+    # (the fifteenth goes on after its {RESET} with 中日混打's keys, #36 - so --cases 15 types them; English in the other
+    # settings): a Japanese sentence, Chinese then Japanese, a mark after Japanese, a Japanese 文節 picked from ↓ then
+    # more typed, Backspace in it, a pending n sent
+    "su3{^,}{LEFT}{DOWN}2{END}cl3{BACK}{ENTER}{RESET}"
+    "kyouhaiitenki{ENTER}ji3rup wu0 fm4konbini{ENTER}kyou,{ENTER}hasi{DOWN}{DOWN}{ENTER}wo{ENTER}"
+    "kyouk{BACK}{ENTER}kon{ENTER}{RESET}",
     # 符號鍵盤自訂 (#69, sixteenth to twentieth: --cases 20 runs them; the setting with custom_symbols types from
     # SYMBOLS, the others from the built-in pages): a key, a page of one's own first, `` its ` key, Tab through the pages
     # shown (數學 hidden), an empty key typing nothing, an emoji key whole, Enter at the arrows' cursor
@@ -530,6 +536,7 @@ CONFIGS = [
                      {"id": 5, "kind": "english", "key": "mp3", "value": ""},
                      {"id": 6, "kind": "bogus", "key": "x", "value": ""}, "garbage"]},
     {"lm_context": False},  # 接續前文選字 off ({} above: on, the default; #37)
+    {"ja_mixed": True},  # (not a setting: 中日混打, #36 - the letters read as romaji and shown as Japanese)
     # 選字模型 (#41), each tier twice (the spec: its default and 接續前文選字 off); its default here reads 64 characters,
     # plus with 注音自動校正 on too, so the order check reads 64 as well (a tier without its file uses light's model)
     {"lm_model": "plus", "lm_context_len_plus": 64, "autocorrect": True},

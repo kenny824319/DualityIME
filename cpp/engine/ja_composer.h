@@ -33,6 +33,14 @@ public:
     ustr flush();   // switching away: what is shown, sent; everything typed goes
     void reset();   // everything typed goes (the kana lock stays)
     std::vector<JaSegment> segments() const;
+    // 中日混打 (#36, composer.cpp ja_candidates): a romaji token's kana, path and pins put in, to ask its 文節 and their
+    // candidates as 純日文 lists them
+    void set_state(const ustr& kana, const std::vector<JaNode>& path, const std::vector<JaPin>& p) {
+        kana_ = kana;
+        path_ = path;
+        pins = p;
+    }
+    std::vector<std::pair<ustr, JaPin>> candidates_for(const JaSegment& seg) const;
     std::pair<std::vector<ustr>, int> page_candidates() const;
     int page_size() const;
 
@@ -62,7 +70,6 @@ private:
     void finish_pending();
     void type(char32_t ch);
     void move(const std::string& special);
-    std::vector<std::pair<ustr, JaPin>> candidates_for(const JaSegment& seg) const;
     bool open_candidates(const JaSegment* seg = nullptr);
     void close_candidates();
     void pin(const JaPin& p);

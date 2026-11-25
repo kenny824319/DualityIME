@@ -12,6 +12,8 @@
 
 #include "bigram.h"
 #include "config.h"
+#include "ja_composer.h"
+#include "ja_mixed.h"
 #include "lexicon.h"
 #include "lm.h"
 #include "util.h"
@@ -56,7 +58,8 @@ std::vector<Token> tokenize(const std::string& raw, const SyllableTable& table, 
                             bool marks = false,           // marks: EN_MARK where English came before a run (#41)
                             bool lit_keys = false,        // ...punctuation sent as the key typed (half width)
                             bool starts = false,          // starts: 補字提示 on - what Tab completes starts English (#54)
-                            const Picks* picks = nullptr);  // picks: the user's (#60)
+                            const Picks* picks = nullptr,  // picks: the user's (#60)
+                            const JaMixed* ja = nullptr);  // ja: 中日混打 (#36) - pieces scored as romaji
 
 struct Segment {
     int start, length;
@@ -153,6 +156,10 @@ public:
     void warm() const;
     bool toggle_full_width();
     bool toggle_simplified();  // 簡體輸出 (#32): Traditional <-> Simplified, remembered in the settings
+    // 中日混打 (#36) on (the romaji table and dictionary, JaMixed) or off (nullptr): the letters that would be English are
+    // read as romaji and shown as Japanese; what is typed is read again at once
+    void set_japanese(const JaMixed* ja);
+    bool japanese() const { return ja_ != nullptr; }
     void settings_changed();
     ustr undo_commit();
     std::pair<std::vector<ustr>, int> page_candidates() const;
@@ -219,6 +226,8 @@ private:
         ustr term;  // "term" (簡體輸出, #32): the Mainland word shown for the phrase `text`
         int pair_start = -1, pair_end = 0;  // "punct" (#53): the bracket that pairs with the mark, -1 none
         ustr pair_text;                     // ...and what it becomes
+        ustr ja_kana;   // "ja" (中日混打, #36): the romaji token's kana (start: the token's start) ...
+        JaPin ja_pin{};  // ...and the 文節 picked
     };
     // 簡體輸出 (#32): a Mainland word picked for a phrase: span -> (Taiwan phrase, what is shown for it)
     using TermPicks = std::map<std::pair<int, int>, std::pair<ustr, ustr>>;
@@ -247,6 +256,17 @@ private:
     };
 
     void clear_input();
+    // 中日混打 (#36): a romaji token shown as plan 2's conversion of its kana (engine/composer.py _ja_*)
+    void ja_piece(const Token& t, ustr& kana, ustr& pending, ustr& spaces) const;
+    std::vector<JaPin> ja_pins_of(const Token& t, const ustr& kana) const;
+    std::vector<JaNode> ja_path(const Token& t, ustr& kana, ustr& pending, ustr& spaces) const;
+    ustr ja_text(const Token& t) const;
+    const Token* ja_token() const;
+    void ja_candidates(std::vector<ustr>& labels, std::vector<Action>& actions) const;
+    void pick_ja(const Action& a);
+    const JaMixed* ja_ = nullptr;
+    std::map<int, std::pair<ustr, std::vector<JaPin>>> ja_pins_;
+    bool ja_finishing_ = false;
     void refresh(const std::vector<std::pair<int, std::string>>* old_given = nullptr);
     std::vector<Segment> convert_all(const Overrides* instead = nullptr);
     bool overrides_shown(Overrides& out);

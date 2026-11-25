@@ -493,7 +493,7 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
                                 const English& english, const std::set<int>& forced, bool after_english,
                                 bool digits_as_zhuyin, const std::set<int>& chinese, const Lexicon* lexicon,
                                 const std::set<int>& breaks, const std::set<int>& exact, bool text_start = true,
-                                bool starts = false) {
+                                bool starts = false, const JaMixed* ja = nullptr) {
     // exact: raw offsets where a syllable is not autocorrected; text_start: the run is the text's start (not after a cut);
     // starts: 補字提示 is on (#54)
     const size_t n = raw.size();
@@ -541,10 +541,12 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
     size_t cur = 0;        // the split the tokens offered now come after
     bool cur_open = false;  // ...and it ends in English with no space after it (set with cur)
     static const std::unordered_set<std::string> none;
-    const auto& learned = user ? user->english : none;
-    const auto& mine = user ? user->sure_english() : none;  // 自訂詞彙's English words, and the ones sent twice
+    // (中日混打, #36: no English typed in that mode - the user's English and codes, completion's starts, #75's rule off)
+    const auto& learned = user && !ja ? user->english : none;
+    const auto& mine = user && !ja ? user->sure_english() : none;  // 自訂詞彙's English words, and the ones sent twice
     // 代碼記憶: codes the user put back as typed twice are English too (mp3, not 允), the setting on or off
-    const auto& codes = user ? user->corrections.codes() : none;
+    const auto& codes = user && !ja ? user->corrections.codes() : none;
+    if (ja) starts = false;
     auto zh_punct = zhuyin_punct(table);
     // 注音自動校正 leaves English alone (see protected_offsets)
     const std::set<int> guarded =
@@ -987,14 +989,18 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
                                   SHORT_EN_RARE_TONES))
                     word_after = false;
             }
-            double cost = english_piece_cost(piece, english, learned, word_after, mine, contains(exact, ii) ? none : codes);
+            // (中日混打, #36: the piece as romaji - still being typed if it reaches the end)
+            double cost = ja ? ja->piece_cost(piece, j == n)
+                             : english_piece_cost(piece, english, learned, word_after, mine, contains(exact, ii) ? none : codes);
             if (starts && word_start && j == end && user && user->is_completion_start(piece)) cost = std::min(cost, EN_LEARNED);
             // (#75: a digit inside that starts a syllable; not for keys picked or remembered as English)
-            if (any_digit && cost > EN_LEARNED && syllable_digits_before[j] - syllable_digits_before[i + 1] > 0)
+            if (!ja && any_digit && cost > EN_LEARNED && syllable_digits_before[j] - syllable_digits_before[i + 1] > 0)
                 cost += EN_DIGIT_SYLLABLE;
             cost += bonus + crosses(i, j);
-            if (j == end && sp != std::string::npos)
+            if (j == end && sp != std::string::npos) {
+                if (ja) cost += ja->space_cost;  // (中日混打: a space after it is likelier a first tone)
                 offer(i, j + 1, cost, Token{Kind::En, piece + " ", U(piece + " "), ii});
+            }
             else
                 offer(i, j, cost, Token{Kind::En, piece, U(piece), ii});
         }
@@ -1856,7 +1862,7 @@ std::vector<Token> tokenize(const std::string& raw, const SyllableTable& table, 
                             const Fixed* fixed, const Lexicon* lexicon, const std::set<int>* breaks,
                             const std::set<int>* exact, const Fixed* taken, const BigramModel* bigram,
                             const LmScorer* lm, const ustr* sent, size_t context_len, bool marks, bool lit_keys,
-                            bool starts, const Picks* picks) {
+                            bool starts, const Picks* picks, const JaMixed* ja) {
     // literal: raw offsets of keys that are always themselves (numpad); fixed: keys shown
     // as picked from the replacement bar (ㄏㄠˇ, clˇ); taken: keys read as a syllable picked
     // from the list (注音自動校正: si3 as ㄋㄧˇ). They cut the text in two.
@@ -1886,7 +1892,7 @@ std::vector<Token> tokenize(const std::string& raw, const SyllableTable& table, 
     };
     if (cuts.empty())
         return checked(tokenize_run(raw, table, user, english, forced, after_english, digits_as_zhuyin, chinese,
-                                    lexicon, brk, ex, true, starts));
+                                    lexicon, brk, ex, true, starts, ja));
     // sorted like Python's: by (a, b), then in the order given
     std::sort(cuts.begin(), cuts.end(), [](const Cut& x, const Cut& y) {
         if (x.a != y.a) return x.a < y.a;
@@ -1911,7 +1917,7 @@ std::vector<Token> tokenize(const std::string& raw, const SyllableTable& table, 
                 if (start <= x && x < cut.a) e.insert(x - start);
             auto part = tokenize_run(raw.substr(start, cut.a - start), table, user, english, f,
                                      after_english && start == 0, digits_as_zhuyin, c, lexicon, b, e, start == 0 || spaced,
-                                     starts);
+                                     starts, ja);
             for (auto& t : part) {
                 t.start += start;
                 tokens.push_back(std::move(t));
@@ -2873,6 +2879,8 @@ bool Composer::lit_keys() const {
 
 void Composer::clear_input() {
     raw.clear();
+    ja_pins_.clear();      // 中日混打 (#36): romaji token start -> (its kana when picked, the pins)
+    ja_finishing_ = false;  // ...true while being sent: the pending letters made kana
     overrides_.clear();
     term_picks_.clear();
     replaced_.clear();
@@ -2911,6 +2919,119 @@ void Composer::drop_mainland_picks() {
     for (auto it = overrides_.begin(); it != overrides_.end();)
         it = words.count(it->second.second) ? overrides_.erase(it) : std::next(it);
     drop_orphans();
+}
+
+// ---- 中日混打 (#36): a romaji token shown as plan 2's conversion of its kana (engine/composer.py _ja_*) ----
+
+void Composer::set_japanese(const JaMixed* ja) {
+    if (ja != ja_) {
+        ja_ = ja;
+        ja_pins_.clear();
+        refresh();
+    }
+}
+
+void Composer::ja_piece(const Token& t, ustr& kana, ustr& pending, ustr& spaces) const {
+    // (kana, letters still pending, spaces after); pending only while it is the end of the text and not being sent
+    size_t core_len = t.raw.find_last_not_of(' ');
+    core_len = core_len == std::string::npos ? 0 : core_len + 1;
+    ustr core = from_utf8(t.raw.substr(0, core_len));
+    spaces = from_utf8(t.raw.substr(core_len));
+    if (t.start + static_cast<int>(t.raw.size()) == static_cast<int>(raw.size()) && !ja_finishing_) {
+        auto r = ja_->table.to_kana(core);
+        kana = r.first;
+        pending = r.second;
+    } else {
+        kana = ja_->table.finish(core);
+        pending.clear();
+    }
+}
+
+std::vector<JaPin> Composer::ja_pins_of(const Token& t, const ustr& kana) const {
+    // the pins picked in this token, while its kana up to them is still what they were picked in
+    std::vector<JaPin> out;
+    auto it = ja_pins_.find(t.start);
+    if (it == ja_pins_.end()) return out;
+    const ustr& kept = it->second.first;
+    for (auto& p : it->second.second)
+        if (kana.substr(0, std::min<size_t>(p.end, kana.size())) == kept.substr(0, std::min<size_t>(p.end, kept.size())))
+            out.push_back(p);
+    return out;
+}
+
+std::vector<JaNode> Composer::ja_path(const Token& t, ustr& kana, ustr& pending, ustr& spaces) const {
+    ja_piece(t, kana, pending, spaces);
+    if (kana.empty()) return {};
+    return ja_convert(kana, ja_->d, ja_pins_of(t, kana)).first;
+}
+
+ustr Composer::ja_text(const Token& t) const {
+    ustr kana, pending, spaces, out;
+    for (auto& n : ja_path(t, kana, pending, spaces)) out += n.surface;
+    return out + pending + spaces;
+}
+
+const Token* Composer::ja_token() const {
+    // the romaji token the caret is in or before (the last one at the end), or none
+    if (!ja_ || tokens.empty()) return nullptr;
+    const Token* t = caret_ ? caret_token() : &tokens.back();
+    if (!t || t->kind != Kind::En) return nullptr;
+    for (char c : t->raw)
+        if (is_alpha(c)) return t;
+    return nullptr;
+}
+
+void Composer::ja_candidates(std::vector<ustr>& labels, std::vector<Action>& actions) const {
+    // ↓ on a romaji token: the candidates of its 文節 at the caret (the last at the end), as 純日文's
+    labels.clear();
+    actions.clear();
+    const Token* t = ja_token();
+    if (!t) return;
+    ustr kana, pending, spaces;
+    auto path = ja_path(*t, kana, pending, spaces);
+    if (path.empty()) return;
+    JaComposer jc(ja_->table, ja_->d, config);
+    jc.set_state(kana, path, ja_pins_of(*t, kana));
+    auto segs = jc.segments();
+    JaSegment seg = segs.back();
+    if (caret_) {  // (the caret's kana offset in the token: the kana of the keys before it)
+        int keys = std::max(0, *caret_ - t->start);
+        int at = static_cast<int>(ja_->table.finish(from_utf8(t->raw.substr(0, static_cast<size_t>(keys)))).size());
+        for (auto& s : segs)
+            if (s.begin <= at && at < s.end) {
+                seg = s;
+                break;
+            }
+    }
+    for (auto& [text, pin] : jc.candidates_for(seg)) {
+        labels.push_back(text);
+        Action a;
+        a.type = "ja";
+        a.start = t->start;
+        a.ja_kana = kana;
+        a.ja_pin = pin;
+        actions.push_back(a);
+    }
+}
+
+void Composer::pick_ja(const Action& a) {
+    // a Japanese candidate picked: its 文節 shows it from now on (kept while the kana up to it stays)
+    const JaPin& pin = a.ja_pin;
+    std::vector<JaPin> pins;
+    auto it = ja_pins_.find(a.start);
+    if (it != ja_pins_.end()) {
+        const ustr& kept = it->second.first;
+        for (auto& p : it->second.second)
+            if ((p.end <= pin.begin || p.begin >= pin.end) &&
+                a.ja_kana.substr(0, std::min<size_t>(p.end, a.ja_kana.size())) ==
+                    kept.substr(0, std::min<size_t>(p.end, kept.size())))
+                pins.push_back(p);
+    }
+    pins.push_back(pin);
+    std::stable_sort(pins.begin(), pins.end(), [](const JaPin& x, const JaPin& y) { return x.begin < y.begin; });
+    ja_pins_[a.start] = {a.ja_kana, pins};
+    close_candidates();
+    render();
 }
 
 bool Composer::toggle_simplified() {
@@ -3303,6 +3424,10 @@ void Composer::render() {
             text += zhuyin_preview ? t.value : as_typed(t.start, t.raw);
         } else if (t.kind == Kind::Lit) {
             text += lit_text(t.value, t.raw);
+        } else if (ja_) {  // 中日混打 (#36): a romaji piece shown as Japanese
+            ustr shown = ja_text(t);
+            text += shown;
+            wide_[t.start] = static_cast<int>(shown.size());
         } else {
             ustr typed = as_typed(t.start, to_utf8(t.value));
             text += config.flag("full_width") ? to_full_width(typed) : typed;
@@ -3521,6 +3646,10 @@ int Composer::width(const Token& t) const {
     }
     if (t.kind == Kind::Partial && config.text("preview") != "zhuyin") return static_cast<int>(t.raw.size());
     if (t.kind == Kind::Lit) return static_cast<int>(lit_text(t.value, t.raw).size());  // (_ is —— or _)
+    if (ja_ && t.kind == Kind::En) {  // (中日混打: as Japanese, render)
+        auto it = wide_.find(t.start);
+        return it == wide_.end() ? static_cast<int>(t.value.size()) : it->second;
+    }
     return static_cast<int>(t.value.size());
 }
 
@@ -3615,6 +3744,8 @@ void Composer::suggest() {
     suggestions.clear();
     sugg_actions_.clear();
     sugg_index = 0;
+    // (中日混打, #36: no English completion after romaji; Japanese prediction is a later plan)
+    if (ja_ && !tokens.empty() && tokens.back().kind == Kind::En) return;
     // (nor while the symbol keyboard is up - kept open, #49: Tab and → are its own then, nothing to take it with)
     if (!config.flag("completion") || !candidates.empty() || raw.empty() || fill_ || symbol_page) return;
     if (caret_) return;  // (only at the end, like the ASUS IME: in the middle the bar is up)
@@ -4329,6 +4460,16 @@ static std::map<int, char32_t> chars_of(const std::vector<Segment>& segments);  
 bool Composer::open_list() {
     cand_expanded = false;
     cand_first = 0;
+    if (ja_token()) {  // 中日混打 (#36): a Japanese 文節's candidates
+        std::vector<ustr> labels;
+        std::vector<Action> actions;
+        ja_candidates(labels, actions);
+        if (labels.empty()) return false;
+        candidates = labels;
+        cand_actions_ = actions;
+        cand_index = 0;
+        return true;
+    }
     if (punct_list()) return true;
     std::vector<ustr> labels;
     std::vector<Action> actions;
@@ -4937,7 +5078,7 @@ std::optional<std::pair<int, std::vector<ustr>>> Composer::reads_as_chinese(int 
     auto trial =
         tokenize(raw, table_, &user, english_, forced, after_english_, digits_as_zhuyin_, lit, ch, &fixed, &lexicon_,
                  &breaks_, &exact_, &taken_, bigram_, lm(), sent_ptr(), context_len(), knows_english(), lit_keys(),
-                 config.flag("completion"));
+                 config.flag("completion"), nullptr, ja_);
     std::vector<const Token*> inside;
     for (auto& t : trial)
         if (s <= t.start && t.start < end) inside.push_back(&t);
@@ -5607,6 +5748,10 @@ bool Composer::key_fill(std::optional<char32_t> ch, const std::string& special) 
 void Composer::pick(int i, bool from_bar) {
     if (cand_actions_[i].type == "punct") {  // (#53: a mark from its row - nothing else to do, nothing learned)
         swap_punct(cand_actions_[i]);
+        return;
+    }
+    if (cand_actions_[i].type == "ja") {  // (中日混打, #36: a Japanese 文節 picked - nothing learned in this plan)
+        pick_ja(cand_actions_[i]);
         return;
     }
     settle_soft();
@@ -6512,6 +6657,11 @@ void Composer::do_commit() {
         user.save();
     }
     const Token* last = tokens.empty() ? nullptr : &tokens.back();
+    if (ja_ && last && last->kind == Kind::En) {
+        ja_finishing_ = true;  // (中日混打: the romaji still pending at the end made kana - kon: こん, #36)
+        render();
+        last = tokens.empty() ? nullptr : &tokens.back();
+    }
     ustr text = composition;
     auto zp = zhuyin_punct(table_);
     if (last && last->kind == Kind::Partial && last->raw.size() == 1 && zp.count(last->raw[0]) &&
@@ -6879,7 +7029,7 @@ ustr Composer::undo_commit() {
 }
 
 void Composer::remember(const ustr& text) {
-    if (!config.flag("remember_words")) return;
+    if (!config.flag("remember_words") || ja_) return;  // (中日混打 types no English: nothing learned, #36)
     std::string s = to_utf8(text);
     bool found = false;
     for (auto it = std::sregex_iterator(s.begin(), s.end(), word_to_remember()); it != std::sregex_iterator(); ++it) {
@@ -6916,7 +7066,7 @@ const std::vector<Token>& Composer::tokens_with(const std::set<int>& chinese, co
     // the keys as tokens, with these marks of 注音 / English
     tokens = tokenize(raw, table_, &user, english_, forced, after_english_, digits_as_zhuyin_, literal_, chinese, &fixed_,
                       &lexicon_, &breaks_, &exact_, &taken_, bigram_, lm(), sent_ptr(), context_len(), knows_english(),
-                      lit_keys(), config.flag("completion"), picks_);
+                      lit_keys(), config.flag("completion"), picks_, ja_);
     marks_before_symbols();
     return tokens;
 }
