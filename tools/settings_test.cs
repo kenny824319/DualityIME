@@ -156,6 +156,21 @@ static class SettingsTest {
             File.WriteAllText(Path.Combine(dir, "config.json"), json.Serialize(cfg65), new UTF8Encoding(false));
             File.Delete(Path.Combine(dir, "forgot.json"));
             File.Delete(backup65);
+            // a backup restored, the engine not there yet (import-memory.json waiting), then a row deleted: the engine
+            // deletes first and merges the import after, which would bring the row back - it goes from the waiting
+            // import too (findings #116); the import's other rows stay
+            string importPath = Path.Combine(dir, "import-memory.json");
+            File.WriteAllText(importPath, "{\"emails\": {\"typo@example.com\": 1, \"keep@example.com\": 2}, " +
+                "\"used\": {\"emails\": {\"typo@example.com\": 20790}}, \"phrases\": {\"ㄅㄨˋ\": {\"布\": 2}}}", new UTF8Encoding(false));
+            call("forgetMemory", new Dictionary<string, object> { { "items", new object[] { new object[] { "email", "typo@example.com", "" } } } });
+            var waitingImport = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(importPath, Encoding.UTF8));
+            Check("a row deleted after a restore goes from the waiting import too",
+                  !((Dictionary<string, object>)waitingImport["emails"]).ContainsKey("typo@example.com") &&
+                  ((Dictionary<string, object>)waitingImport["emails"]).ContainsKey("keep@example.com") &&
+                  ((Dictionary<string, object>)waitingImport["phrases"]).ContainsKey("ㄅㄨˋ"), File.ReadAllText(importPath, Encoding.UTF8));
+            File.Delete(importPath);
+            cfg65["forget_list"] = new object[0];
+            File.WriteAllText(Path.Combine(dir, "config.json"), json.Serialize(cfg65), new UTF8Encoding(false));
             // the list's rows, the same as the engine's (engine/lexicon.py memory_list): one fixture, one expected file
             string fixture = Directory.GetCurrentDirectory();
             while (fixture != null && !Directory.Exists(Path.Combine(fixture, "tests", "data", "memory_list")))

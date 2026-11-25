@@ -590,6 +590,15 @@ public class Backend {
         }
         c["forget_list"] = list;
         WriteConfig(c);
+        // a backup restored and not merged yet (import-memory.json waits for the engine): the engine applies
+        // forget_list first and merges the import after, so a row deleted now would come back from it - it goes
+        // from there too (findings #116; a backup restored after a delete brings the row back, as the user decided)
+        string importPath = Path.Combine(dataDir, "import-memory.json");
+        var waiting = File.Exists(importPath) ? ReadJson(importPath) : null;
+        if (waiting != null) {
+            DropWaiting(waiting);
+            File.WriteAllText(importPath, json.Serialize(waiting), new UTF8Encoding(false));
+        }
         return added;
     }
 

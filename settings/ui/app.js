@@ -576,7 +576,9 @@ function memoryPanel(deleted) {
     return (data[tab] || []).filter((r) => !q || cellsOf(r).some((c) => String(c).toLowerCase().includes(q)));
   }
   function draw() {
-    tabs.replaceChildren(...MEMORY_TABS.filter(([k]) => k !== "simplified" || (data.simplified || []).length).map(([k, name]) =>
+    const shownTabs = MEMORY_TABS.filter(([k]) => k !== "simplified" || (data.simplified || []).length);
+    if (!shownTabs.some(([k]) => k === tab)) tab = "picks";  // (簡體模式 emptied by a 刪除: its tab is gone - findings #117)
+    tabs.replaceChildren(...shownTabs.map(([k, name]) =>
       h("button", { class: "tab" + (k === tab ? " on" : ""), role: "tab", onclick: () => { tab = k; draw(); } },
         `${name} ${(data[k] || []).length}`)));
     const [, , heads] = MEMORY_TABS.find(([k]) => k === tab);
