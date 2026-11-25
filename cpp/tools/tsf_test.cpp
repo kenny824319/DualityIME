@@ -1,7 +1,8 @@
 // End-to-end test of the registered input method: opens a rich edit box,
 // switches this program (only) to 兩儀輸入法, types key scripts with SendInput and
 // checks the text that comes out.
-//   sz_tsftest <script file> [--tsf]
+//   sz_tsftest <script file> [--tsf] [--tip {clsid} {profile}] [--lang 0411] [--open]
+// (--open: the input method turned on first - a Japanese one starts off: #36, tools/ja_google_eval.ps1)
 // Script lines:  keys => expected text
 // keys: characters as typed, {ENTER} {ESC} {BACK} {DOWN} {UP} {LEFT} {RIGHT} {TAB} {PGDN} {PGUP}
 // {#5} (a numpad key) {SPACE} {SHIFT} (a Shift tap) {SBACK} (Shift+Backspace) {SSPACE} (Shift+Space)
@@ -301,6 +302,24 @@ int wmain(int argc, wchar_t** argv) {
                 }
             page_doc->Push(ctx.Get());
         }
+    }
+    // --open: the input method turned on (a Japanese one starts off, typing letters as they are: #36's evaluation types
+    // through Google 日本語入力, tools/ja_google_eval.ps1) - the thread's keyboard open/close compartment set to 1
+    bool open_ime = false;
+    for (int i = 2; i < argc; ++i) open_ime = open_ime || std::wstring(argv[i]) == L"--open";
+    auto set_open = [&]() {
+        ComPtr<ITfCompartmentMgr> tcm;
+        ComPtr<ITfCompartment> comp;
+        VARIANT v;
+        VariantInit(&v);
+        v.vt = VT_I4;
+        v.lVal = 1;
+        if (tm && SUCCEEDED(tm.As(&tcm)) && SUCCEEDED(tcm->GetCompartment(GUID_COMPARTMENT_KEYBOARD_OPENCLOSE, &comp)))
+            comp->SetValue(cid, &v);
+    };
+    if (open_ime) {
+        set_open();
+        pump(300);
     }
 
     int failed = 0, passed = 0;
