@@ -73,6 +73,7 @@ public:
     void toggle_mode();
     bool english_mode() const { return english_; }
     bool japanese_mode() const { return japanese_; }  // 日文 (#36): on the Japanese side (純日文 in this version)
+    bool katakana_locked() const { return japanese_ && state_.kana_lock == "kata"; }  // (its icon: ア)
     void show_menu(POINT pt);
     void pick_candidate(int index);        // clicked in the candidate list
     void pick_candidate_at(int index);     // clicked in the spread-out list (index in all of them)
@@ -107,6 +108,7 @@ private:
         int fill_index = 0;
         bool can_undo = false;
         bool ja_off = false;  // 日文 (#36): the engine says 日文輸入 is off (what was typed was sent): back to Chinese
+        std::string kana_lock = "auto";  // ...and the kana lock on the Japanese side ("hira", "kata", "auto")
     };
     struct Settings {
         bool shift_toggle = true;

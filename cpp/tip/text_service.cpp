@@ -952,6 +952,7 @@ bool TextService::key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
         req["op"] = Json("ja_kana");
         req["lock"] = Json(which);
         call(ctx, req);
+        if (button_) button_->update();  // (the taskbar's icon: ア while katakana is locked)
         show_mode(which == "hira" ? L"あ" : which == "kata" ? L"ア" : L"自動");
         return true;
     }
@@ -1123,6 +1124,7 @@ void TextService::read_reply(const Json& r) {
     s.can_undo = u && u->is_bool() && u->as_bool();
     auto* off = r.get("ja_off");  // 日文 (#36)
     s.ja_off = off && off->is_bool() && off->as_bool();
+    if (std::string lock = str("kana_lock"); !lock.empty()) s.kana_lock = lock;
     state_ = std::move(s);
     if (auto* c = r.get("cfg"); c && c->is_object()) {
         auto flag = [&](const char* k, bool def) {

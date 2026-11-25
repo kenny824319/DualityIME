@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 768 768" width="768" height="768">
+  <!-- 純日文 icon (あ), traced from docs/superpowers/items/36/icons/純日文-codex.png. tools/make_icons.py draws
+       these shapes in order (rect and polygon only), same colours and size as 全英輸入.svg -->
+  <rect x="0" y="0" width="768" height="768" fill="#f8f7f6"/>
+  <polygon fill="#3a3a39" points="179,211 179,270 325,269 326,348 252,348 153,464 152,562 211,623 258,623 299,588 300,625 521,625 616,518 614,444 525,355 563,303 489,303 454,348 396,348 395,271 587,270 588,211 396,211 394,148 326,148 325,211"/>
+  <polygon fill="#f8f7f6" points="555,482 488,568 332,568 488,409"/>
+  <polygon fill="#f8f7f6" points="423,400 423,401 391,434 391,434 391,401 391,400"/>
+  <polygon fill="#f8f7f6" points="325,400 325,488 236,560 212,536 212,481 287,400"/>
+</svg>
