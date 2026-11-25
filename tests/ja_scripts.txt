@@ -1,0 +1,36 @@
+# #36 純日文 key scripts: tools/ja_compare.py types each line into both engines' Japanese composer and compares the
+# state after every key. Keys as in tests/test_ja_composer.py: letters and marks as typed, {NAME} a special key,
+# {SPACE} a space, {HIRA} {KATA} {AUTO} the kana locks, {FLUSH} switching away; {SPACECONV} turns ja_space_convert
+# on and {NOFKEYS} ja_fkeys off for the rest of the line.
+kyouhaiitenki{ENTER}
+kyouhaiitenk
+kyouk{BACK}{BACK}{BACK}{BACK}{BACK}
+kyouhaiitenki{LEFT}{HOME}{RIGHT}{END}{LEFT}{LEFT}{LEFT}
+kinouhaosokumadesigotowosita{LEFT}{LEFT}{LEFT}{RIGHT}{RIGHT}
+watasihagakusei{LEFT}nihonnno{ENTER}
+watasihagakusei{HOME}{DEL}{DEL}{END}{BACK}
+kyou{ESC}
+{ENTER}{BACK}{DEL}{LEFT}{RIGHT}{HOME}{END}{UP}{DOWN}{ESC}{TAB}{F6}{SLEFT}
+aB3{TAB}`{ENTER}
+kyoun{FLUSH}
+kyoun{LEFT}
+hasi{HOME}{DOWN}
+hasi{HOME}{DOWN}{DOWN}{DOWN}{ENTER}{END}wowataru
+hasi{HOME}{DOWN}6{END}{BACK}
+hasi{DOWN}{UP}{UP}{PGDN}{PGUP}{ESC}
+kyouhaiitenki{HOME}{SLEFT}{ESC}{SRIGHT}{ESC}{SRIGHT}{ENTER}
+kyouhaiitenki{SRIGHT}{SLEFT}{SLEFT}{ENTER}
+senta-{F6}{F7}{F8}
+{NOFKEYS}senta-{F7}{F6}
+baggu{F8}
+{HIRA}kyou{KATA}{AUTO}
+{KATA}hasi{DOWN}{ENTER}{AUTO}
+kyou{SPACE}
+{SPACE}
+{SPACECONV}hasi{SPACE}{SPACE}{SPACE}{ENTER}
+{SPACECONV}{SPACE}kyou{SPACE}a
+konnnichiha,genkidesuka?
+sorehaii!dakedo/nani[kore]
+kyouhaiitenkidesune{HOME}{RIGHT}watasimo{END}{ENTER}
+ittekimasu{LEFT}{F7}{HOME}{F6}{ENTER}
+gakkounoshukudaiwoshita{HOME}{DOWN}3{RIGHT}{DOWN}{ENTER}{F8}{FLUSH}

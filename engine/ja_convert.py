@@ -37,6 +37,7 @@ def _groups(cells):
 def _limits(n, pins, cuts):
     """For each begin: the pin starting there (or None), whether it lies inside a pin, and the furthest end a word
     from there may reach (no word crosses a cut, ends inside a pin or runs over one)."""
+    pins = [p for p in pins if 0 <= p.begin < p.end <= n]  # (one outside the text is ignored, as in C++)
     pin_at = {p.begin: p for p in pins}
     inside = [False] * (n + 1)
     for p in pins:

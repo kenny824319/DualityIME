@@ -11,7 +11,8 @@ What the design left open (docs/superpowers/plans/2026-11-25-japanese-3-pure-mod
 - Backspace: the last pending letter, else the kana before the caret.
 - ↓ / ↑ (or Space with ja_space_convert) list the candidates of the 文節 at the caret (the last at the end):
   the text shown, then every way of writing its kana as one entry, or as its best path with the first word written
-  another way, by local cost, then the kana in hiragana and katakana; duplicates dropped.
+  another way of the same part of speech (same left and right id), by local cost, then the kana in hiragana and
+  katakana; duplicates dropped.
 - Shift+← / Shift+→ shorten / lengthen the 文節 at the caret by one kana and open its candidates.
 - Space with ja_space_convert off: sends what is typed, then a full-width space.
 - Kana locks: hiragana-only / katakana-only show the kana with no conversion (a pinned 文節 keeps its text).
@@ -222,6 +223,8 @@ class JaComposer:
             rest_cost = sum(n.cost for n in rest) + sum(d.cost(x.rid, y.lid) for x, y in zip(rest, rest[1:]))
             rest_text = "".join(n.surface for n in rest)
             for ent in d.lookup(nodes[0].reading):
+                if (ent.lid, ent.rid) != (nodes[0].lid, nodes[0].rid):
+                    continue  # (the same part of speech only: し of した is する's, never 歯 or 死)
                 cost = (d.cost(prev_rid, ent.lid) + ent.cost + d.cost(ent.rid, rest[0].lid) + rest_cost
                         + d.cost(rest[-1].rid, next_lid))
                 text = ent.surface + rest_text
@@ -412,7 +415,8 @@ class JaComposer:
                     self.caret = seg.begin if seg.begin < len(self.kana) else None
                     self._render()
                     new = next((s for s in self.segments() if s.begin == seg.begin), None)
-                    self._open_candidates(new)
+                    if new is not None:
+                        self._open_candidates(new)
         else:
             return True
         return True

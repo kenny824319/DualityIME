@@ -41,25 +41,59 @@ std::vector<int> groups(const std::vector<Cell>& cells, const std::vector<int>& 
 
 }  // namespace
 
-std::pair<std::vector<JaNode>, int64_t> ja_convert(const ustr& kana, const JaDict& d) {
+std::pair<std::vector<JaNode>, int64_t> ja_convert(const ustr& kana, const JaDict& d, const std::vector<JaPin>& pins,
+                                                   const std::vector<int>& cuts) {
     const int n = static_cast<int>(kana.size());
+    // (engine/ja_convert.py _limits) the pin starting at each offset, offsets inside a pin, and the furthest end a
+    // word from each offset may reach: no word crosses a cut, ends inside a pin or runs over one
+    std::vector<int> pin_at(n + 1, -1);
+    std::vector<char> inside(n + 1, 0);
+    std::vector<int> stops;
+    for (size_t i = 0; i < pins.size(); ++i) {
+        const JaPin& p = pins[i];
+        if (p.begin < 0 || p.end > n || p.begin >= p.end) continue;
+        pin_at[p.begin] = static_cast<int>(i);
+        for (int j = p.begin + 1; j < p.end; ++j) inside[j] = 1;
+        if (p.begin > 0) stops.push_back(p.begin);
+    }
+    for (int c : cuts)
+        if (c > 0 && c < n) stops.push_back(c);
+    std::sort(stops.begin(), stops.end());
+    stops.erase(std::unique(stops.begin(), stops.end()), stops.end());
+    std::vector<int> reach(n, n);
+    {
+        int j = static_cast<int>(stops.size()) - 1, next = n;
+        for (int b = n - 1; b >= 0; --b) {
+            while (j >= 0 && stops[j] > b) next = stops[j--];
+            reach[b] = next;
+        }
+    }
+    constexpr uint32_t PINNED = 0xFFFFFFFEu;  // a pin's node: its text from the pin
     std::vector<Cell> cells;
     std::vector<std::vector<int>> ends(n + 1);
+    std::vector<int> cell_pin;  // the pin of a PINNED cell, by cell index
     cells.push_back({0, 0, 0, 0, 0, FALLBACK, 0, -1, -1});  // BOS
+    cell_pin.push_back(-1);
     ends[0].push_back(0);
     int64_t order = 0;
     std::vector<Cell> starting;
     for (int begin = 0; begin < n; ++begin) {
         std::vector<int> preds = groups(cells, ends[begin]);
-        if (preds.empty()) continue;
+        if (preds.empty() || inside[begin]) continue;
         starting.clear();
-        int kmax = std::min(d.max_reading_len, n - begin);
-        for (int k = 1; k <= kmax; ++k) {
-            auto [first, last] = d.lookup(kana.substr(begin, k));
-            for (uint32_t e = first; e < last; ++e)
-                starting.push_back({begin, begin + k, d.lid(e), d.rid(e), d.word_cost(e), e, 0, -1, 0});
+        int pin = pin_at[begin];
+        if (pin >= 0) {
+            const JaPin& p = pins[pin];
+            starting.push_back({begin, p.end, p.lid, p.rid, 0, PINNED, 0, -1, 0});
+        } else {
+            int kmax = std::min(d.max_reading_len, reach[begin] - begin);
+            for (int k = 1; k <= kmax; ++k) {
+                auto [first, last] = d.lookup(kana.substr(begin, k));
+                for (uint32_t e = first; e < last; ++e)
+                    starting.push_back({begin, begin + k, d.lid(e), d.rid(e), d.word_cost(e), e, 0, -1, 0});
+            }
+            starting.push_back({begin, begin + 1, d.unknown_id, d.unknown_id, JA_FALLBACK_COST, FALLBACK, 0, -1, 0});
         }
-        starting.push_back({begin, begin + 1, d.unknown_id, d.unknown_id, JA_FALLBACK_COST, FALLBACK, 0, -1, 0});
         for (auto& node : starting) {
             int best = -1;
             int64_t best_total = 0;
@@ -75,6 +109,7 @@ std::pair<std::vector<JaNode>, int64_t> ja_convert(const ustr& kana, const JaDic
             node.order = order++;
             int end = node.end;
             cells.push_back(node);
+            cell_pin.push_back(node.entry == PINNED ? pin : -1);
             ends[end].push_back(static_cast<int>(cells.size()) - 1);
         }
     }
@@ -91,7 +126,10 @@ std::pair<std::vector<JaNode>, int64_t> ja_convert(const ustr& kana, const JaDic
     for (int c = best; c > 0; c = cells[c].prev) {
         const Cell& x = cells[c];
         ustr reading = kana.substr(x.begin, x.end - x.begin);
-        path.push_back({x.begin, x.end, reading, x.entry == FALLBACK ? reading : d.surface(x.entry), x.lid, x.rid, x.cost});
+        ustr surface = x.entry == PINNED     ? pins[cell_pin[c]].surface
+                       : x.entry == FALLBACK ? reading
+                                             : d.surface(x.entry);
+        path.push_back({x.begin, x.end, reading, surface, x.lid, x.rid, x.cost});
     }
     std::reverse(path.begin(), path.end());
     return {path, best_total};

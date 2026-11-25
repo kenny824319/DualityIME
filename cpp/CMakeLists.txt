@@ -13,7 +13,7 @@ add_library(sz_engine STATIC
     engine/config.cpp engine/symbols.cpp engine/composer.cpp engine/lm.cpp engine/lm_next.cpp engine/lm_pool.cpp
     engine/candlayout.cpp
     engine/script.cpp
-    engine/ja_romaji.cpp engine/ja_dict.cpp engine/ja_convert.cpp)
+    engine/ja_romaji.cpp engine/ja_dict.cpp engine/ja_convert.cpp engine/ja_composer.cpp)
 target_include_directories(sz_engine PUBLIC engine)
 
 # #36: the Japanese conversion on romaji lines (tools/ja_compare.py runs it beside tools/ja_convert.py)
