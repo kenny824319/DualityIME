@@ -586,7 +586,7 @@ public class Backend {
             list.Add(it);
             next = Math.Max(next, (int)id);
         }
-        int added = 0;
+        int added = 0, before = next;
         foreach (object o in (a.ContainsKey("items") ? a["items"] as object[] : null) ?? new object[0]) {
             var row = o as object[];
             if (row == null || row.Length != 3 || !row.All(x => x is string)) continue;
@@ -597,11 +597,12 @@ public class Backend {
         WriteConfig(c);
         // a backup restored and not merged yet (import-memory.json waits for the engine): the engine applies
         // forget_list first and merges the import after, so a row deleted now would come back from it - it goes
-        // from there too (findings #116; a backup restored after a delete brings the row back, as the user decided)
+        // from there too (findings #116), the rows of this call only: one deleted before the backup was restored
+        // comes back from it, as the user decided (findings #119)
         string importPath = Path.Combine(dataDir, "import-memory.json");
         var waiting = File.Exists(importPath) ? ReadJson(importPath) : null;
         if (waiting != null) {
-            DropWaiting(waiting);
+            DropWaiting(waiting, before);
             File.WriteAllText(importPath, json.Serialize(waiting), new UTF8Encoding(false));
         }
         return added;
@@ -1097,9 +1098,10 @@ public class Backend {
 
     // A backup leaves out the rows waiting in forget_list (deleted in 記憶清單, the engine not there yet), from where
     // each kind is kept - as engine/lexicon.py forget_items removes them (the list itself is a Counter: never copied)
-    void DropWaiting(Dictionary<string, object> memory) {
+    // above: only the rows with a higher id (ForgetMemory: the rows of this call - findings #119)
+    void DropWaiting(Dictionary<string, object> memory, int above = 0) {
         var config = ReadConfig();
-        int applied = AppliedForget();
+        int applied = Math.Max(AppliedForget(), above);
         Action<Dictionary<string, object>, string, string> nested = (table, key, value) => {
             var bucket = Sub(table, key);
             if (bucket == null) return;

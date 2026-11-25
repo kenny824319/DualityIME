@@ -168,6 +168,16 @@ static class SettingsTest {
                   !((Dictionary<string, object>)waitingImport["emails"]).ContainsKey("typo@example.com") &&
                   ((Dictionary<string, object>)waitingImport["emails"]).ContainsKey("keep@example.com") &&
                   ((Dictionary<string, object>)waitingImport["phrases"]).ContainsKey("ㄅㄨˋ"), File.ReadAllText(importPath, Encoding.UTF8));
+            // ...but only the row deleted now: x deleted first, a backup holding x restored after (it comes back, as the
+            // user decided), then y deleted - x stays in the waiting import (findings #119)
+            File.Delete(importPath);
+            call("forgetMemory", new Dictionary<string, object> { { "items", new object[] { new object[] { "email", "x@example.com", "" } } } });
+            File.WriteAllText(importPath, "{\"emails\": {\"x@example.com\": 1, \"y@example.com\": 2}}", new UTF8Encoding(false));
+            call("forgetMemory", new Dictionary<string, object> { { "items", new object[] { new object[] { "email", "y@example.com", "" } } } });
+            waitingImport = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(importPath, Encoding.UTF8));
+            Check("a row deleted before the restore stays in the waiting import (only the row deleted now goes)",
+                  ((Dictionary<string, object>)waitingImport["emails"]).ContainsKey("x@example.com") &&
+                  !((Dictionary<string, object>)waitingImport["emails"]).ContainsKey("y@example.com"), File.ReadAllText(importPath, Encoding.UTF8));
             File.Delete(importPath);
             cfg65["forget_list"] = new object[0];
             File.WriteAllText(Path.Combine(dir, "config.json"), json.Serialize(cfg65), new UTF8Encoding(false));
