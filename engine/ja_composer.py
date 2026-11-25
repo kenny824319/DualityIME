@@ -345,8 +345,8 @@ class JaComposer:
     def _key_char(self, ch):
         if ch is None or len(ch) != 1 or not (" " <= ch <= "~"):
             return False
-        if ch == "`":  # (the symbol keyboard stays with the Chinese modes in this version)
-            return False
+        if ch == "`" and self._empty():  # (the symbol keyboard stays with the Chinese modes in this version: the app's;
+            return False                 # while typing it goes in as typed - a key the IME ate is never lost, #157)
         if ch == " ":
             if self._empty():
                 self.commit = FULL_SPACE

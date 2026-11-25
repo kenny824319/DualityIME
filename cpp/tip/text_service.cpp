@@ -833,8 +833,10 @@ bool TextService::test_key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
     } else {
         shift_alone_ = false;
     }
-    if (is_script_key(vk)) return true;  // 簡體輸出's key (#32), in 中 and 英 modes
-    if (ja_key(vk)) return true;         // 日文 (#36): Ctrl+F2, and the kana locks on the Japanese side
+    // 簡體輸出's key (#32), in 中 and 英 modes - not on the Japanese side (簡體 does not apply to Japanese, and its reply
+    // is the Chinese composer's: the Japanese text shown would be wiped, findings #155)
+    if (is_script_key(vk) && !japanese_) return true;
+    if (ja_key(vk)) return true;  // 日文 (#36): Ctrl+F2, and the kana locks on the Japanese side
     if (down(VK_CONTROL) || down(VK_MENU)) {
         // Ctrl + , . ; ' [ ] ...: their full-width marks, if that setting is on (not in 英 mode, nor
         // where nothing can be typed); every other combination is the app's shortcut (Ctrl+C, Alt+Tab...)
@@ -850,7 +852,7 @@ bool TextService::test_key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
     }
     // (a Shift tap still switches Chinese/English there)
     if (state_.composition.empty() && state_.symbol_page < 0 && !state_.fill_open && no_text_field(ctx)) return false;
-    if (is_width_key(vk)) return true;
+    if (is_width_key(vk) && !japanese_) return true;  // (Shift+Space on the Japanese side: a space, below - #155)
     bool composing = !state_.composition.empty();
     if (japanese_) {
         // 日文 (#36): every key while Japanese is being typed (F6 / F7 / F8 only with their setting: off, they stay
@@ -858,7 +860,8 @@ bool TextService::test_key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
         // printable keys (a space too: a full-width one)
         if (composing) return vk != VK_SHIFT && !(vk >= VK_F6 && vk <= VK_F8 && !cfg_.ja_fkeys);
         if (is_numpad(vk)) return false;
-        return printable(char_of(vk, lp));
+        wchar_t c = char_of(vk, lp);
+        return printable(c) && c != L'`';  // (` with nothing typed is the app's: no symbol keyboard here - #157)
     }
     if (english_) {
         // text typed before switching still has to go out: the next key does it;
@@ -933,7 +936,7 @@ bool TextService::key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
     // ` held down: Windows repeats it; with the symbol keyboard up a second ` would type a ` (` then Space,
     // held or not, opens 快速填入 - #21)
     if (vk == VK_OEM_3 && (lp & 0x40000000) && state_.symbol_page >= 0) return true;
-    if (is_script_key(vk)) {  // 簡體輸出 (#32): Traditional <-> Simplified, in 中 and 英 modes
+    if (is_script_key(vk) && !japanese_) {  // 簡體輸出 (#32): Traditional <-> Simplified, in 中 and 英 modes
         if (lp & 0x40000000) return true;  // (held down: once)
         Json req = Json::object();
         req["op"] = Json("simplified");
@@ -975,7 +978,7 @@ bool TextService::key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
         debug("no undo: can_undo=" + std::to_string(state_.can_undo) + " range=" + std::to_string(sent_range_ != nullptr) +
               " composing=" + std::to_string(!state_.composition.empty()));
     Json req = Json::object();
-    if (is_width_key(vk)) {
+    if (is_width_key(vk) && !japanese_) {
         req["op"] = Json("full_width");
         call(ctx, req);
         show_mode(cfg_.full_width ? L"全形" : L"半形");
@@ -1002,10 +1005,13 @@ bool TextService::key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
         else
             return !state_.composition.empty();  // swallow other keys mid-composition
         bool handled = call(ctx, req);
-        if (state_.ja_off) {  // (日文輸入 turned off in the settings: what was typed went out; back to Chinese)
+        if (state_.ja_off) {
+            // (日文輸入 turned off in the settings, or no data: what was typed went out; back to Chinese, and this key
+            // typed there - it was eaten already, an app typing through the IMM32 layer never gets it, findings #156)
             japanese_ = false;
             update_mode_ui();
             show_mode(english_ ? L"英" : L"中");
+            return key_down(ctx, vk, lp);
         }
         return handled;
     }
@@ -2013,6 +2019,13 @@ void TextService::show_mode(const std::wstring& text, bool notice) {
 }
 
 void TextService::toggle_mode() {
+    if (japanese_) {
+        // 日文 (#36): the taskbar's button (or its menu) on the Japanese side goes back to Chinese, as Ctrl+F2 does -
+        // never a silent flip of the Chinese side's 中／英 meanwhile (findings #158)
+        ComPtr<ITfContext> ctx = comp_context_ ? comp_context_ : focused_context(thread_mgr_.Get());
+        switch_side(ctx.Get());
+        return;
+    }
     if (state_.symbol_page >= 0 || state_.fill_open) close_symbols();
     english_ = !english_;
     update_mode_ui();

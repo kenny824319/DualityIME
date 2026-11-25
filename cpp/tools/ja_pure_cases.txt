@@ -12,7 +12,7 @@
 {^F2}{^F7}kyou{ENTER}{^F8}{^F2} => キョウ
 {^F2}kyouk{BACK}{ENTER}{^F2} => 今日
 {^F2}konnnichiha,genkidesuka?{ENTER}{^F2} => こんにちは、元気ですか？
-{^F2}kyou{SPACE}{^F2} => 今日
+{^F2}kyou{SPACE}a{ENTER}{^F2} => 今日　あ
 # switching sides with text being typed sends it (Japanese, then Chinese), nothing typed twice
 {^F2}kyou{^F2} => 今日
 su3cl3{^F2}{^F2} => 你好

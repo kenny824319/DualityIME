@@ -429,7 +429,9 @@ bool JaComposer::key_candidates(std::optional<char32_t> ch, const std::string& s
 
 bool JaComposer::key_char(std::optional<char32_t> ch) {
     if (!ch || *ch < U' ' || *ch > U'~') return false;
-    if (*ch == U'`') return false;  // (the symbol keyboard stays with the Chinese modes in this version)
+    // (the symbol keyboard stays with the Chinese modes in this version: ` with nothing typed is the app's; while
+    // typing it goes in as typed - a key the IME ate is never lost, findings #157)
+    if (*ch == U'`' && empty()) return false;
     if (*ch == U' ') {
         if (empty()) {
             commit = ustr(1, FULL_SPACE);

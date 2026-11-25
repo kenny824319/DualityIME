@@ -109,8 +109,12 @@ class TypingTest(JaComposerBase):
         self.assertEqual(c.composition, "あB3")
         self.assertTrue(c.key(special="TAB"))
         self.assertEqual(c.composition, "あB3")
-        self.assertFalse(c.key("`"))  # (the symbol keyboard stays with Chinese in this plan)
-        self.assertEqual(c.composition, "あB3")
+        # (the symbol keyboard stays with Chinese in this plan: ` while typing goes in as typed - the IME ate the key,
+        # an app typing through the IMM32 layer would lose it otherwise, findings #157 - and is the app's with nothing
+        # typed)
+        self.assertTrue(c.key("`"))
+        self.assertEqual(c.composition, "あB3`")
+        self.assertFalse(self.make().key("`"))
 
     def test_flush(self):
         c = self.make()
