@@ -19,6 +19,7 @@
 #include <thread>
 
 #include "composer.h"
+#include "ja_session.h"
 #include "json.h"
 #include "lm_pool.h"
 #include "pipe.h"
@@ -37,6 +38,7 @@ struct Shared {
     // full width - its own save leaves config_gen as it was); each connection gets cfg again then (Session::cfg_sent)
     unsigned cfg_gen = 0;
     std::wstring dir;            // the folder of user.json and config.json (ends in \)
+    JaData ja;                   // 日文 (#36): read the first time a connection types Japanese
 };
 Shared* g = nullptr;
 
@@ -108,7 +110,10 @@ Json cfg_json(const Config& c) {
     Json o = Json::object();
     for (const char* k : {"shift_toggle", "start_mode", "lookup", "game_keys", "space", "full_width", "ctrl_full_punct",
                           "cand_font", "cand_font_size", "theme", "appearance", "simplified", "simplified_hotkey",
-                          "simplified_key", "symbols_stay_open"})  // (the layout comes in cand_per_line, cand_labels)
+                          "simplified_key", "symbols_stay_open",
+                          // 日文 (#36): whether it is on, its keys
+                          "ja_enabled", "ja_switch_key", "ja_hira_key", "ja_kata_key", "ja_auto_key", "ja_fkeys",
+                          "ja_space_convert"})  // (the layout comes in cand_per_line, cand_labels)
         if (auto* v = c.values().get(k)) o[k] = *v;
     o["appearance_dir"] = Json(wide_utf8(g->dir + L"appearance"));
     return o;
@@ -116,6 +121,7 @@ Json cfg_json(const Config& c) {
 
 struct Session {
     std::unique_ptr<Composer> c;
+    JaSession ja;  // 日文 (#36): the Japanese side, its composer made on the first Japanese key
     unsigned config_gen = 0;
     unsigned cfg_sent = ~0u;  // the cfg_gen whose cfg this connection got (sent again only when it changes)
 };
@@ -219,6 +225,14 @@ Json handle(Session& s, const Json& req) {
     if (s.config_gen != g->config_gen) {
         s.config_gen = g->config_gen;
         c.settings_changed();
+    }
+    if (JaSession::is_japanese(req)) {  // 日文 (#36): a key on the Japanese side, a kana lock, switching away
+        Json o = s.ja.handle(req, g->ja, *g->config);
+        if (s.cfg_sent != g->cfg_gen) {
+            o["cfg"] = cfg_json(c.config);
+            s.cfg_sent = g->cfg_gen;
+        }
+        return o;
     }
     const Json* opv = req.get("op");
     std::string op = opv && opv->is_string() ? opv->as_string() : "";
@@ -463,6 +477,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     g->user = std::make_unique<UserModel>(dir + L"user.json");
     g->config = std::make_unique<Config>(dir + L"config.json");
     g->dir = dir;
+    g->ja.dir = data;  // (read when Japanese is first typed)
     if (!may_save) {  // (the move not finished: what is learned or switched now lives in memory only)
         g->user->keep_files();
         g->config->keep_file();
