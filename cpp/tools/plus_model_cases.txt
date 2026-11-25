@@ -13,8 +13,8 @@ up e9 vu;4g4ru042l354h3h42k7ru,6eji3{ENTER} => 因該項事件導致此次的結
 # without it, code-reviewer 2026-11-21)
 rup wu0 wu0 fu4cp3cl3{ENTER}up e9 1j4au/6x96m06cji4qup31o4d.4xu.6{ENTER} => 今天天氣很好因該不明來源貨品被扣留
 ji3up e9 ul4fm4{ENTER} => 我應該要去
-# 在 and 再 (#24): 再去看電影 (the user 2026-11-22: 在 in every tier), 能再聰明 and the sentence around it (the user 2026-11-25:
-# 能在聰明 in 3.3.0), and 在 written right staying
+# 在 and 再 (#24): 能再聰明 (the user 2026-11-25: 在 in 3.3.0, each line typed in an empty box as here); 再去看電影, the sentence
+# around 能再聰明 and 我在家看書 are right in plus in 3.3.0 too (kept: the user's sentences, 在 staying)
 y94fm4d042u04u/3{ENTER} => 再去看電影
 s/6y94hj/ au/6{ENTER} => 能再聰明
 vu j;4dk3u3b;4283y4s/6y94hj/ au/6u 2u03{ENTER} => 希望可以讓打字能再聰明一點

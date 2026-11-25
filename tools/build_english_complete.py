@@ -99,7 +99,7 @@ def inflections(w):
 
 # derived words and compounds of LDNOOBW's that the forms above miss (findings #141, the reviewer's list and their kin)
 DERIVED = {"dickhead", "dickheads", "poofter", "poofters", "whorehouse", "whorehouses", "whoreish", "whorish",
-           "bitchiness", "bitchier", "bitchiest", "sluttish", "sluttier", "sluttiest", "boobies"}
+           "bitchiness", "bitchier", "bitchiest", "bitchily", "sluttish", "sluttier", "sluttiest", "boobies"}
 
 
 # ...words the inflections above make that are plain words of their own (butt -> butter, spic -> spicy, spices, suck ->

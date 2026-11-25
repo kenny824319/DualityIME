@@ -21,6 +21,17 @@ EXPORTED = {
     "quick_fill.json": "SavedQuickFill",       # 快速填入 (quick_fill)
     "symbols.json": "SymbolsPath",             # 符號鍵盤自訂 (symbols)
 }
+# ...and what RestoreBackup must name to take it back (memory: handed to the engine to merge, import-memory.json)
+RESTORED = {
+    "user.json": "import-memory.json",
+    "keys.json": "import-memory.json",
+    "user_simplified.json": "import-memory.json",
+    "custom_picks.json": "import-memory.json",
+    "dictionary.json": "BackupDictionary",
+    "config.json": "WriteConfig",
+    "quick_fill.json": "BackupQuickFill",
+    "symbols.json": "SaveSymbols",
+}
 # not exported, and why
 NOT_EXPORTED = {
     "forgot.json": "記憶清單刪掉、引擎還沒套用的項目：引擎套用後就清掉，匯出時已先從記憶拿掉（DropWaiting）",
@@ -41,15 +52,20 @@ def named_files():
     out = {}
     for pattern in SOURCES:
         for path in glob.glob(os.path.join(ROOT, pattern)):
-            for m in re.finditer(r'L?"([A-Za-z0-9_.-]+\.json)"', read(path)):
+            # (the name at the end of the literal: "x.json", L"\\DualityIME\\x.json")
+            for m in re.finditer(r'L?"(?:[^"\n]*[\\/])?([A-Za-z0-9_.-]+\.json)"', read(path)):
                 out.setdefault(m.group(1), []).append(os.path.relpath(path, ROOT).replace("\\", "/"))
     return out
 
 
-def write_backup():
+def method(head):
     s = read(os.path.join(ROOT, "installer", "src", "Settings.cs"))
-    start = s.index("public bool WriteBackup(")
+    start = s.index(head)
     return s[start:s.index("\n    }\n", start)]
+
+
+def write_backup():
+    return method("public bool WriteBackup(")
 
 
 class BackupCoversTest(unittest.TestCase):
@@ -66,6 +82,15 @@ class BackupCoversTest(unittest.TestCase):
             with self.subTest(f):
                 self.assertIn(token, body)
         self.assertIn("appearance_images", body)  # (自訂外觀's photos, the folder appearance\)
+
+    def test_the_restore_takes_each_exported_file_back(self):
+        # (findings #145: a backup the restore ignores is no backup)
+        body = method("public object RestoreBackup(")
+        self.assertEqual(sorted(RESTORED), sorted(EXPORTED))
+        for f, token in RESTORED.items():
+            with self.subTest(f):
+                self.assertIn(token, body)
+        self.assertIn("appearance_images", body)
 
 
 if __name__ == "__main__":
