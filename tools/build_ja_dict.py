@@ -16,8 +16,8 @@ ja_dict.bin (little endian):
     keep this order (it decides ties) and never sort. unknown_id: the id.def id of 名詞,一般,*,*,*,*,*.
 ja_conn.bin: b"JC01", uint16 n, uint16 0, int16 cost[n * n], cost[prev.rid * n + next.lid] (the order of
     connection_single_column.txt after its first line, which is n).
-ja_romaji.tsv: romanji-hiragana.tsv as is, plus "/<TAB>・" when it has no "/" rule (the design's / -> ・, Google's
-    symbol setting rather than its table).
+ja_romaji.tsv: romanji-hiragana.tsv as is, plus each of SYMBOL_RULES (/ -> ・, ? -> ？, ! -> ！) it has no rule for
+    (Google's symbol setting rather than its table; / -> ・ is the design's 目標 10).
 LICENSE-Mozc.txt: Mozc's LICENSE as is (NAIST / ICOT terms of the dictionary, BSD of the rest).
 """
 import argparse
@@ -124,13 +124,19 @@ def write_conn(src, path):
     return n
 
 
+# Google 日本語入力's symbol setting rather than its romaji table: / -> ・ (the design's 目標 10), ? -> ？, ! -> ！
+# (findings #148: a Japanese question or exclamation typed ? came out with an ASCII ?)
+SYMBOL_RULES = [("/", "・"), ("?", "？"), ("!", "！")]
+
+
 def write_romaji(src, path):
+    """Mozc's table, plus each SYMBOL_RULES input it has no rule for; returns the inputs added."""
     text = open(src, encoding="utf-8").read()
     if text and not text.endswith("\n"):
         text += "\n"
-    added = not any(line.split("\t", 1)[0] == "/" for line in text.splitlines())
-    if added:
-        text += "/\t・\n"
+    have = {line.split("\t", 1)[0] for line in text.splitlines()}
+    added = [inp for inp, _ in SYMBOL_RULES if inp not in have]
+    text += "".join(f"{inp}\t{out}\n" for inp, out in SYMBOL_RULES if inp in added)
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
     return added
@@ -143,7 +149,7 @@ def build(folder, out):
     n = write_conn(os.path.join(folder, "connection_single_column.txt"), os.path.join(out, "ja_conn.bin"))
     added = write_romaji(os.path.join(folder, "romanji-hiragana.tsv"), os.path.join(out, "ja_romaji.tsv"))
     shutil.copyfile(os.path.join(folder, "LICENSE"), os.path.join(out, "LICENSE-Mozc.txt"))
-    return {"readings": n_read, "entries": n_ent, "surfaces": n_surf, "pos": n, "slash_added": added}
+    return {"readings": n_read, "entries": n_ent, "surfaces": n_surf, "pos": n, "symbols_added": added}
 
 
 def main():
@@ -154,10 +160,10 @@ def main():
     a = ap.parse_args()
     r = build(a.folder, a.out)
     commit = os.path.join(a.folder, "COMMIT")
-    print(f"Mozc {open(commit).read().strip() if os.path.exists(commit) else '(no COMMIT file)'}: "
+    print(f"Mozc {open(commit, encoding='utf-8').read().strip() if os.path.exists(commit) else '(no COMMIT file)'}: "
           f"{r['entries']:,} entries, {r['readings']:,} readings, {r['surfaces']:,} surfaces, {r['pos']} POS ids")
-    if r["slash_added"]:
-        print("ja_romaji.tsv: no / rule in Mozc's table, / -> ・ added")
+    for inp in r["symbols_added"]:
+        print(f"ja_romaji.tsv: no {inp} rule in Mozc's table, {inp} -> {dict(SYMBOL_RULES)[inp]} added")
     for name in ("ja_dict.bin", "ja_conn.bin", "ja_romaji.tsv", "LICENSE-Mozc.txt"):
         print(f"  {name}: {os.path.getsize(os.path.join(a.out, name)):,} bytes")
 

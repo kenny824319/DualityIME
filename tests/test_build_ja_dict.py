@@ -108,6 +108,27 @@ class BuildJaDictTest(unittest.TestCase):
         table = open(os.path.join(self.out, "ja_romaji.tsv"), encoding="utf-8").read()
         self.assertTrue(table.startswith("a\tあ\nkk\tっ\tk\n"))
 
+    def test_readings_sorted_by_utf16_units(self):
+        # (findings #152) U+FF5E sorts before 𠮷 (U+20BB7) by code point but after it by UTF-16 units (0xD842):
+        # the C++ engine's binary search compares units
+        write(os.path.join(self.src, "dictionary01.txt"), "～あ\t1\t1\t100\t～亜\n𠮷のや\t1\t1\t9000\t𠮷野家\n")
+        build_ja_dict.build(self.src, self.out)
+        data = open(os.path.join(self.out, "ja_dict.bin"), "rb").read()
+        n_read = struct.unpack_from("<I", data, 4)[0]
+        roff = struct.unpack_from(f"<{n_read + 1}I", data, 16)
+        pos = 16 + 8 * (n_read + 1) + 12 * struct.unpack_from("<I", data, 8)[0]
+        units = struct.unpack_from("<I", data, pos)[0]
+        blob = data[pos + 4:pos + 4 + 2 * units]
+        readings = [blob[2 * roff[i]:2 * roff[i + 1]].decode("utf-16-le") for i in range(n_read)]
+        self.assertEqual(readings, ["きょう", "𠮷のや", "～あ"])
+
+    def test_question_and_exclamation_added(self):
+        # (findings #148) Google gives ？ ！ for ? ! (its symbol setting, as / -> ・)
+        self.build()
+        lines = open(os.path.join(self.out, "ja_romaji.tsv"), encoding="utf-8").read().splitlines()
+        self.assertEqual(lines.count("?\t？"), 1)
+        self.assertEqual(lines.count("!\t！"), 1)
+
     def test_slash_rule_added_when_missing(self):
         # the spec's / -> ・ (Google's symbol setting, not in Mozc's table): appended once, never twice
         self.build()

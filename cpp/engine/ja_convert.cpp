@@ -7,8 +7,12 @@ namespace sz {
 
 namespace {
 
+constexpr uint32_t FALLBACK = 0xFFFFFFFFu;  // the node of a character no word holds
+
+// a lattice node as the search keeps it: the entry's index, not its text (decoded for the path only)
 struct Cell {
-    JaNode node;
+    int begin, end, lid, rid, cost;
+    uint32_t entry;
     int64_t total;
     int prev;  // index into cells, -1 for BOS's own predecessor
     int64_t order;
@@ -19,7 +23,7 @@ std::vector<int> groups(const std::vector<Cell>& cells, const std::vector<int>& 
     std::unordered_map<int, int> best;
     std::vector<int> firsts;  // right ids in the order first seen
     for (int i : at) {
-        int rid = cells[i].node.rid;
+        int rid = cells[i].rid;
         auto it = best.find(rid);
         if (it == best.end()) {
             best[rid] = i;
@@ -41,48 +45,54 @@ std::pair<std::vector<JaNode>, int64_t> ja_convert(const ustr& kana, const JaDic
     const int n = static_cast<int>(kana.size());
     std::vector<Cell> cells;
     std::vector<std::vector<int>> ends(n + 1);
-    cells.push_back({JaNode{0, 0, ustr(), ustr(), 0, 0, 0}, 0, -1, -1});  // BOS
+    cells.push_back({0, 0, 0, 0, 0, FALLBACK, 0, -1, -1});  // BOS
     ends[0].push_back(0);
     int64_t order = 0;
-    std::vector<JaNode> starting;
+    std::vector<Cell> starting;
     for (int begin = 0; begin < n; ++begin) {
         std::vector<int> preds = groups(cells, ends[begin]);
         if (preds.empty()) continue;
         starting.clear();
         int kmax = std::min(d.max_reading_len, n - begin);
         for (int k = 1; k <= kmax; ++k) {
-            ustr reading = kana.substr(begin, k);
-            for (auto& e : d.lookup(reading))
-                starting.push_back({begin, begin + k, reading, e.surface, e.lid, e.rid, e.cost});
+            auto [first, last] = d.lookup(kana.substr(begin, k));
+            for (uint32_t e = first; e < last; ++e)
+                starting.push_back({begin, begin + k, d.lid(e), d.rid(e), d.word_cost(e), e, 0, -1, 0});
         }
-        ustr ch(1, kana[begin]);
-        starting.push_back({begin, begin + 1, ch, ch, d.unknown_id, d.unknown_id, JA_FALLBACK_COST});
+        starting.push_back({begin, begin + 1, d.unknown_id, d.unknown_id, JA_FALLBACK_COST, FALLBACK, 0, -1, 0});
         for (auto& node : starting) {
             int best = -1;
             int64_t best_total = 0;
             for (int p : preds) {
-                int64_t t = cells[p].total + d.cost(cells[p].node.rid, node.lid);
+                int64_t t = cells[p].total + d.cost(cells[p].rid, node.lid);
                 if (best < 0 || t < best_total) {
                     best = p;
                     best_total = t;
                 }
             }
+            node.total = best_total + node.cost;
+            node.prev = best;
+            node.order = order++;
             int end = node.end;
-            cells.push_back({node, best_total + node.cost, best, order++});
+            cells.push_back(node);
             ends[end].push_back(static_cast<int>(cells.size()) - 1);
         }
     }
     int best = -1;
     int64_t best_total = 0;
     for (int p : groups(cells, ends[n])) {
-        int64_t t = cells[p].total + d.cost(cells[p].node.rid, 0);
+        int64_t t = cells[p].total + d.cost(cells[p].rid, 0);
         if (best < 0 || t < best_total) {
             best = p;
             best_total = t;
         }
     }
     std::vector<JaNode> path;
-    for (int c = best; c > 0; c = cells[c].prev) path.push_back(cells[c].node);
+    for (int c = best; c > 0; c = cells[c].prev) {
+        const Cell& x = cells[c];
+        ustr reading = kana.substr(x.begin, x.end - x.begin);
+        path.push_back({x.begin, x.end, reading, x.entry == FALLBACK ? reading : d.surface(x.entry), x.lid, x.rid, x.cost});
+    }
     std::reverse(path.begin(), path.end());
     return {path, best_total};
 }

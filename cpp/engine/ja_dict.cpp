@@ -1,5 +1,6 @@
 #include "ja_dict.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -44,19 +45,21 @@ static ustr from_units(const uint8_t* p, size_t n) {
     return s;
 }
 
-static std::vector<uint16_t> to_units(const ustr& s) {
-    std::vector<uint16_t> u;
-    u.reserve(s.size());
+// text to UTF-16 code units in `out` (room for `cap`); the count, or cap + 1 when it does not fit
+static size_t to_units(const ustr& s, uint16_t* out, size_t cap) {
+    size_t n = 0;
     for (char32_t c : s) {
+        size_t need = c >= 0x10000 ? 2 : 1;
+        if (n + need > cap) return cap + 1;
         if (c >= 0x10000) {
             c -= 0x10000;
-            u.push_back(static_cast<uint16_t>(0xD800 + (c >> 10)));
-            u.push_back(static_cast<uint16_t>(0xDC00 + (c & 0x3FF)));
+            out[n++] = static_cast<uint16_t>(0xD800 + (c >> 10));
+            out[n++] = static_cast<uint16_t>(0xDC00 + (c & 0x3FF));
         } else {
-            u.push_back(static_cast<uint16_t>(c));
+            out[n++] = static_cast<uint16_t>(c);
         }
     }
-    return u;
+    return n;
 }
 
 std::unique_ptr<JaDict> JaDict::load(const std::wstring& dir) {
@@ -99,38 +102,40 @@ std::unique_ptr<JaDict> JaDict::load_files(const std::wstring& dict_path, const 
     return d;
 }
 
-std::vector<JaEntry> JaDict::lookup(const ustr& reading) const {
-    std::vector<JaEntry> out;
-    if (reading.empty()) return out;
-    std::vector<uint16_t> key = to_units(reading);
+std::pair<uint32_t, uint32_t> JaDict::lookup(const ustr& reading) const {
+    uint16_t key[256];
+    size_t cap = std::min<size_t>(sizeof key / sizeof key[0], static_cast<size_t>(max_reading_len));
+    size_t k = to_units(reading, key, cap);
+    if (reading.empty() || k > cap) return {0, 0};  // (longer than any reading: none)
     // readings are sorted by UTF-16 code units: binary search
     uint32_t lo = 0, hi = n_readings_;
     while (lo < hi) {
         uint32_t mid = lo + (hi - lo) / 2;
         uint32_t a = get<uint32_t>(roff_, mid), z = get<uint32_t>(roff_, mid + 1);
         int c = 0;
-        size_t len = z - a, m = len < key.size() ? len : key.size();
+        size_t len = z - a, m = len < k ? len : k;
         for (size_t i = 0; i < m && !c; ++i) {
             uint16_t u = get<uint16_t>(rblob_, a + i);
             c = u < key[i] ? -1 : u > key[i] ? 1 : 0;
         }
-        if (!c) c = len < key.size() ? -1 : len > key.size() ? 1 : 0;
+        if (!c) c = len < k ? -1 : len > k ? 1 : 0;
         if (c < 0)
             lo = mid + 1;
         else if (c > 0)
             hi = mid;
-        else {
-            uint32_t s = get<uint32_t>(start_, mid), e = get<uint32_t>(start_, mid + 1);
-            out.reserve(e - s);
-            for (uint32_t j = s; j < e; ++j) {
-                const uint8_t* p = ent_ + 12ull * j;
-                out.push_back({get<uint16_t>(p), get<uint16_t>(p + 2), get<int16_t>(p + 4),
-                               from_units(sblob_ + 2ull * get<uint32_t>(p + 8), get<uint16_t>(p + 6))});
-            }
-            return out;
-        }
+        else
+            return {get<uint32_t>(start_, mid), get<uint32_t>(start_, mid + 1)};
     }
-    return out;
+    return {0, 0};
+}
+
+int JaDict::lid(uint32_t entry) const { return get<uint16_t>(ent_ + 12ull * entry); }
+int JaDict::rid(uint32_t entry) const { return get<uint16_t>(ent_ + 12ull * entry + 2); }
+int JaDict::word_cost(uint32_t entry) const { return get<int16_t>(ent_ + 12ull * entry + 4); }
+
+ustr JaDict::surface(uint32_t entry) const {
+    const uint8_t* p = ent_ + 12ull * entry;
+    return from_units(sblob_ + 2ull * get<uint32_t>(p + 8), get<uint16_t>(p + 6));
 }
 
 }  // namespace sz

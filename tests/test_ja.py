@@ -36,6 +36,7 @@ class RomajiTest(unittest.TestCase):
 
     def test_symbols(self):
         for romaji, kana in [("-", "ー"), (",", "、"), (".", "。"), ("[", "「"), ("]", "」"), ("/", "・"), ("z/", "・"),
+                             ("?", "？"), ("!", "！"),
                              ("zh", "←"), ("zj", "↓"), ("zk", "↑"), ("zl", "→"), ("z.", "…")]:
             self.assertEqual(self.t.finish(romaji), kana, romaji)
 
@@ -77,7 +78,8 @@ class JaDictTest(unittest.TestCase):
     def test_header(self):
         self.assertEqual(self.d.unknown_id, 1851)
         self.assertGreater(self.d.max_reading_len, 10)
-        self.assertEqual(self.d.cost(0, 0), self.d.cost(0, 0))
+        # (findings #151) known values: connection_single_column.txt's first costs after the size line: 0, 5940, 4858
+        self.assertEqual([self.d.cost(0, 0), self.d.cost(0, 1), self.d.cost(0, 2)], [0, 5940, 4858])
 
 
 class ConvertTest(unittest.TestCase):
