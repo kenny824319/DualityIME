@@ -5,6 +5,7 @@ cpp/engine/ja_dict.cpp reads the same files.
 import collections
 import os
 import struct
+import zlib
 import sys
 
 from .lexicon import DATA_DIR
@@ -35,7 +36,10 @@ class JaDict:
         (s_units,) = struct.unpack_from("<I", dict_data, pos)
         pos += 4
         self._sraw = dict_data[pos:pos + 2 * s_units]
-        self._index = {rraw[2 * roff[i]:2 * roff[i + 1]].decode("utf-16-le"): i for i in range(n_read)}
+        self._readings = [rraw[2 * roff[i]:2 * roff[i + 1]].decode("utf-16-le") for i in range(n_read)]
+        self._index = {r: i for i, r in enumerate(self._readings)}
+        self.n_entries = n_ent
+        self.crc32 = zlib.crc32(dict_data)  # (data/ja_bigram.bin is built for exactly this file)
         self.n, _ = struct.unpack_from("<HH", conn_data, 4)
         self._conn = memoryview(conn_data)[8:8 + 2 * self.n * self.n].cast("h")
         n_seg, _ = struct.unpack_from("<HH", seg_data, 4)
@@ -57,18 +61,28 @@ class JaDict:
             _cache[key] = cls(*parts)
         return _cache[key]
 
+    def entry(self, j):
+        """The entry at index j of the file (the index the bigram and C++'s lookup ranges use)."""
+        e, b = self._ent, 6 * j
+        cost = e[b + 2] - 65536 if e[b + 2] >= 32768 else e[b + 2]
+        off = e[b + 4] | (e[b + 5] << 16)
+        return Entry(e[b], e[b + 1], cost, self._sraw[2 * off:2 * (off + e[b + 3])].decode("utf-16-le"))
+
+    def lookup_ix(self, reading):
+        """The index range (start, end) of one reading's entries; (0, 0) when there are none."""
+        i = self._index.get(reading)
+        return (0, 0) if i is None else (self._start[i], self._start[i + 1])
+
     def lookup(self, reading):
         """The entries of one reading, in the file's order ([] when there are none)."""
-        i = self._index.get(reading)
-        if i is None:
-            return []
-        e, out = self._ent, []
-        for j in range(self._start[i], self._start[i + 1]):
-            b = 6 * j
-            cost = e[b + 2] - 65536 if e[b + 2] >= 32768 else e[b + 2]
-            off = e[b + 4] | (e[b + 5] << 16)
-            out.append(Entry(e[b], e[b + 1], cost, self._sraw[2 * off:2 * (off + e[b + 3])].decode("utf-16-le")))
-        return out
+        start, end = self.lookup_ix(reading)
+        return [self.entry(j) for j in range(start, end)]
+
+    def entries(self):
+        """Every (index, reading, Entry) in the file's order."""
+        for i, reading in enumerate(self._readings):
+            for j in range(self._start[i], self._start[i + 1]):
+                yield j, reading, self.entry(j)
 
     def cost(self, rid, lid):
         """The connection cost of a word whose right id is rid followed by one whose left id is lid (0: BOS / EOS)."""
