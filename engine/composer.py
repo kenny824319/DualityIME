@@ -10,7 +10,8 @@ from . import lm as language_model
 from . import symbols
 from .config import Config
 from . import candlayout
-from .lexicon import (AS_ENGLISH, MAX_PHRASE_LEN, SPLIT_MARK, ZHUYIN_TEXT, is_code, is_email, is_han,
+from .lexicon import (AS_ENGLISH, MAX_PHRASE_LEN, SPLIT_MARK, ZHUYIN_TEXT, completion_index, is_code, is_email, is_han,
+                      load_completion,
                       is_zhuyin_text, split_keys)
 from .zhuyin import FINALS
 
@@ -2149,6 +2150,8 @@ class Composer:
         self.bigram = bigram
         self.config = config or Config()
         self._english_sorted = sorted(english, key=english.get)  # most common first
+        # Tab completion's words (#40): the everyday list first, then english_complete.txt's
+        self._complete = completion_index(self._english_sorted, load_completion())
         self.table.autocorrect = self.config.autocorrect
         self.table.set_custom(self.user.custom)  # (the readings of 個人詞庫 are syllables too)
         self.user.corrections.enable(True)  # (代碼記憶 counts with the setting off too)
@@ -2707,15 +2710,21 @@ class Composer:
         # ...within the tokens at the end that are no Chinese: Chinese gets the Chinese hints, English and digits the
         # addresses (#54, the user 2026-11-17: 居然 offered a remembered address whose keys start like the last
         # syllable's - 居's first tone is a space too, which rfind took for one between words)
-        run = len(self.raw)
+        run, after_zh, english = len(self.raw), False, False
         for t in reversed(self.tokens):
             if t.kind == "zh":
+                after_zh = True
                 break
             run = t.start
+            english = english or t.kind == "en"
         space = max([self.raw.rfind(" ") + 1] +  # (or a space or mark joined from the symbol keyboard, a mark after
                     [t.start + len(t.raw) for k, t in enumerate(self.tokens)  # Chinese: #52)
                      if _word_starts_after(t) or (t.kind == "lit" and _after_chinese_mark(self.tokens, k + 1))])
         starts = {s for s in (space, last.start if last and last.kind in ("en", "partial") else -1) if s >= run}
+        # ...and the English right after Chinese as one word, one the reading split (我accel: acc + ㄍㄠ unfinished,
+        # where only "el" was looked up, #40)
+        if after_zh and english and space <= run:
+            starts.add(run)
         starts |= {s + 1 for s in starts if self.raw[s:s + 1] == "/"}  # a slash command: /con -> /continue
         for start in sorted(starts):
             if len(self.raw) - start >= 3:
@@ -2740,7 +2749,7 @@ class Composer:
             # English word: complete from the common-word list (the last word of
             # code-rev, user/pro, file_na: the part after - / _ .)
             p = tail.group(1).lower()
-            word = next((w for w in self._english_sorted if w.startswith(p) and len(w) > len(p) + 1), None)
+            word = next((w for w in self._complete.get(p[:3], ()) if w.startswith(p) and len(w) > len(p) + 1), None)
             if word:
                 actions.append(("word", start, text + word[len(p):]))
         elif last and last.kind == "zh":

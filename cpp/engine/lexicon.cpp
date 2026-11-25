@@ -477,6 +477,31 @@ English load_english(const std::vector<std::wstring>& paths) {
     return e;
 }
 
+std::vector<std::string> load_completion(const std::wstring& path) {
+    std::vector<std::string> out;
+    std::string text;
+    if (!read_file(path, text)) return out;
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t nl = text.find('\n', pos);
+        if (nl == std::string::npos) nl = text.size();
+        std::string w = strip(std::string_view(text).substr(pos, nl - pos));
+        pos = nl + 1;
+        if (!w.empty()) out.push_back(std::move(w));
+    }
+    return out;
+}
+
+std::unordered_map<std::string, std::vector<std::string>> completion_index(const std::vector<std::string>& everyday,
+                                                                          const std::vector<std::string>& extra) {
+    std::unordered_map<std::string, std::vector<std::string>> index;
+    std::unordered_set<std::string> seen;
+    for (const auto* list : {&everyday, &extra})
+        for (auto& w : *list)
+            if (w.size() >= 5 && seen.insert(w).second) index[w.substr(0, 3)].push_back(w);
+    return index;
+}
+
 ustr reading_key(const ustr& text_in) {
     ustr text = text_in;
     for (auto& c : text)

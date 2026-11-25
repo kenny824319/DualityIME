@@ -122,9 +122,18 @@ private:
 struct English {
     std::unordered_map<std::string, int> rank;
     std::vector<std::string> by_rank;
+    // Tab completion's words by their first 3 letters (#40): by_rank first, then english_complete.txt's - the first
+    // word of a prefix's list starting with what is typed is what a scan of the whole order finds
+    std::unordered_map<std::string, std::vector<std::string>> complete;
     bool contains(const std::string& w) const { return rank.count(w) > 0; }
 };
 English load_english(const std::vector<std::wstring>& paths);
+// data/english_complete.txt (#40): more words completion may offer, most common first (none without the file); only
+// completion uses them - Chinese against English stays with english.txt
+std::vector<std::string> load_completion(const std::wstring& path);
+// {first 3 letters: words}, the everyday list's order first, then extra's words it lacks, each 5 letters at least
+std::unordered_map<std::string, std::vector<std::string>> completion_index(const std::vector<std::string>& everyday,
+                                                                          const std::vector<std::string>& extra);
 
 constexpr int FORGET_DAYS = 20;     // a pick unused this many days counts half as much
 constexpr size_t KEEP_PHRASES = 2000;

@@ -63,6 +63,11 @@ CASES = [
     # shown (數學 hidden), an empty key typing nothing, an emoji key whole, Enter at the arrows' cursor
     "`a{ENTER}", "`{TAB}a{TAB}{ENTER}", "``{ENTER}", "`{TAB}{TAB}{TAB}8{ENTER}",
     "su3`s{ESC}`d{ENTER}`{DOWN}{RIGHT}{ENTER}{ENTER}{RESET}",
+    # 英文補字 (#40, twenty-first to twenty-sixth: --cases 26 runs them): a word past data/english.txt from
+    # english_complete.txt, right after Chinese (我accel), a prefix the everyday list answers, in capitals; a remembered
+    # word right after Chinese where the reading splits it (acc + ㄍㄠ: memory looked up only "el")
+    "accel{TAB}{ENTER}", "ji3accel{TAB}{ENTER}", "acc{TAB}{ENTER}", "Accelerat{TAB}{ENTER}",
+    "{CAPS}accel{CAPS}{TAB}{ENTER}", "ji3accelgor{ENTER}ji3accelgor{ENTER}ji3accel{TAB}{ENTER}{RESET}",
     # 接續前文選字 (#37): 我們先去吃飯 sent, then ㄗㄞˋ去看電影 read after it; after {CL} (the caret moved) and after
     # English at the buffer's start, without it; three sentences in a row; undo puts the context back
     "ji3ap7vu0 fm4t z04{ENTER}y94fm4d042u04u/3{ENTER}ji3ap7vu0 fm4t z04{ENTER}{CL}y94fm4d042u04u/3{ENTER}",

@@ -1,0 +1,13 @@
+# 英文補字 (#40): a prefix the everyday list answers keeps its word (first: acceleration, typed twice below, is then
+# remembered and comes before both lists); a common word data/english.txt lacks is offered from
+# data/english_complete.txt (ESDB words in Google Books and OpenSubtitles order), right after Chinese too (我accel);
+# capitals as typed; a remembered word right after Chinese where the reading splits it (我accel is acc + ㄍㄠ: memory
+# looked up only "el" and missed accelgor - it holds here because the lines above sent acceleration, not accel: accel
+# remembered would be read whole, as 3.3.0 typing this file does)
+acc{TAB}{ENTER} => access
+accel{TAB}{ENTER} => acceleration
+ji3accel{TAB}{ENTER} => 我acceleration
+Accelerat{TAB}{ENTER} => Acceleration
+ji3accelgor{ENTER} => 我accelgor
+ji3accelgor{ENTER} => 我accelgor
+ji3accel{TAB}{ENTER} => 我accelgor

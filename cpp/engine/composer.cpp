@@ -2718,6 +2718,7 @@ Resources Resources::load(const std::wstring& data_dir) {
     r.lexicon = std::make_unique<Lexicon>(data_dir + L"\\lexicon.txt");
     r.table = std::make_unique<SyllableTable>(*r.lexicon);
     r.english = load_english({data_dir + L"\\english.txt", data_dir + L"\\english_tech.txt"});
+    r.english.complete = completion_index(r.english.by_rank, load_completion(data_dir + L"\\english_complete.txt"));
     r.bigram = std::make_unique<BigramModel>(*r.lexicon, data_dir + L"\\bigram.bin");
     r.lm = std::make_unique<LanguageModel>(data_dir, *r.lexicon);
     return r;
@@ -3560,7 +3561,15 @@ void Composer::suggest() {
     // addresses (#54: 居然 offered a remembered address whose keys start like the last syllable's - 居's first tone is a
     // space too, which rfind took for one between words)
     int run = static_cast<int>(raw.size());
-    for (auto t = tokens.rbegin(); t != tokens.rend() && t->kind != Kind::Zh; ++t) run = t->start;
+    bool after_zh = false, english = false;
+    for (auto t = tokens.rbegin(); t != tokens.rend(); ++t) {
+        if (t->kind == Kind::Zh) {
+            after_zh = true;
+            break;
+        }
+        run = t->start;
+        english = english || t->kind == Kind::En;
+    }
     std::set<int> starts;
     size_t sp = raw.rfind(' ');
     int after_space = sp == std::string::npos ? 0 : static_cast<int>(sp) + 1;
@@ -3571,6 +3580,9 @@ void Composer::suggest() {
     }
     if (after_space >= run) starts.insert(after_space);
     if (last && (last->kind == Kind::En || last->kind == Kind::Partial) && last->start >= run) starts.insert(last->start);
+    // ...and the English right after Chinese as one word, one the reading split (我accel: acc + ㄍㄠ unfinished, where
+    // only "el" was looked up, #40)
+    if (after_zh && english && after_space <= run) starts.insert(run);
     for (int s : std::set<int>(starts))
         if (s < static_cast<int>(raw.size()) && raw[s] == '/') starts.insert(s + 1);  // a slash command: /con -> /continue
     for (int start : starts) {
@@ -3606,7 +3618,9 @@ void Composer::suggest() {
     if (tail) {
         // English word: complete from the common-word list
         std::string p = lower(text.substr(w0));
-        for (auto& w : english_.by_rank) {
+        auto bucket = english_.complete.find(p.substr(0, 3));
+        static const std::vector<std::string> none;
+        for (auto& w : bucket != english_.complete.end() ? bucket->second : none) {
             if (starts_with(w, p) && w.size() > p.size() + 1) {
                 Action a;
                 a.type = "word";

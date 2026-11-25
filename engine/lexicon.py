@@ -298,6 +298,34 @@ def load_english(path=None):
     return words
 
 
+_COMPLETION = None
+
+
+def load_completion():
+    """data/english_complete.txt (#40): more English words Tab completion may offer, most common first ([] without the
+    file) - read once. Only completion uses them: Chinese against English stays with english.txt."""
+    global _COMPLETION
+    if _COMPLETION is None:
+        try:
+            with open(os.path.join(DATA_DIR, "english_complete.txt"), encoding="utf-8") as f:
+                _COMPLETION = [w for w in (line.strip() for line in f) if w]
+        except OSError:
+            _COMPLETION = []
+    return _COMPLETION
+
+
+def completion_index(everyday, extra):
+    """{first 3 letters: [words]} in Tab completion's order - the everyday list's (english.txt, english_tech.txt) first,
+    then the extra words it lacks - each 5 letters at least (3 typed, 2 more offered): the first word of a prefix's list
+    that starts with what is typed is what a scan of the whole order finds, without scanning 80,000 words a key."""
+    index, seen = {}, set()
+    for w in list(everyday) + list(extra):
+        if len(w) >= 5 and w not in seen:
+            seen.add(w)
+            index.setdefault(w[:3], []).append(w)
+    return index
+
+
 ZHUYIN_TEXT = "~"  # phrases["~ㄅㄨㄚ"]: 注音文 picked (its keys spell no syllable), counted
 
 

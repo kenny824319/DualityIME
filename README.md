@@ -105,7 +105,7 @@
 ### Tab 智慧補字
 
 文字後面會用小框顯示最可能的**下一個字**（打「台」顯示「灣」），按 `Tab`（或在句尾按 `→`）採用，可以一直按下去\
-英文字、記住的英文字和 e-mail 會顯示還沒打的部分：打過兩次的 `claude`，打 `cla` 就顯示 `ude`
+英文字、記住的英文字和 e-mail 會顯示還沒打的部分：打過兩次的 `claude`，打 `cla` 就顯示 `ude`；常見的英文字（約 7 萬字）沒打過也會提示，打 `accel` 顯示 `eration`，中文後面直接接著打（`我accel`）也一樣
 
 ## 其他功能
 
@@ -215,3 +215,4 @@
 - 前後文統計：[wikipedia-zhtw](https://huggingface.co/datasets/erhwenkuo/wikipedia-zhtw)（CC BY-SA 3.0）與 [CC-100 zh-Hant](https://huggingface.co/datasets/zetavg/CC-100-zh-Hant)
 - 長句選字加強的語言模型（`data/lm.bin`）：本專案自己用上面兩份語料訓練，並以 [Qwen3-1.7B](https://huggingface.co/Qwen/Qwen3-1.7B)（Apache-2.0）為老師蒸餾
 - 英文字表：[google-10000-english](https://github.com/first20hours/google-10000-english)（僅供個人、教育用途），另外補上一般字表沒有的電腦用語（cmd、git、json…）
+- 英文補字字表（`data/english_complete.txt`）：[ESDB](https://github.com/en-wl/wordlist) 的字，依 [Google Books Ngram](https://github.com/hackerb9/gwordlist)（CC BY 3.0）與 [FrequencyWords](https://github.com/hermitdave/FrequencyWords)（OpenSubtitles，CC BY-SA 4.0）的字頻排序，並參考 [LDNOOBW](https://github.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words)（CC BY 4.0）去掉不雅字；這份字表以 CC BY-SA 4.0 授權（見 `data/LICENSE-english-complete.txt`）

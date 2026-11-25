@@ -1545,6 +1545,59 @@ class CompletionTest(Base):
         c.key(special="TAB")
         self.assertEqual(c.composition, "international")
 
+    def test_a_common_word_past_the_everyday_list_is_completed(self):
+        # (#40: data/english.txt has no accel... word; data/english_complete.txt - ESDB words, Google Books and
+        # OpenSubtitles order - does)
+        c = self.c
+        for ch in "accel":  # (acceleration is the more common of the two: rank 5411 against 9688)
+            c.key(ch)
+        self.assertEqual(c.suggestions, ["eration"])
+        c.key(special="TAB")
+        self.assertEqual(c.composition, "acceleration")
+        c.reset()
+        for ch in "accelerat":
+            c.key(ch)
+        self.assertEqual(c.suggestions, ["ion"])  # (accelerate is only 1 letter past: never offered so)
+        c.reset()
+        for ch in keys("ㄨㄛˇ accel"):  # (right after Chinese, lowercase: 我accel)
+            c.key(ch)
+        self.assertEqual(c.suggestions, ["eration"])
+        c.key(special="TAB")
+        self.assertEqual(c.composition, "我acceleration")
+        c.reset()
+
+    def test_a_remembered_word_right_after_chinese_split_as_zhuyin(self):
+        # (#40: 我accel reads as acc + ㄍㄠ unfinished - memory looked up only "el" and missed accelgor, remembered;
+        # accel alone and 我Accel always found it)
+        c = self.c
+        for _ in range(2):
+            c.reset()
+            for ch in keys("ㄨㄛˇ accelgor"):
+                c.key(ch)
+            c.key(special="ENTER")
+        c.reset()
+        for ch in keys("ㄨㄛˇ accel"):
+            c.key(ch)
+        self.assertEqual([t.kind for t in c.tokens], ["zh", "en", "partial"])
+        self.assertEqual(c.suggestions, ["gor"])
+        c.key(special="TAB")
+        self.assertEqual(c.composition, "我accelgor")
+        c.reset()
+
+    def test_the_everyday_list_still_comes_first(self):
+        # (#40: a prefix data/english.txt answers keeps its answer - the new words only fill what it left without one)
+        from engine.lexicon import load_english
+        everyday = sorted(load_english(), key=load_english().get)
+        c = self.c
+        for typed in ("acc", "inter", "comp", "beau", "rela"):
+            want = next(w for w in everyday if w.startswith(typed) and len(w) > len(typed) + 1)
+            with self.subTest(typed=typed):
+                c.reset()
+                for ch in typed:
+                    c.key(ch)
+                self.assertEqual(c.suggestions, [want[len(typed):]])
+        c.reset()
+
     def test_completion_of_the_word_after_a_hyphen(self):
         # code-rev: the word after - (or / _ .) is completed; code-revi too (its i reads as ㄛ for now)
         c = self.c
