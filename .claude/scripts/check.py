@@ -36,11 +36,22 @@ STEPS: list[tuple[str, list[str], Path, str | None]] = [
     ("findings", [PYTHON, "tools/findings.py", "gate"], ROOT, "tools/findings.py"),
     # (test_longrun, test_findings: the long-run and findings gates - /collab:correct 2026-11-21)
     # (test_settings_preview: the settings page's browser preview answers every request - /collab:correct 2026-11-24)
+    # (test_compare_args: compare.py --cases is a sample, its per-setting processes keep the random cases -
+    # /collab:correct 2026-11-25, findings #122)
+    # (test_installer_lists: every data file the installer packs is installed - findings #136, the third time)
+    # (test_backup_covers: every data file is exported or listed with its reason - the user 2026-11-25)
     ("unittest", [PYTHON, "-m", "unittest", "tests.test_engine", "tests.test_gpu", "tests.test_longrun",
-                  "tests.test_findings", "tests.test_settings_preview"], ROOT, "tests/test_engine.py"),
+                  "tests.test_findings", "tests.test_settings_preview", "tests.test_compare_args",
+                  "tests.test_installer_lists", "tests.test_backup_covers"], ROOT,
+     "tests/test_engine.py"),
     # The C++ engine (cpp\build.cmd: Visual Studio Build Tools with C++), then both engines
     # key by key: same output, same user.json and keys.json.
     ("cpp build", ["cmd", "/c", str(ROOT / "cpp" / "build.cmd")], ROOT, "cpp/build.cmd"),
+    # the input method's shared key record (#73, cpp/tools/key_record_test.cpp), on the build just made (findings #123)
+    ("key record", [PYTHON, "-m", "unittest", "tests.test_key_record"], ROOT, "tests/test_key_record.py"),
+    # 自訂外觀的動圖 (#56): the DLL's decoder (cpp/common/anim_image.cpp, through sz_trace --anim) against the frames
+    # Pillow composites, on the build just made (skipped without Pillow)
+    ("anim image", [PYTHON, "-m", "unittest", "tests.test_anim_image"], ROOT, "tests/test_anim_image.py"),
     ("compare", [PYTHON, "tools/compare.py"], ROOT, "tools/compare.py"),
     # The settings tool from the source (installer\src: Settings.cs, Migrate.cs) against
     # tools\settings_test.cs, in temporary folders.
