@@ -29,9 +29,10 @@ class CompareArgsTest(unittest.TestCase):
         self.assertEqual((a["cases"], a["count"], a["seed"]), (None, 2000, 1))
 
     def test_workers_take_the_hand_cases_with_the_count(self):
-        # (main_jobs passes the parent's hand-written cases to each setting's process by --hand, the count beside it)
-        a = compare.parse_args(["2000", "1", "--only", "3", "--hand", "15"])
-        self.assertEqual((a["cases"], a["count"], a["seed"], a["only"]), (15, 2000, 1, 3))
+        # (main_jobs passes the parent's hand-written cases to each setting's process by --hand, the count beside it:
+        # the command it builds, read back - findings #122: a --cases there would run each setting with no random cases)
+        a = compare.parse_args(compare.worker_args(2000, 1, 3))
+        self.assertEqual((a["cases"], a["count"], a["seed"], a["only"]), (len(compare.CASES), 2000, 1, 3))
 
 
 if __name__ == "__main__":

@@ -750,6 +750,14 @@ def main(count=2000, seed=1, only=None):
         lm_dir.cleanup()
 
 
+def worker_args(count, seed, i):
+    """The command line of setting i's own process (main_jobs): this one's random cases and its hand-written ones by
+    --hand - by --cases they would be a sample with no random cases (findings #122: tests/test_compare_args.py reads
+    these back)."""
+    return ([str(count), str(seed), "--only", str(i)] + (["--tier", *TIER] if TIER else [])
+            + ["--exe", EXE, "--hand", str(len(CASES))])
+
+
 def main_jobs(count, seed, jobs):
     """main()'s settings at once, jobs at a time, each `compare.py count seed --only i` in a process of its own; the
     first that is not "same" stops the rest and is printed. The same summary line as main()."""
@@ -757,7 +765,6 @@ def main_jobs(count, seed, jobs):
         sys.exit(f"build the C++ engine first: {EXE} not found")
     n = len(CONFIGS)
     frames = compare_frames()
-    extra = (["--tier", *TIER] if TIER else []) + ["--exe", EXE, "--hand", str(len(CASES))]
     procs, failed = {}, []
     lock = threading.Lock()  # (a process is started, or all are stopped, never both at once)
     # (the children's temporary folders - with --tier a copy of data/ each - inside one of ours, removed at the end:
@@ -769,7 +776,7 @@ def main_jobs(count, seed, jobs):
     env.setdefault("DUALITYIME_LM_THREADS", str(max(1, min(4, ((os.cpu_count() or 2) // 2) // max(1, min(jobs, n))))))
 
     def one(i):
-        cmd = [sys.executable, os.path.abspath(__file__), str(count), str(seed), "--only", str(i)] + extra
+        cmd = [sys.executable, os.path.abspath(__file__)] + worker_args(count, seed, i)
         with lock:
             if failed:
                 return i, None, ""
