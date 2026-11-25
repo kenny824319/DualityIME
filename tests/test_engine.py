@@ -7103,8 +7103,11 @@ class DigitAfterEnglishTest(Base):
     def test_a_code_with_a_space_or_digits_after_the_digit(self):
         # (a space is no first tone here, digits no syllable: ps5 + space after Chinese stayed a code, not 之 - code
         # memory's codes, tools/code_memory_eval.py, found the first rule turning ten of them)
+        # (ps5j + space and x2u + space reach the rule's checks - 5j, 2u with a space as the tone would be 朱, 低: findings
+        # #147, the others end before them)
         for keys_typed, want in (("ji3ps5 ", "我ps5 "), ("ji3win10 ", "我win10 "), ("ji3a54 ", "我a54 "),
-                                 ("ji3utf8 ", "我utf8 "), ("ji3html5 ", "我html5 ")):
+                                 ("ji3utf8 ", "我utf8 "), ("ji3html5 ", "我html5 "), ("ji3ps5j ", "我ps5j "),
+                                 ("ji3x2u ", "我x2u ")):
             with self.subTest(keys_typed):
                 c = self.c
                 c.reset()

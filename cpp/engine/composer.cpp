@@ -500,8 +500,10 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
     // (#75) digit keys right after a lower-case letter (capitals are codes: MP5k) that start, with the keys after them,
     // a whole syllable with its tone (the 1 of tab1j3, the 5 of google5l3): English holding one pays EN_DIGIT_SYLLABLE
     // (engine/composer.py syllable_digits); syllable_digits_before[x]: how many of them before x
-    std::vector<int> syllable_digits_before(n + 1, 0);
-    for (size_t p = 0; p < n; ++p) {
+    // (keys with no digit, most of them: no array made - tokenize runs many times a key)
+    const bool any_digit = raw.find_first_of("0123456789") != std::string::npos;
+    std::vector<int> syllable_digits_before(any_digit ? n + 1 : 0, 0);
+    for (size_t p = 0; any_digit && p < n; ++p) {
         bool is = false;
         if (p > 0 && raw[p] >= '0' && raw[p] <= '9' && !table.is_tone_key(raw[p]) && raw[p - 1] >= 'a' && raw[p - 1] <= 'z')
             for (size_t k = p + 3; k <= std::min(n, p + 5) && !is; ++k) {
@@ -988,7 +990,8 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
             double cost = english_piece_cost(piece, english, learned, word_after, mine, contains(exact, ii) ? none : codes);
             if (starts && word_start && j == end && user && user->is_completion_start(piece)) cost = std::min(cost, EN_LEARNED);
             // (#75: a digit inside that starts a syllable; not for keys picked or remembered as English)
-            if (cost > EN_LEARNED && syllable_digits_before[j] - syllable_digits_before[i + 1] > 0) cost += EN_DIGIT_SYLLABLE;
+            if (any_digit && cost > EN_LEARNED && syllable_digits_before[j] - syllable_digits_before[i + 1] > 0)
+                cost += EN_DIGIT_SYLLABLE;
             cost += bonus + crosses(i, j);
             if (j == end && sp != std::string::npos)
                 offer(i, j + 1, cost, Token{Kind::En, piece + " ", U(piece + " "), ii});
