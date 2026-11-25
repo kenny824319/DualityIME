@@ -15,9 +15,11 @@ and checks; each setting starts from fresh files either way); default half the p
 --jobs 1 runs them one after another in this process. With --jobs each sz_trace's model may use half the processors
 shared by the settings at once (DUALITYIME_LM_THREADS, #59), one thread at least. --exe: another build's sz_trace.exe
 for the C++ side.
---cases N: only the first N hand-written cases (a small sample before a run of hours: CLAUDE.md Workflow 2). (2026-11-21: plus and max made a setting take hours - max about
-7 - and one after another the 13 settings took 13-20 hours.) main() itself always runs them in turn: callers that set
-CONFIGS, CASES, TIER, DATA or EXE first keep what they set.
+--cases N: a sample before a run of hours (CLAUDE.md Workflow 2): the first N hand-written cases and no random ones
+(a count above 0 with it stops: random cases are a long run, started through tools/longrun.py - 2026-11-25 `--cases 15`
+still ran 2000 random cases on 15 settings for 78 minutes). (2026-11-21: plus and max made a setting take hours - max
+about 7 - and one after another the 13 settings took 13-20 hours.) main() itself always runs them in turn: callers
+that set CONFIGS, CASES, TIER, DATA or EXE first keep what they set.
 Build the C++ side first: cpp\\build.cmd
 """
 import json
@@ -610,20 +612,19 @@ def compare(cases, config, tmp):
             sys.exit(1)
     if len(py) != len(cc):
         sys.exit(f"DIFFERENT number of lines: python {len(py)}, c++ {len(cc)}")
-    # both learned the same things
-    with open(os.path.join(tmp, "py", "user.json"), encoding="utf-8") as f:
-        learned_py = json.load(f)
-    with open(os.path.join(tmp, "cpp", "user.json"), encoding="utf-8") as f:
-        learned_cc = json.load(f)
-    if learned_py != learned_cc:
-        sys.exit(f"DIFFERENT user.json with {config}")
-    # (校正記憶 and 代碼記憶 learned the same too)
-    with open(os.path.join(tmp, "py", "keys.json"), encoding="utf-8") as f:
-        corrected_py = json.load(f)
-    with open(os.path.join(tmp, "cpp", "keys.json"), encoding="utf-8") as f:
-        corrected_cc = json.load(f)
-    if corrected_py != corrected_cc:
-        sys.exit(f"DIFFERENT keys.json with {config}")
+    # both learned the same things, 校正記憶 and 代碼記憶 too (keys.json) - a file neither wrote (a sample of a few
+    # hand-written cases, --cases, may learn nothing) is the same on both sides, one only one side wrote is not
+    for name in ("user.json", "keys.json"):
+        learned = []
+        for side in ("py", "cpp"):
+            path = os.path.join(tmp, side, name)
+            if os.path.exists(path):
+                with open(path, encoding="utf-8") as f:
+                    learned.append(json.load(f))
+            else:
+                learned.append(None)
+        if learned[0] != learned[1]:
+            sys.exit(f"DIFFERENT {name} with {config}")
     # (自訂詞彙 taken with Tab counted the same: custom_picks.json, written once a word is taken)
     picks = []
     for side in ("py", "cpp"):
@@ -727,7 +728,7 @@ def main_jobs(count, seed, jobs):
         sys.exit(f"build the C++ engine first: {EXE} not found")
     n = len(CONFIGS)
     frames = compare_frames()
-    extra = (["--tier", *TIER] if TIER else []) + ["--exe", EXE, "--cases", str(len(CASES))]
+    extra = (["--tier", *TIER] if TIER else []) + ["--exe", EXE, "--hand", str(len(CASES))]
     procs, failed = {}, []
     lock = threading.Lock()  # (a process is started, or all are stopped, never both at once)
     # (the children's temporary folders - with --tier a copy of data/ each - inside one of ours, removed at the end:
@@ -779,37 +780,60 @@ def main_jobs(count, seed, jobs):
           + (f", 選字模型 {TIER[0]} {os.path.basename(TIER[1])}" if TIER else ""))
 
 
-if __name__ == "__main__":
-    args = sys.argv[1:]
+def parse_args(args):
+    """The command line as values (tests/test_compare_args.py): count and seed of the random cases, how many
+    hand-written cases (None: all), only, jobs (None: the default), exe and tier (None: as set). --cases N is a sample:
+    the first N hand-written cases and no random ones - the guard lets compare.py run outside tools/longrun.py only
+    with it (CLAUDE.md Workflow 2; 2026-11-25 `--cases 15` still ran 2000 random cases on 15 settings for 78 minutes);
+    a count above 0 with it stops. --hand N (main_jobs' processes): the first N hand-written cases, the count beside."""
+    args = list(args)
+    out: dict = {"tier": None, "cases": None, "exe": None, "only": None, "jobs": None}
+    sample = "--cases" in args
     if "--lm-plus" in args:
         sys.exit("--lm-plus is gone: use --tier plus|max <file> (every setting then runs as that tier, with its own parameters; --lm-plus ran any file as plus)")
     if "--tier" in args:
         i = args.index("--tier")
         if args[i + 1] not in ("plus", "max"):
             sys.exit(f"--tier plus|max <file>, not {args[i + 1]}")
-        TIER = (args[i + 1], os.path.abspath(args[i + 2]))
+        out["tier"] = (args[i + 1], os.path.abspath(args[i + 2]))
         del args[i:i + 3]
-    only = jobs = None
-    if "--cases" in args:
-        i = args.index("--cases")
-        CASES = CASES[:int(args[i + 1])]
-        del args[i:i + 2]
+    for flag in ("--cases", "--hand"):
+        if flag in args:
+            i = args.index(flag)
+            out["cases"] = int(args[i + 1])
+            del args[i:i + 2]
     if "--exe" in args:
         i = args.index("--exe")
-        EXE = os.path.abspath(args[i + 1])
+        out["exe"] = os.path.abspath(args[i + 1])
         del args[i:i + 2]
     if "--only" in args:
         i = args.index("--only")
-        only = int(args[i + 1])
+        out["only"] = int(args[i + 1])
         del args[i:i + 2]
     if "--jobs" in args:
         i = args.index("--jobs")
-        jobs = int(args[i + 1])
+        out["jobs"] = int(args[i + 1])
         del args[i:i + 2]
-    if jobs is None:
-        jobs = max(1, (os.cpu_count() or 2) // 2)
     nums = [int(a) for a in args[:2]]
-    if only is not None or jobs <= 1:
-        main(*nums, only=only)
+    if sample and nums and nums[0]:
+        sys.exit("--cases runs the first N hand-written cases only, no random ones (a sample, started without "
+                 "tools/longrun.py): for random cases leave --cases out and start the run through tools/longrun.py "
+                 "(CLAUDE.md Workflow 2)")
+    out["count"] = 0 if sample else nums[0] if nums else 2000
+    out["seed"] = nums[1] if len(nums) > 1 else 1
+    return out
+
+
+if __name__ == "__main__":
+    a = parse_args(sys.argv[1:])
+    if a["tier"]:
+        TIER = a["tier"]
+    if a["cases"] is not None:
+        CASES = CASES[:a["cases"]]
+    if a["exe"]:
+        EXE = a["exe"]
+    jobs = a["jobs"] if a["jobs"] is not None else max(1, (os.cpu_count() or 2) // 2)
+    if a["only"] is not None or jobs <= 1:
+        main(a["count"], a["seed"], only=a["only"])
     else:
-        main_jobs(nums[0] if nums else 2000, nums[1] if len(nums) > 1 else 1, jobs)
+        main_jobs(a["count"], a["seed"], jobs)
