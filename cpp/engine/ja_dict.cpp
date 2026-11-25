@@ -63,13 +63,15 @@ static size_t to_units(const ustr& s, uint16_t* out, size_t cap) {
 }
 
 std::unique_ptr<JaDict> JaDict::load(const std::wstring& dir) {
-    return load_files(dir + L"\\ja_dict.bin", dir + L"\\ja_conn.bin");
+    return load_files(dir + L"\\ja_dict.bin", dir + L"\\ja_conn.bin", dir + L"\\ja_seg.bin");
 }
 
-std::unique_ptr<JaDict> JaDict::load_files(const std::wstring& dict_path, const std::wstring& conn_path) {
+std::unique_ptr<JaDict> JaDict::load_files(const std::wstring& dict_path, const std::wstring& conn_path,
+                                           const std::wstring& seg_path) {
     auto d = std::make_unique<JaDict>();
-    std::vector<uint8_t> conn;
-    if (!read_all(dict_path, d->dict_) || !read_all(conn_path, conn)) return nullptr;
+    std::vector<uint8_t> conn, seg;
+    if (!read_all(dict_path, d->dict_) || !read_all(conn_path, conn) || !read_all(seg_path, seg)) return nullptr;
+    if (seg.size() < 8 || std::memcmp(seg.data(), "JS01", 4) != 0) return nullptr;
     const std::vector<uint8_t>& b = d->dict_;
     if (b.size() < 16 || std::memcmp(b.data(), "JD01", 4) != 0) return nullptr;
     if (conn.size() < 8 || std::memcmp(conn.data(), "JC01", 4) != 0) return nullptr;
@@ -99,6 +101,8 @@ std::unique_ptr<JaDict> JaDict::load_files(const std::wstring& dict_path, const 
     d->n_ = n;
     d->conn_.resize(n * n);
     std::memcpy(d->conn_.data(), conn.data() + 8, 2 * n * n);
+    if (get<uint16_t>(seg.data() + 4) != n || seg.size() < 8 + (n * n + 7) / 8) return nullptr;
+    d->seg_.assign(seg.begin() + 8, seg.begin() + 8 + (n * n + 7) / 8);
     return d;
 }
 

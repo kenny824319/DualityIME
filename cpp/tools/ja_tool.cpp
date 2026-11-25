@@ -1,7 +1,8 @@
 // #36: the C++ engine's Japanese conversion of romaji lines, the same output as tools/ja_convert.py
 // (tools/ja_compare.py compares the two).
 //   sz_ja <data dir> [--time] < romaji lines
-// Each UTF-8 line in gives one line out: kana<TAB>pending<TAB>surface|surface|...<TAB>cost<TAB>finished.
+// Each UTF-8 line in gives one line out: kana<TAB>pending<TAB>surface|surface|...<TAB>cost<TAB>finished<TAB>boundaries
+// (boundaries: for each two neighbouring words of the path, 1 when they are in different 文節, else 0).
 // --time: instead, for each line, the median of 5 conversions of its kana in microseconds (loading excluded), and the
 // loading time first.
 #include <windows.h>
@@ -60,8 +61,10 @@ int wmain(int argc, wchar_t** argv) {
             if (i) surfaces += U'|';
             surfaces += path[i].surface;
         }
+        std::string cuts;
+        for (size_t i = 1; i < path.size(); ++i) cuts += dict->is_boundary(path[i - 1].rid, path[i].lid) ? '1' : '0';
         std::string out = sz::to_utf8(kana) + "\t" + sz::to_utf8(pending) + "\t" + sz::to_utf8(surfaces) + "\t" +
-                          std::to_string(cost) + "\t" + sz::to_utf8(table->finish(romaji)) + "\n";
+                          std::to_string(cost) + "\t" + sz::to_utf8(table->finish(romaji)) + "\t" + cuts + "\n";
         std::fwrite(out.data(), 1, out.size(), stdout);
         std::fflush(stdout);  // (a line out for each line in: a caller may wait for it)
     }

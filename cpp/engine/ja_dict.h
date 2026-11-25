@@ -14,9 +14,10 @@ namespace sz {
 
 class JaDict {
 public:
-    // data/ja_dict.bin and data/ja_conn.bin in `dir`; nullptr when missing or not in the expected format
+    // data/ja_dict.bin, ja_conn.bin and ja_seg.bin in `dir`; nullptr when missing or not in the expected format
     static std::unique_ptr<JaDict> load(const std::wstring& dir);
-    static std::unique_ptr<JaDict> load_files(const std::wstring& dict_path, const std::wstring& conn_path);
+    static std::unique_ptr<JaDict> load_files(const std::wstring& dict_path, const std::wstring& conn_path,
+                                              const std::wstring& seg_path);
     // the entries of one reading as [first, last) entry indexes, in the file's order (cost, then surface: it decides
     // ties); first == last when there are none
     std::pair<uint32_t, uint32_t> lookup(const ustr& reading) const;
@@ -26,12 +27,18 @@ public:
     ustr surface(uint32_t entry) const;
     // connection cost of a word with right id `rid` followed by one with left id `lid` (0: BOS / EOS)
     int cost(int rid, int lid) const { return conn_[static_cast<size_t>(rid) * n_ + lid]; }
+    // whether a word with right id `rid` and the next with left id `lid` are in different 文節 (segmenter.def)
+    bool is_boundary(int rid, int lid) const {
+        size_t i = static_cast<size_t>(rid) * n_ + lid;
+        return (seg_[i >> 3] >> (i & 7)) & 1;
+    }
     int max_reading_len = 0;
     int unknown_id = 0;
 
 private:
     std::vector<uint8_t> dict_;
     std::vector<int16_t> conn_;
+    std::vector<uint8_t> seg_;  // the bits only (header dropped)
     size_t n_ = 0;
     uint32_t n_readings_ = 0;
     const uint8_t* roff_ = nullptr;   // uint32 [n_readings + 1]

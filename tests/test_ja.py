@@ -82,6 +82,17 @@ class JaDictTest(unittest.TestCase):
         self.assertEqual([self.d.cost(0, 0), self.d.cost(0, 1), self.d.cost(0, 2)], [0, 5940, 4858])
 
 
+class BoundaryTest(unittest.TestCase):
+    def test_boundary(self):
+        # 京都へ is one 文節 (名詞 then 助詞), へ京都 is two (Mozc's segmenter.def)
+        d = JaDict.load()
+        kyoto = next(e for e in d.lookup("きょうと") if e.surface == "京都")
+        he = next(e for e in d.lookup("へ") if e.surface == "へ")
+        self.assertFalse(d.is_boundary(kyoto.rid, he.lid))
+        self.assertTrue(d.is_boundary(he.rid, kyoto.lid))
+        self.assertTrue(d.is_boundary(0, kyoto.lid))
+
+
 class ConvertTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

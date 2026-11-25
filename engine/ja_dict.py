@@ -14,9 +14,9 @@ _cache = {}
 
 
 class JaDict:
-    def __init__(self, dict_data, conn_data):
-        if dict_data[:4] != b"JD01" or conn_data[:4] != b"JC01":
-            raise ValueError("not a Japanese dictionary / connection file")
+    def __init__(self, dict_data, conn_data, seg_data):
+        if dict_data[:4] != b"JD01" or conn_data[:4] != b"JC01" or seg_data[:4] != b"JS01":
+            raise ValueError("not a Japanese dictionary / connection / 文節 file")
         if sys.byteorder != "little":
             raise ValueError("little endian only")
         n_read, n_ent, self.max_reading_len, self.unknown_id = struct.unpack_from("<IIHH", dict_data, 4)
@@ -38,18 +38,23 @@ class JaDict:
         self._index = {rraw[2 * roff[i]:2 * roff[i + 1]].decode("utf-16-le"): i for i in range(n_read)}
         self.n, _ = struct.unpack_from("<HH", conn_data, 4)
         self._conn = memoryview(conn_data)[8:8 + 2 * self.n * self.n].cast("h")
+        n_seg, _ = struct.unpack_from("<HH", seg_data, 4)
+        if n_seg != self.n or len(seg_data) < 8 + (self.n * self.n + 7) // 8:
+            raise ValueError("the 文節 file does not match the connection file")
+        self._seg = seg_data
 
     @classmethod
-    def load(cls, dict_path=None, conn_path=None):
+    def load(cls, dict_path=None, conn_path=None, seg_path=None):
         dict_path = dict_path or os.path.join(DATA_DIR, "ja_dict.bin")
-        conn_path = conn_path or os.path.join(DATA_DIR, "ja_conn.bin")
-        key = (dict_path, conn_path)
+        conn_path = conn_path or os.path.join(os.path.dirname(dict_path), "ja_conn.bin")
+        seg_path = seg_path or os.path.join(os.path.dirname(dict_path), "ja_seg.bin")
+        key = (dict_path, conn_path, seg_path)
         if key not in _cache:
-            with open(dict_path, "rb") as f:
-                d = f.read()
-            with open(conn_path, "rb") as f:
-                c = f.read()
-            _cache[key] = cls(d, c)
+            parts = []
+            for p in key:
+                with open(p, "rb") as f:
+                    parts.append(f.read())
+            _cache[key] = cls(*parts)
         return _cache[key]
 
     def lookup(self, reading):
@@ -68,3 +73,8 @@ class JaDict:
     def cost(self, rid, lid):
         """The connection cost of a word whose right id is rid followed by one whose left id is lid (0: BOS / EOS)."""
         return self._conn[rid * self.n + lid]
+
+    def is_boundary(self, rid, lid):
+        """Whether a word with right id rid and the next with left id lid are in different 文節 (segmenter.def)."""
+        i = rid * self.n + lid
+        return bool(self._seg[8 + (i >> 3)] >> (i & 7) & 1)

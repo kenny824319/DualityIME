@@ -62,6 +62,7 @@ class BuildJaDictTest(unittest.TestCase):
         write(os.path.join(self.src, "id.def"), "0 BOS/EOS,*,*,*,*,*,*\n1 名詞,固有名詞,*,*,*,*,*\n2 名詞,一般,*,*,*,*,*\n")
         write(os.path.join(self.src, "romanji-hiragana.tsv"), "a\tあ\nkk\tっ\tk\n")
         write(os.path.join(self.src, "LICENSE"), "license text\n")
+        write(os.path.join(self.src, "segmenter.def"), "# comment\n* * true\n")
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -128,6 +129,34 @@ class BuildJaDictTest(unittest.TestCase):
         lines = open(os.path.join(self.out, "ja_romaji.tsv"), encoding="utf-8").read().splitlines()
         self.assertEqual(lines.count("?\t？"), 1)
         self.assertEqual(lines.count("!\t！"), 1)
+
+    def test_segmenter_rules(self):
+        # Mozc's gen_segmenter_code.py: BOS/EOS always a boundary, the first matching rule decides, none = boundary;
+        # a pattern matches from the start of id.def's feature string, * standing for one field
+        write(os.path.join(self.src, "id.def"), "0 BOS/EOS,*,*,*,*,*,*\n1 名詞,一般,*,*,*,*,*\n"
+              "2 助詞,格助詞,一般,*,*,*,が\n3 記号,句点,*,*,*,*,*\n4 名詞,固有名詞,*,*,*,*,*\n")
+        write(os.path.join(self.src, "dictionary00.txt"), "が\t2\t2\t100\tが\n")
+        write(os.path.join(self.src, "dictionary01.txt"), "きょう\t1\t1\t100\t今日\n")
+        write(os.path.join(self.src, "connection_single_column.txt"), "5\n" + "0\n" * 25)
+        write(os.path.join(self.src, "segmenter.def"),
+              "名詞,一般 助詞 false\n* 記号,(句点|読点) true\n名詞,* 名詞 true\n* * false\n")
+        build_ja_dict.build(self.src, self.out)
+        data = open(os.path.join(self.out, "ja_seg.bin"), "rb").read()
+        self.assertEqual(data[:4], b"JS01")
+        n, pad = struct.unpack_from("<HH", data, 4)
+        self.assertEqual((n, pad), (5, 0))
+        self.assertEqual(len(data), 8 + (25 + 7) // 8)
+
+        def boundary(rid, lid):
+            i = rid * n + lid
+            return bool(data[8 + i // 8] >> (i % 8) & 1)
+
+        self.assertFalse(boundary(1, 2))  # 名詞,一般 -> 助詞: the first rule
+        self.assertTrue(boundary(2, 3))   # -> 記号,句点
+        self.assertTrue(boundary(1, 3))
+        self.assertTrue(boundary(4, 1))   # 名詞,固有名詞 -> 名詞: the third rule
+        self.assertFalse(boundary(2, 1))  # the last rule
+        self.assertTrue(boundary(0, 1) and boundary(1, 0) and boundary(0, 0))  # BOS / EOS
 
     def test_slash_rule_added_when_missing(self):
         # the spec's / -> ・ (Google's symbol setting, not in Mozc's table): appended once, never twice

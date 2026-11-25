@@ -16,6 +16,8 @@ ja_dict.bin (little endian):
     keep this order (it decides ties) and never sort. unknown_id: the id.def id of 名詞,一般,*,*,*,*,*.
 ja_conn.bin: b"JC01", uint16 n, uint16 0, int16 cost[n * n], cost[prev.rid * n + next.lid] (the order of
     connection_single_column.txt after its first line, which is n).
+ja_seg.bin: b"JS01", uint16 n, uint16 0, then n * n bits, bit (rid * n + lid) = 1 when a word with right id rid and
+    the next with left id lid are in different 文節 (bit i in byte i // 8 at i % 8); from segmenter.def (write_seg).
 ja_romaji.tsv: romanji-hiragana.tsv as is, plus each of SYMBOL_RULES (/ -> ・, ? -> ？, ! -> ！) it has no rule for
     (Google's symbol setting rather than its table; / -> ・ is the design's 目標 10).
 LICENSE-Mozc.txt: Mozc's LICENSE as is (NAIST / ICOT terms of the dictionary, BSD of the rest).
@@ -46,6 +48,59 @@ def int16(value, where):
     if not -32768 <= value <= 32767:
         raise SystemExit(f"{where}: {value} does not fit int16")
     return value
+
+
+def read_pos(folder):
+    """{id: feature string} from id.def ("833 動詞,自立,*,*,五段動詞,仮定形,*")."""
+    pos = {}
+    for line in open(os.path.join(folder, "id.def"), encoding="utf-8"):
+        parts = line.split()
+        if len(parts) >= 2:
+            pos[int(parts[0])] = parts[1]
+    return pos
+
+
+def write_seg(folder, path, pos, n):
+    """ja_seg.bin from segmenter.def, as Mozc's gen_segmenter_code.py reads it: BOS / EOS (id 0) always a boundary;
+    rules `L R true|false` in file order, the first whose L matches the left word's right id and R the right word's
+    left id decides; no rule = a boundary. A pattern is a regex matched at the start of the feature string with * for
+    one field ([^,]+); a lone * matches every id. Ids of Mozc's special_pos.def are not in our dictionary."""
+    import re
+
+    full = (1 << n) - 1
+    value = [0] * n    # bit lid of row rid: a boundary
+    decided = [0] * n
+    value[0] = decided[0] = full          # (BOS on the left)
+    for rid in range(1, n):
+        value[rid] = decided[rid] = 1     # (EOS on the right: lid 0)
+
+    def ids(pattern):
+        if pattern == "*":
+            return list(range(n))
+        rx = re.compile(pattern.replace("*", "[^,]+"))
+        return [i for i in range(n) if i in pos and rx.match(pos[i])]
+
+    for no, line in enumerate(open(os.path.join(folder, "segmenter.def"), encoding="utf-8"), 1):
+        if len(line) <= 1 or line[0] == "#":
+            continue
+        parts = line.split()
+        if len(parts) != 3 or parts[2].lower() not in ("true", "false"):
+            raise SystemExit(f"segmenter.def:{no}: not `L R true|false`")
+        left, right, result = parts[0], parts[1], parts[2].lower() == "true"
+        rmask = 0
+        for lid in ids(right):
+            rmask |= 1 << lid
+        for rid in ids(left):
+            new = rmask & ~decided[rid]
+            decided[rid] |= new
+            if result:
+                value[rid] |= new
+    total = 0
+    for rid in range(n):
+        total |= ((value[rid] | (full & ~decided[rid])) & full) << (rid * n)
+    with open(path, "wb") as f:
+        f.write(b"JS01" + struct.pack("<HH", n, 0))
+        f.write(total.to_bytes((n * n + 7) // 8, "little"))
 
 
 def read_unknown_id(folder):
@@ -147,6 +202,7 @@ def build(folder, out):
     by_reading = read_entries(folder)
     n_read, n_ent, n_surf = write_dict(os.path.join(out, "ja_dict.bin"), by_reading, unknown_id)
     n = write_conn(os.path.join(folder, "connection_single_column.txt"), os.path.join(out, "ja_conn.bin"))
+    write_seg(folder, os.path.join(out, "ja_seg.bin"), read_pos(folder), n)
     added = write_romaji(os.path.join(folder, "romanji-hiragana.tsv"), os.path.join(out, "ja_romaji.tsv"))
     shutil.copyfile(os.path.join(folder, "LICENSE"), os.path.join(out, "LICENSE-Mozc.txt"))
     return {"readings": n_read, "entries": n_ent, "surfaces": n_surf, "pos": n, "symbols_added": added}
@@ -164,7 +220,7 @@ def main():
           f"{r['entries']:,} entries, {r['readings']:,} readings, {r['surfaces']:,} surfaces, {r['pos']} POS ids")
     for inp in r["symbols_added"]:
         print(f"ja_romaji.tsv: no {inp} rule in Mozc's table, {inp} -> {dict(SYMBOL_RULES)[inp]} added")
-    for name in ("ja_dict.bin", "ja_conn.bin", "ja_romaji.tsv", "LICENSE-Mozc.txt"):
+    for name in ("ja_dict.bin", "ja_conn.bin", "ja_seg.bin", "ja_romaji.tsv", "LICENSE-Mozc.txt"):
         print(f"  {name}: {os.path.getsize(os.path.join(a.out, name)):,} bytes")
 
 
