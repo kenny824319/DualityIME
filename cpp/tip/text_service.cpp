@@ -9,6 +9,7 @@
 
 #include "appearance.h"
 #include "globals.h"
+#include "key_record.h"
 #include "langbar.h"
 #include "pipe.h"
 #include "util.h"
@@ -479,9 +480,12 @@ void TextService::reset_engine() {
 
 // ---- keys -------------------------------------------------------------------------------------
 
+// Every key event passing here goes into the key record every program shares (#73: keys::note, one write; a key's
+// down comes through OnTestKeyDown and, when eaten, OnKeyDown again - the same record twice is harmless)
 STDMETHODIMP TextService::OnTestKeyDown(ITfContext* ctx, WPARAM wp, LPARAM lp, BOOL* eaten) {
     *eaten = FALSE;
     try {
+        keys::note(static_cast<unsigned>(wp), true);
         *eaten = test_key_down(ctx, wp, lp);
     } catch (...) {
     }
@@ -491,6 +495,7 @@ STDMETHODIMP TextService::OnTestKeyDown(ITfContext* ctx, WPARAM wp, LPARAM lp, B
 STDMETHODIMP TextService::OnKeyDown(ITfContext* ctx, WPARAM wp, LPARAM lp, BOOL* eaten) {
     *eaten = FALSE;
     try {
+        keys::note(static_cast<unsigned>(wp), true);
         *eaten = key_down(ctx, wp, lp);
     } catch (...) {
     }
@@ -500,6 +505,7 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* ctx, WPARAM wp, LPARAM lp, BOOL*
 STDMETHODIMP TextService::OnTestKeyUp(ITfContext*, WPARAM wp, LPARAM, BOOL* eaten) {
     *eaten = FALSE;  // key-ups go on to the app (an eaten Shift-up left apps thinking Shift was held)
     try {
+        keys::note(static_cast<unsigned>(wp), false);
         key_up(wp);
     } catch (...) {
     }
@@ -509,6 +515,7 @@ STDMETHODIMP TextService::OnTestKeyUp(ITfContext*, WPARAM wp, LPARAM, BOOL* eate
 STDMETHODIMP TextService::OnKeyUp(ITfContext*, WPARAM wp, LPARAM, BOOL* eaten) {
     *eaten = FALSE;
     try {
+        keys::note(static_cast<unsigned>(wp), false);
         key_up(wp);
     } catch (...) {
     }
@@ -787,8 +794,12 @@ bool TextService::test_key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
     if (down(VK_CONTROL) || down(VK_MENU)) {
         // Ctrl + , . ; ' [ ] ...: their full-width marks, if that setting is on (not in 英 mode, nor
         // where nothing can be typed); every other combination is the app's shortcut (Ctrl+C, Alt+Tab...)
-        return ctrl_punct_key(ctx, vk, lp) && !english_ &&
-               !(state_.composition.empty() && state_.symbol_page < 0 && no_text_field(ctx));
+        bool mark = ctrl_punct_key(ctx, vk, lp);
+        if (!mark && !held_unseen_) return false;  // (Ctrl+C and the like: nothing more looked at, as before)
+        bool here = !english_ && !(state_.composition.empty() && state_.symbol_page < 0 && no_text_field(ctx));
+        // (a key no input method saw go down kept it the program's: named at the caret - #73)
+        if (!mark && here) stuck_key_hint(held_unseen_);
+        return mark && here;
     }
     // (a Shift tap still switches Chinese/English there)
     if (state_.composition.empty() && state_.symbol_page < 0 && !state_.fill_open && no_text_field(ctx)) return false;
@@ -816,7 +827,11 @@ bool TextService::ctrl_punct_key(ITfContext* ctx, WPARAM vk, LPARAM lp) {
     static const wchar_t KEYS[] = L",.;<>?!:\"'[]{}()\\|_^";
     // ...but in a terminal Ctrl + [ ] \ ^ _ are control characters (Ctrl+[ is Esc, Ctrl+] telnet's escape)
     static const wchar_t CONTROL_KEYS[] = L"[]\\^_";
+    held_unseen_ = 0;
     if (!cfg_.ctrl_punct || !down(VK_CONTROL) || down(VK_MENU)) return false;
+    wchar_t ch = char_of(vk, lp);
+    if (!ch || !wcschr(KEYS, ch)) return false;
+    if (wcschr(CONTROL_KEYS, ch) && in_terminal(ctx)) return false;
     // only Ctrl (and Shift) with the one key: a key of a shortcut held as well (Win, Caps Lock, Esc, F1-F24,
     // the arrows...) makes it some program's shortcut (Win+Ctrl+, , Ctrl+CapsLock+.). A key of typing still
     // held - a letter, a digit, a mark, space: the one before, not let go yet when typing fast - does not:
@@ -829,13 +844,36 @@ bool TextService::ctrl_punct_key(ITfContext* ctx, WPARAM vk, LPARAM lp) {
                (k >= VK_LWIN && k <= VK_APPS) ||         // Win, the menu key
                (k >= VK_NUMPAD0 && k <= VK_F24);         // the number pad, F1-F24
     };
+    // ...and a key held only for the keyboard state is not held either (#73, 2026-11-25: Insert's key-up went
+    // missing and Ctrl + a mark was every program's shortcut until Insert was tapped there): the key record every
+    // program's input method writes (key_record.h) shows it let go (another program saw the key-up) or pressed more
+    // than 10 s ago and never let go (stuck: a real chord is not held that long). A key no input method saw go down
+    // still counts as held, as before - Win is often one, and Win+Ctrl+, stays the program's - and is named at the
+    // caret, so the user knows to tap it
     BYTE ks[256];
     if (!GetKeyboardState(ks)) return false;
-    for (int k = 0; k < 256; ++k)
-        if ((ks[k] & 0x80) && k != static_cast<int>(vk) && shortcut_key(k)) return false;
-    wchar_t ch = char_of(vk, lp);
-    if (!ch || !wcschr(KEYS, ch)) return false;
-    return !(wcschr(CONTROL_KEYS, ch) && in_terminal(ctx));
+    for (int k = 0; k < 256; ++k) {
+        if (!(ks[k] & 0x80) || k == static_cast<int>(vk) || !shortcut_key(k)) continue;
+        keys::Seen s = keys::seen(static_cast<unsigned>(k));
+        if (s == keys::Seen::Released || s == keys::Seen::Stuck) continue;
+        if (s == keys::Seen::None && !(k >= VK_LWIN && k <= VK_APPS)) held_unseen_ = static_cast<unsigned>(k);
+        return false;
+    }
+    return true;
+}
+
+void TextService::stuck_key_hint(unsigned vk) {
+    if (vk >= 256) return;
+    ULONGLONG now = GetTickCount64();
+    if (hinted_at_[vk] && now - hinted_at_[vk] < 60000) return;
+    hinted_at_[vk] = now;
+    // the key's name as Windows gives it ("Insert", "F13"): an extended key's scan code comes with E0
+    UINT sc = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC_EX);
+    LONG lp = static_cast<LONG>((sc & 0xFF) << 16);
+    if ((sc & 0xFF00) == 0xE000) lp |= 1 << 24;
+    wchar_t name[64];
+    int n = sc ? GetKeyNameTextW(lp, name, 64) : 0;
+    show_mode((n > 0 ? std::wstring(name, n) : std::wstring(L"有個鍵")) + L" 沒有放開");
 }
 
 bool TextService::key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {

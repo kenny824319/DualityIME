@@ -6,7 +6,9 @@
 // keys: characters as typed, {ENTER} {ESC} {BACK} {DOWN} {UP} {LEFT} {RIGHT} {TAB} {PGDN} {PGUP}
 // {#5} (a numpad key) {SPACE} {SHIFT} (a Shift tap) {SBACK} (Shift+Backspace) {SSPACE} (Shift+Space)
 // {WAIT} (half a second), {^,} (Ctrl + a key, with Shift if its character needs it), {^^,} (the same
-// with F13 held as well). Lines starting with # are comments. In the expected text {NL} is a line break.
+// with F13 held as well), {+INS} / {-INS} (Insert down only / up only; F13, F24 too), {PAUSE 11} (11 seconds),
+// {UNSEEN INS} (the shared key record forgets Insert, #73).
+// Lines starting with # are comments. In the expected text {NL} is a line break.
 // A line starting with {PAGE}: the keys go to a window like a web page with no text box in
 // focus (browsers mark its TSF context disabled and empty), {NOFOCUS}: to a window the app
 // turned the input method off for (ImmAssociateContext NULL: games...), {PLAIN}: to a plain window with no text box (a media player's
@@ -25,6 +27,7 @@
 #include <vector>
 
 #include "json.h"
+#include "key_record.h"
 #include "util.h"
 
 using Microsoft::WRL::ComPtr;
@@ -77,7 +80,7 @@ static void send(std::vector<std::pair<WORD, bool>> events) {  // (vk, up)
         i.ki.wScan = static_cast<WORD>(MapVirtualKeyW(vk, MAPVK_VK_TO_VSC));
         i.ki.dwFlags = up ? KEYEVENTF_KEYUP : 0;
         if (vk == VK_LEFT || vk == VK_RIGHT || vk == VK_UP || vk == VK_DOWN || vk == VK_RSHIFT || vk == VK_NEXT ||
-            vk == VK_PRIOR)
+            vk == VK_PRIOR || vk == VK_INSERT)
             i.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
         in.push_back(i);
     }
@@ -401,6 +404,25 @@ int wmain(int argc, wchar_t** argv) {
                         if (ks[k] & 0x80) std::printf(" %02X", k);
                     std::printf("\n");
                     std::fflush(stdout);
+                }
+                else if (name.size() > 1 && (name[0] == '+' || name[0] == '-')) {
+                    // {+INS} / {-INS}: the key down only / up only - a key Windows keeps held when its key-up
+                    // never came (#73)
+                    static const std::pair<const char*, WORD> holdable[] = {
+                        {"INS", VK_INSERT}, {"F13", VK_F13}, {"F24", VK_F24}};
+                    for (auto& [n, k] : holdable)
+                        if (name.compare(1, std::string::npos, n) == 0) send({{k, name[0] == '-'}});
+                }
+                else if (name.rfind("PAUSE ", 0) == 0) pump(std::atoi(name.c_str() + 6) * 1000);  // {PAUSE 11}: seconds
+                else if (name == "UNSEEN INS") {
+                    // the shared key record forgets Insert, as if no input method had seen it go down: a key held
+                    // that way keeps Ctrl + a mark the program's and is named at the caret (#73)
+                    HANDLE h = OpenFileMappingW(FILE_MAP_WRITE, FALSE, sz::keys::SECTION);
+                    void* view = h ? MapViewOfFile(h, FILE_MAP_WRITE, 0, 0, sz::keys::KEYS * sizeof(LONG64)) : nullptr;
+                    if (view) InterlockedExchange64(static_cast<volatile LONG64*>(view) + VK_INSERT, 0);
+                    else std::printf("no key record to change\n");
+                    if (view) UnmapViewOfFile(view);
+                    if (h) CloseHandle(h);
                 }
                 else if (name == "SBACK") tap(VK_BACK, true);
                 else if (name == "SSPACE") tap(VK_SPACE, true);

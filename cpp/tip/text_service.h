@@ -126,6 +126,7 @@ private:
     bool no_text_field(ITfContext* ctx);
     bool password_field(ITfContext* ctx);
     bool ctrl_punct_key(ITfContext* ctx, WPARAM vk, LPARAM lp);  // Ctrl + a key the setting ctrl_full_punct makes full width
+    void stuck_key_hint(unsigned vk);  // "Insert 沒有放開" at the caret (#73), once a minute a key
     bool key_down(ITfContext* ctx, WPARAM vk, LPARAM lp);
     void key_up(WPARAM vk);
     bool wants_undo(WPARAM vk) const;
@@ -206,6 +207,9 @@ private:
     bool full_screen_ = false;        // a Direct3D game in exclusive full screen
     ULONGLONG full_screen_at_ = 0;
     ULONGLONG shift_down_at_ = 0, ctrl_down_at_ = 0, ctrl_tapped_at_ = 0;
+    // a key held that no input method saw go down kept Ctrl + a punctuation key the program's (#73)
+    unsigned held_unseen_ = 0;        // that key (ctrl_punct_key), 0 none
+    ULONGLONG hinted_at_[256] = {};   // when each key was last named at the caret
 
     // 拿回重選: what was sent last, where
     ComPtr<ITfRange> sent_range_;

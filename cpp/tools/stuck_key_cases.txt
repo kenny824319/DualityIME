@@ -1,0 +1,11 @@
+# #73: a key Windows keeps held after its key-up went missing ({+INS}: Insert down, never up - SendInput repeats
+# nothing, as a stuck key). Pressed just now it is held for real: Ctrl+, stays the program's (nothing typed); held
+# more than 10 s with no key-up it is stuck and Ctrl+, types ， again (2026-11-25 Insert kept every program's
+# Ctrl + a mark until it was tapped). Held where no input method saw it go down ({UNSEEN INS}): the program's, and
+# "Insert 沒有放開" at the caret (a screenshot: %TEMP%\sz_shot<n>.bmp). Four Insert downs in all: the box's overwrite
+# mode, which Insert switches, ends as it began.
+# A real chord (F13 held with Ctrl+,: the program's) and typing fast (#46) are in tsf_test.txt ({^^,}, {^[]}).
+{+INS}{^,}{-INS}A{ENTER} => A
+{+INS}{PAUSE 11}{^,}{-INS}A{ENTER} => ，A
+{+INS}{UNSEEN INS}{^,}{SHOT}{-INS}A{ENTER} => A
+{+INS}{-INS}B{ENTER} => B
