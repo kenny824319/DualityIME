@@ -38,6 +38,15 @@ const Json& Config::defaults() {
         j["simplified"] = Json(false);       // 簡體輸出 (#32): shown and sent in Simplified characters
         j["simplified_hotkey"] = Json(false);  // ...switched with simplified_key too (off: the key goes to the program)
         j["simplified_key"] = Json("Ctrl+F1");
+        // 日文 (#36): off by default; engine/config.py has the same names and values
+        j["ja_enabled"] = Json(false);
+        j["ja_switch_key"] = Json("Ctrl+F2");
+        j["ja_hira_key"] = Json("Ctrl+F6");
+        j["ja_kata_key"] = Json("Ctrl+F7");
+        j["ja_auto_key"] = Json("Ctrl+F8");
+        j["ja_fkeys"] = Json(true);
+        j["ja_space_convert"] = Json(false);
+        j["ja_predict"] = Json(true);
         return j;
     }();
     return d;

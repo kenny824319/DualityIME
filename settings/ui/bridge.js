@@ -28,7 +28,10 @@ const api = (() => {
     forget_words: 0, forget_emails: 0, forget_list: [], lookup: true, lookup_size: "small", game_keys: true,
     cand_font: "Microsoft JhengHei UI", cand_font_size: 18, cand_per_row: 1,
     cand_layout: "", cand_keys: "123456789", cand_columns: 0, appearance: {},
-    simplified: false, simplified_hotkey: false, simplified_key: "Ctrl+F1"
+    simplified: false, simplified_hotkey: false, simplified_key: "Ctrl+F1",
+    // (#36 design: 日文 off as it comes; a key straight to each mode and to each kana choice)
+    ja_enabled: false, ja_switch_key: "Ctrl+F2", ja_hira_key: "Ctrl+F6", ja_kata_key: "Ctrl+F7",
+    ja_auto_key: "Ctrl+F8", ja_fkeys: true, ja_space_convert: false, ja_predict: true
   };
   const dict = { words: [["華碩", "ㄏㄨㄚˊ ㄕㄨㄛˋ"]], shortcuts: [["addr", "台北市信義區…"]] };
   const images = {};  // 自訂外觀's photos: file -> data: URL

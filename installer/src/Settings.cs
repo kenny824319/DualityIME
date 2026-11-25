@@ -216,7 +216,10 @@ public class Backend {
         { "cand_font_size", 18 }, { "cand_per_row", 1 }, { "cand_layout", "" }, { "cand_keys", "123456789" },
         { "cand_columns", 0 },
         { "appearance", new Dictionary<string, object>() },  // 自訂外觀 (#22): {} = the default look (never changed in place)
-        { "simplified", false }, { "simplified_hotkey", false }, { "simplified_key", "Ctrl+F1" }  // 簡體輸出 (#32)
+        { "simplified", false }, { "simplified_hotkey", false }, { "simplified_key", "Ctrl+F1" },  // 簡體輸出 (#32)
+        { "ja_enabled", false }, { "ja_switch_key", "Ctrl+F2" }, { "ja_hira_key", "Ctrl+F6" },     // 日文 (#36)
+        { "ja_kata_key", "Ctrl+F7" }, { "ja_auto_key", "Ctrl+F8" }, { "ja_fkeys", true },
+        { "ja_space_convert", false }, { "ja_predict", true }
     };
 
     public Backend(SettingsForm form, string data) {

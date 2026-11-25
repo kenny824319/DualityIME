@@ -39,6 +39,15 @@ DEFAULTS = {
     "simplified": False,        # 簡體輸出 (#32): what is shown and sent in Simplified characters (chosen in Traditional)
     "simplified_hotkey": False,  # ...switched with simplified_key too (off: the key goes to the program)
     "simplified_key": "Ctrl+F1",
+    # 日文 (#36): off by default (nothing changes until it is turned on); the keys can be changed in the settings
+    "ja_enabled": False,        # 日文輸入: Ctrl+F2 switches between the Chinese and the Japanese modes
+    "ja_switch_key": "Ctrl+F2",  # 中文／日文切換
+    "ja_hira_key": "Ctrl+F6",   # 只打平假名 (until 自動判斷)
+    "ja_kata_key": "Ctrl+F7",   # 只打片假名
+    "ja_auto_key": "Ctrl+F8",   # 自動判斷 (the default)
+    "ja_fkeys": True,           # F6 / F7 / F8 turn the 文節 at the caret into hiragana / katakana / half-width katakana
+    "ja_space_convert": False,  # 純日文: Space lists the 文節's candidates (off: Space types a space)
+    "ja_predict": True,         # 預測提示 (a later plan)
 }
 
 
