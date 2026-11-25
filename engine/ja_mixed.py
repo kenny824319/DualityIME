@@ -18,6 +18,10 @@ RJ = {
     "per_fallback": 0.8,   # ...each character no word of the dictionary holds (a name: tanaka still Japanese)
     "pending": 0.2,        # letters still to make kana at the end of what is typed (konbin...)
     "broken": 1.0,         # each key that makes no kana (as an English letter of no word, unknown)
+    # a piece taking the space after it: in this mode a space is mostly a zhuyin first tone (u + space is 一, ru + space
+    # 之), Japanese is typed without spaces - the first evaluation (tools/ja_mixed_eval.py) read 35% of the natural
+    # Chinese sentences as romaji by their first-tone syllables without it
+    "space": 1.5,
 }
 ROMAJI_KEYS = frozenset("abcdefghijklmnopqrstuvwxyz-',./?![]")
 CACHE_MAX = 20000
@@ -30,6 +34,7 @@ class JaMixed:
     def __init__(self, table, d):
         self.table, self.d = table, d
         self._cache = {}
+        self.space_cost = RJ["space"]  # (added by the tokenizer to a piece that takes the space after it)
 
     @classmethod
     def load(cls, table=None, d=None):

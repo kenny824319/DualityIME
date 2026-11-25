@@ -714,6 +714,8 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
                 cost += EN["digit_syllable"]  # (#75: not for keys picked or remembered as English)
             cost += bonus + crosses(i, j)
             if j == end and sp >= 0:
+                if ja is not None:
+                    cost += ja.space_cost  # (中日混打: a space after it is likelier a first tone)
                 offer(j + 1, cost, prev, Token("en", piece + " ", piece + " ", i))
             else:
                 offer(j, cost, prev, Token("en", piece, piece, i))
