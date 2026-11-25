@@ -3987,11 +3987,11 @@ class Composer:
             self.open_fill()
             return True
         stay = bool(self.config.symbols_stay_open)
-        # (符號鍵盤自訂, #69: the table saved while the keyboard is up is read at the next key, the page kept in range)
+        # (符號鍵盤自訂, #69: the table saved while the keyboard is up is read at the next key, the page kept in range -
+        # at every key: another composer over the same UserModel may have read the new table first, findings #125)
+        self.user.reload_symbols()
         table = self.user.symbols
-        if self.user.reload_symbols():
-            table = self.user.symbols
-            self.symbol_page = min(self.symbol_page, table.count() - 1)
+        self.symbol_page = min(self.symbol_page, table.count() - 1)
         pages = table.count()
         if ch == " ":
             self._type_symbol(FULL_SPACE if self.config.space == "full" or self.config.full_width else " ", stay, True)

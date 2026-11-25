@@ -5418,8 +5418,11 @@ bool Composer::key_symbols(std::optional<char32_t> ch, const std::string& specia
     // Enter types the symbol at the arrows' cursor, Space a space (the user 2026-11-17); with 符號鍵盤選完不關 (#49) it
     // stays open, Esc (or ×) closes it and Backspace is the app's (the text being typed first) - engine/composer.py
     bool stay = config.flag("symbols_stay_open");
-    // (符號鍵盤自訂, #69: the table saved while the keyboard is up is read at the next key, the page kept in range)
-    if (user.reload_symbols()) symbol_page = std::min(*symbol_page, user.symbols.count() - 1);
+    // (符號鍵盤自訂, #69: the table saved while the keyboard is up is read at the next key, the page kept in range - at
+    // every key: the engine process serves every program with a composer each over one UserModel, and another one may
+    // have read the new table first, findings #125)
+    user.reload_symbols();
+    symbol_page = std::min(*symbol_page, user.symbols.count() - 1);
     const symbols::SymbolTable& table = user.symbols;
     int pages = table.count();
     if (ch && *ch == ' ') {

@@ -1010,6 +1010,22 @@ class CustomSymbolKeyboardTest(Base):
         c.key("a")
         self.assertEqual(c.commit, "★")
 
+    def test_another_composer_reading_the_new_table_first(self):
+        # (findings #125: the C++ engine serves every program with a composer each over one UserModel - another one
+        # opening its keyboard reads the new table, and this one's page must still be kept in range at its next key)
+        self.write([self.page(0), self.page(1), self.page(2)])
+        c = self.c
+        c.key("`")
+        c.key(special="TAB")
+        c.key(special="TAB")
+        self.assertEqual(c.symbol_page, 2)
+        self.write([self.page(0, a="★")])
+        other = composer.Composer(c.table, c.lexicon, c.english, c.user, c.bigram, Config())
+        other.key("`")  # (it reads the new table: for c, reload_symbols has nothing new any more)
+        other.key(special="ESC")
+        c.key("a")
+        self.assertEqual(c.commit, "★")
+
     def test_names_for_the_window(self):
         self.write([self.page(2), self.page(0), self.page(1, hidden=True)])
         self.c.user.reload_symbols()
