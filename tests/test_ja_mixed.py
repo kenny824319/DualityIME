@@ -80,6 +80,75 @@ class TokenizeTest(Base):
             self.assertEqual(a, b, raw)
 
 
+class ComposerTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.c.set_japanese(self.ja)
+
+    def tearDown(self):
+        self.c.set_japanese(None)
+
+    def type(self, keys_typed, enter=False):
+        c = self.c
+        for ch in keys_typed:
+            c.key(ch)
+        if enter:
+            c.key(special="ENTER")
+            return c.commit
+        return c.composition
+
+    def ja_text(self, kana):
+        from engine.ja_convert import convert
+        return "".join(n.surface for n in convert(kana, self.ja.d)[0])
+
+    def test_shown_and_sent(self):
+        self.assertEqual(self.type("kyouhaiitenki"), "今日はいい天気")
+        self.assertEqual(self.c.cursor, 7)
+        self.c.key(special="ENTER")
+        self.assertEqual(self.c.commit, "今日はいい天気")
+
+    def test_chinese_then_japanese(self):
+        self.assertEqual(self.type(keys("ㄨㄛˇ ㄐㄧㄣ ㄊㄧㄢ ㄑㄩˋ") + "konbini", enter=True), "我今天去コンビニ")
+
+    def test_pending_finished_when_sent(self):
+        self.assertTrue(self.type("kon").endswith("n"))
+        self.c.key(special="ENTER")
+        self.assertEqual(self.c.commit, self.ja_text("こん"))
+
+    def test_mark_after_japanese(self):
+        self.assertEqual(self.type("kyou,", enter=True), self.ja_text("きょう") + "、")
+
+    def test_pick_a_bunsetsu(self):
+        c = self.c
+        self.type("hasi")
+        c.key(special="DOWN")
+        self.assertIn("箸", c.candidates)
+        self.assertIn("橋", c.candidates)
+        c.cand_index = c.candidates.index("箸")
+        c.key(special="ENTER")
+        self.assertEqual((c.composition, c.candidates), ("箸", []))
+        self.assertTrue(self.type("wo").startswith("箸を"), c.composition)
+        c.key(special="ENTER")
+        self.assertTrue(c.commit.startswith("箸を"))
+
+    def test_back(self):
+        self.type("kyouk")
+        self.c.key(special="BACK")
+        self.assertEqual(self.c.composition, "今日")
+
+    def test_no_english_hint_nothing_learned(self):
+        c = self.c
+        before = (set(c.user.english), dict(c.user.words) if hasattr(c.user, "words") else None)
+        self.type("konbini")
+        self.assertEqual(c.suggestions, [])
+        c.key(special="ENTER")
+        self.assertEqual((set(c.user.english), dict(c.user.words) if hasattr(c.user, "words") else None), before)
+
+    def test_off_shows_letters(self):
+        self.c.set_japanese(None)
+        self.assertEqual(self.type("kyou"), "kyou")
+
+
 class PieceCostTest(Base):
     def test_whole_word_cheaper_than_broken(self):
         self.assertLess(self.ja.piece_cost("konbini", False), self.ja.piece_cost("knbxq", False))
