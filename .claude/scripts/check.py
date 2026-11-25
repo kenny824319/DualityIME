@@ -35,8 +35,9 @@ STEPS: list[tuple[str, list[str], Path, str | None]] = [
     # (no open review finding: each fixed, or left by the user with tools/findings.py skip - /collab:correct 2026-11-21)
     ("findings", [PYTHON, "tools/findings.py", "gate"], ROOT, "tools/findings.py"),
     # (test_longrun, test_findings: the long-run and findings gates - /collab:correct 2026-11-21)
+    # (test_settings_preview: the settings page's browser preview answers every request - /collab:correct 2026-11-24)
     ("unittest", [PYTHON, "-m", "unittest", "tests.test_engine", "tests.test_gpu", "tests.test_longrun",
-                  "tests.test_findings"], ROOT, "tests/test_engine.py"),
+                  "tests.test_findings", "tests.test_settings_preview"], ROOT, "tests/test_engine.py"),
     # The C++ engine (cpp\build.cmd: Visual Studio Build Tools with C++), then both engines
     # key by key: same output, same user.json and keys.json.
     ("cpp build", ["cmd", "/c", str(ROOT / "cpp" / "build.cmd")], ROOT, "cpp/build.cmd"),
