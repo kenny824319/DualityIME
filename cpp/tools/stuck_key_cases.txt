@@ -2,7 +2,8 @@
 # nothing, as a stuck key). Pressed just now it is held for real: Ctrl+, stays the program's (nothing typed); held
 # more than 10 s with no key-up it is stuck and Ctrl+, types ， again (2026-11-25 Insert kept every program's
 # Ctrl + a mark until it was tapped). Held where no input method saw it go down ({UNSEEN INS}): the program's, and
-# "Insert 沒有放開" at the caret ({HINT}: the line fails without it; a screenshot: %TEMP%\sz_shot<n>.bmp).
+# "Insert 沒有放開" at the caret ({HINT}: the line fails without it; a screenshot: %TEMP%\sz_shot<n>.bmp), gone at the
+# next key (A, then {NOHINT}; Insert's key-up is no key down: it stays till then - the user 2026-11-25).
 # Four Insert downs in all: the box's overwrite mode, which Insert switches, ends as it began. A number pad key held
 # (its 0 typed) keeps Ctrl+, the program's as ever, and is never named: the record keeps no number pad key ({NOHINT},
 # findings #126).
@@ -10,5 +11,5 @@
 {+INS}{^,}{-INS}A{ENTER} => A
 {+NUM0}{^,}{NOHINT}{-NUM0}A{ENTER} => 0A
 {+INS}{PAUSE 11}{^,}{-INS}A{ENTER} => ，A
-{+INS}{UNSEEN INS}{^,}{HINT}{SHOT}{-INS}A{ENTER} => A
+{+INS}{UNSEEN INS}{^,}{HINT}{SHOT}{-INS}A{NOHINT}{ENTER} => A
 {+INS}{-INS}B{ENTER} => B
