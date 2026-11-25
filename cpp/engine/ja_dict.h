@@ -34,6 +34,8 @@ public:
     }
     int max_reading_len = 0;
     int unknown_id = 0;
+    uint32_t n_entries() const { return n_entries_; }
+    uint32_t crc32() const { return crc32_; }  // of the whole ja_dict.bin (data/ja_bigram.bin is built for exactly it)
 
 private:
     std::vector<uint8_t> dict_;
@@ -41,6 +43,8 @@ private:
     std::vector<uint8_t> seg_;  // the bits only (header dropped)
     size_t n_ = 0;
     uint32_t n_readings_ = 0;
+    uint32_t n_entries_ = 0;
+    uint32_t crc32_ = 0;
     const uint8_t* roff_ = nullptr;   // uint32 [n_readings + 1]
     const uint8_t* start_ = nullptr;  // uint32 [n_readings + 1]
     const uint8_t* ent_ = nullptr;    // 12 bytes an entry

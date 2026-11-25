@@ -1,6 +1,6 @@
 """#36: the Python engine's Japanese conversion, the same output as cpp sz_ja.exe (tools/ja_compare.py compares them).
 
-    py -3 tools/ja_convert.py [--data <dir>] < romaji lines
+    py -3 tools/ja_convert.py [--data <dir>] [--bigram <file>] < romaji lines   (--bigram: "<context sid>\t<romaji>")
     py -3 tools/ja_convert.py [--data <dir>] --keys < key scripts
 
 Romaji lines: each UTF-8 line in gives one line out:
@@ -22,6 +22,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from engine.config import Config  # noqa: E402
+from engine.ja_bigram import JaBigram  # noqa: E402
 from engine.ja_composer import JaComposer  # noqa: E402
 from engine.ja_convert import convert  # noqa: E402
 from engine.ja_dict import JaDict  # noqa: E402
@@ -30,9 +31,13 @@ from engine.ja_romaji import RomajiTable  # noqa: E402
 TOKEN = re.compile(r"\{[A-Z0-9]+\}|.")
 
 
-def line_out(romaji, table, d):
+def line_out(romaji, table, d, bigram=None):
+    prev = -1
+    if bigram is not None and "\t" in romaji:  # (--bigram: "<context sid>\t<romaji>")
+        sid, romaji = romaji.split("\t", 1)
+        prev = int(sid)
     kana, pending = table.to_kana(romaji)
-    path, cost = convert(kana, d)
+    path, cost = convert(kana, d, bigram=bigram, prev_sid=prev)
     cuts = "".join("1" if d.is_boundary(a.rid, b.lid) else "0" for a, b in zip(path, path[1:]))
     return f"{kana}\t{pending}\t{'|'.join(n.surface for n in path)}\t{cost}\t{table.finish(romaji)}\t{cuts}"
 
@@ -72,13 +77,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=os.path.join(ROOT, "data"))
     ap.add_argument("--keys", action="store_true")
+    ap.add_argument("--bigram")
     a = ap.parse_args()
     table = RomajiTable.load(os.path.join(a.data, "ja_romaji.tsv"))
     d = JaDict.load(os.path.join(a.data, "ja_dict.bin"))  # (ja_conn.bin, ja_seg.bin beside it)
+    bigram = None
+    if a.bigram:
+        bigram = JaBigram.load(d, a.bigram)
+        if bigram is None:
+            sys.exit("STOPPED: could not read the bigram file (or it is for another ja_dict.bin)")
     out = sys.stdout.buffer
     for raw in sys.stdin.buffer:
         line = raw.decode("utf-8").rstrip("\r\n")
-        lines = run_script(line, table, d) if a.keys else [line_out(line, table, d)]
+        lines = run_script(line, table, d) if a.keys else [line_out(line, table, d, bigram)]
         out.write("".join(x + "\n" for x in lines).encode("utf-8"))
 
 

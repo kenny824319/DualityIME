@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <unordered_map>
 
+#include "ja_bigram.h"
+
 namespace sz {
 
 namespace {
@@ -16,6 +18,7 @@ struct Cell {
     int64_t total;
     int prev;  // index into cells, -1 for BOS's own predecessor
     int64_t order;
+    int sid = -1;  // its word number in the bigram (BOS: the context), -1 none
 };
 
 // the cells ending at one position reduced to one per right id (the first cheapest), in their order
@@ -42,7 +45,7 @@ std::vector<int> groups(const std::vector<Cell>& cells, const std::vector<int>& 
 }  // namespace
 
 std::pair<std::vector<JaNode>, int64_t> ja_convert(const ustr& kana, const JaDict& d, const std::vector<JaPin>& pins,
-                                                   const std::vector<int>& cuts) {
+                                                   const std::vector<int>& cuts, const JaBigram* bigram, int prev_sid) {
     const int n = static_cast<int>(kana.size());
     // (engine/ja_convert.py _limits) the pin starting at each offset, offsets inside a pin, and the furthest end a
     // word from each offset may reach: no word crosses a cut, ends inside a pin or runs over one
@@ -72,25 +75,40 @@ std::pair<std::vector<JaNode>, int64_t> ja_convert(const ustr& kana, const JaDic
     std::vector<Cell> cells;
     std::vector<std::vector<int>> ends(n + 1);
     std::vector<int> cell_pin;  // the pin of a PINNED cell, by cell index
-    cells.push_back({0, 0, 0, 0, 0, FALLBACK, 0, -1, -1});  // BOS
+    cells.push_back({0, 0, 0, 0, 0, FALLBACK, 0, -1, -1, bigram ? prev_sid : -1});  // BOS
     cell_pin.push_back(-1);
     ends[0].push_back(0);
     int64_t order = 0;
     std::vector<Cell> starting;
+    std::vector<int> with_sid;
     for (int begin = 0; begin < n; ++begin) {
         std::vector<int> preds = groups(cells, ends[begin]);
         if (preds.empty() || inside[begin]) continue;
+        with_sid.clear();
+        if (bigram)
+            for (int c : ends[begin])
+                if (cells[c].sid >= 0) with_sid.push_back(c);
         starting.clear();
         int pin = pin_at[begin];
         if (pin >= 0) {
             const JaPin& p = pins[pin];
-            starting.push_back({begin, p.end, p.lid, p.rid, 0, PINNED, 0, -1, 0});
+            int sid = -1;
+            if (bigram) {  // (a pin's word number: the first entry of its reading written as it)
+                auto [first, last] = d.lookup(kana.substr(begin, p.end - begin));
+                for (uint32_t e = first; e < last; ++e)
+                    if (d.surface(e) == p.surface) {
+                        sid = bigram->sid(e);
+                        break;
+                    }
+            }
+            starting.push_back({begin, p.end, p.lid, p.rid, 0, PINNED, 0, -1, 0, sid});
         } else {
             int kmax = std::min(d.max_reading_len, reach[begin] - begin);
             for (int k = 1; k <= kmax; ++k) {
                 auto [first, last] = d.lookup(kana.substr(begin, k));
                 for (uint32_t e = first; e < last; ++e)
-                    starting.push_back({begin, begin + k, d.lid(e), d.rid(e), d.word_cost(e), e, 0, -1, 0});
+                    starting.push_back({begin, begin + k, d.lid(e), d.rid(e), d.word_cost(e), e, 0, -1, 0,
+                                        bigram ? bigram->sid(e) : -1});
             }
             starting.push_back({begin, begin + 1, d.unknown_id, d.unknown_id, JA_FALLBACK_COST, FALLBACK, 0, -1, 0});
         }
@@ -102,6 +120,17 @@ std::pair<std::vector<JaNode>, int64_t> ja_convert(const ustr& kana, const JaDic
                 if (best < 0 || t < best_total) {
                     best = p;
                     best_total = t;
+                }
+            }
+            if (node.sid >= 0) {
+                for (int p : with_sid) {  // (a pair with a bonus: compared at its real cost, ties to the earlier node)
+                    int bonus = bigram->bonus(cells[p].sid, node.sid);
+                    if (!bonus) continue;
+                    int64_t t = cells[p].total + d.cost(cells[p].rid, node.lid) - bonus;
+                    if (t < best_total || (t == best_total && cells[p].order < cells[best].order)) {
+                        best = p;
+                        best_total = t;
+                    }
                 }
             }
             node.total = best_total + node.cost;
@@ -129,7 +158,8 @@ std::pair<std::vector<JaNode>, int64_t> ja_convert(const ustr& kana, const JaDic
         ustr surface = x.entry == PINNED     ? pins[cell_pin[c]].surface
                        : x.entry == FALLBACK ? reading
                                              : d.surface(x.entry);
-        path.push_back({x.begin, x.end, reading, surface, x.lid, x.rid, x.cost});
+        int entry = x.entry == PINNED || x.entry == FALLBACK ? -1 : static_cast<int>(x.entry);
+        path.push_back({x.begin, x.end, reading, surface, x.lid, x.rid, x.cost, entry});
     }
     std::reverse(path.begin(), path.end());
     return {path, best_total};

@@ -14,7 +14,7 @@ add_library(sz_engine STATIC
     engine/candlayout.cpp
     engine/script.cpp
     engine/ja_romaji.cpp engine/ja_dict.cpp engine/ja_convert.cpp engine/ja_composer.cpp engine/ja_session.cpp
-    engine/ja_mixed.cpp)
+    engine/ja_mixed.cpp engine/ja_bigram.cpp)
 target_include_directories(sz_engine PUBLIC engine)
 
 # #36: the Japanese conversion on romaji lines (tools/ja_compare.py runs it beside tools/ja_convert.py)

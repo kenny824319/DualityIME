@@ -1,6 +1,6 @@
 """#36: the two engines' Japanese conversion and 純日文 composer must give the same results.
 
-    py -3 tools/ja_compare.py [--cases <file>] [--scripts <file>] [--exe <sz_ja.exe>]
+    py -3 tools/ja_compare.py [--cases <file>] [--scripts <file>] [--exe <sz_ja.exe>] [--bigram <file>|random]
 
 Romaji lines: the romaji column of tools/ja_sentences_sample.tsv, the Tatoeba romaji file (%DUALITYIME_CORPUS%\\
 tatoeba\\ja_eval.tsv, when it is there), "kyouhaiitenki" x 30 (270 kana), and 2000 random strings (seed 36; length 1-30
@@ -14,6 +14,7 @@ import argparse
 import os
 import random
 import subprocess
+import tempfile
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -55,6 +56,28 @@ def scripts():
     return lines
 
 
+def random_bigram(path):
+    """A bigram file exercising many bonuses (--bigram random): every dictionary entry has a word number, crc32 of its
+    surface mod 500 (entries written the same share it), and 20,000 random pairs of them a bonus of 1-3000 (seed 36)."""
+    sys.path.insert(0, ROOT)
+    import struct
+    import zlib
+    from engine.ja_bigram import HEADER
+    from engine.ja_dict import JaDict
+    d = JaDict.load()
+    sids = [zlib.crc32(e.surface.encode("utf-8")) % 500 for _, _, e in d.entries()]
+    order = sorted(range(len(sids)))  # (entries ascending: entries() walks them in index order)
+    rng = random.Random(36)
+    pairs = sorted({(rng.randrange(500), rng.randrange(500)): rng.randint(1, 3000) for _ in range(20000)}.items())
+    with open(path, "wb") as f:
+        f.write(HEADER.pack(b"JB01", d.n_entries, d.crc32, len(sids), len(pairs), 100, 3000, 1))
+        f.write(struct.pack(f"<{len(sids)}I", *order))
+        f.write(struct.pack(f"<{len(sids)}I", *sids))
+        f.write(struct.pack(f"<{len(pairs)}I", *(a for (a, _), _ in pairs)))
+        f.write(struct.pack(f"<{len(pairs)}I", *(b for (_, b), _ in pairs)))
+        f.write(struct.pack(f"<{len(pairs)}H", *(v for _, v in pairs)))
+
+
 def run(cmd, lines):
     data = ("\n".join(lines) + "\n").encode("utf-8")
     r = subprocess.run(cmd, input=data, capture_output=True, check=True)
@@ -79,14 +102,25 @@ def main():
     ap.add_argument("--cases")
     ap.add_argument("--scripts")
     ap.add_argument("--exe", default=os.path.join(ROOT, "cpp", "build", "x64-Release", "sz_ja.exe"))
+    ap.add_argument("--bigram")  # (a bigram file, or "random": one made here; each line then gets a context)
     a = ap.parse_args()
     if not os.path.exists(a.exe):
         sys.exit(f"STOPPED: build first (cpp\\build.cmd): {a.exe}")
     convert = os.path.join(ROOT, "tools", "ja_convert.py")
     data = os.path.join(ROOT, "data")
     lines = [line.rstrip("\r\n") for line in open(a.cases, encoding="utf-8")] if a.cases else cases()
-    py = run([sys.executable, convert], lines)
-    cpp = run([a.exe, data], lines)
+    extra = []
+    with tempfile.TemporaryDirectory() as tmp:
+        if a.bigram:
+            path = a.bigram
+            if a.bigram == "random":
+                path = os.path.join(tmp, "random_bigram.bin")
+                random_bigram(path)
+            extra = ["--bigram", path]
+            rng = random.Random(37)  # (a context for each line: none or a random word number)
+            lines = [f"{rng.choice([-1, rng.randrange(500)])}\t{line}" for line in lines]
+        py = run([sys.executable, convert] + extra, lines)
+        cpp = run([a.exe, data] + extra, lines)
     if len(py) != len(lines) or len(cpp) != len(lines):
         sys.exit(f"DIFFERENT: {len(lines)} lines in, Python {len(py)} out, C++ {len(cpp)} out")
     diff = [(r, p, c) for r, p, c in zip(lines, py, cpp) if p != c]

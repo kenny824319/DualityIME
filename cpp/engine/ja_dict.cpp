@@ -62,6 +62,21 @@ static size_t to_units(const ustr& s, uint16_t* out, size_t cap) {
     return n;
 }
 
+static uint32_t crc32_of(const std::vector<uint8_t>& b) {
+    // zlib's CRC-32 (polynomial 0xEDB88320): Python's zlib.crc32 gives the same
+    static uint32_t table[256] = {};
+    if (!table[1]) {
+        for (uint32_t i = 0; i < 256; ++i) {
+            uint32_t c = i;
+            for (int k = 0; k < 8; ++k) c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+            table[i] = c;
+        }
+    }
+    uint32_t c = 0xFFFFFFFFu;
+    for (uint8_t x : b) c = table[(c ^ x) & 0xFF] ^ (c >> 8);
+    return c ^ 0xFFFFFFFFu;
+}
+
 std::unique_ptr<JaDict> JaDict::load(const std::wstring& dir) {
     return load_files(dir + L"\\ja_dict.bin", dir + L"\\ja_conn.bin", dir + L"\\ja_seg.bin");
 }
@@ -81,6 +96,8 @@ std::unique_ptr<JaDict> JaDict::load_files(const std::wstring& dict_path, const 
     size_t pos = 16, need = pos + 8ull * (n_read + 1) + 12ull * n_ent + 4;
     if (b.size() < need) return nullptr;
     d->n_readings_ = n_read;
+    d->n_entries_ = n_ent;
+    d->crc32_ = crc32_of(b);
     d->roff_ = b.data() + pos;
     pos += 4ull * (n_read + 1);
     d->start_ = b.data() + pos;
