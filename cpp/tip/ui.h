@@ -39,6 +39,7 @@ protected:
     bool visible_ = false;
 
 private:
+    unsigned long long shown_tick_ = 0;  // (when it was shown: an animated photo plays from there, #56)
     static inline thread_local HWND owner_for_new_ = nullptr;  // (each UI thread its own, as the popups)
     HWND owner_ = nullptr;  // (the owner hwnd_ was made with)
     static LRESULT CALLBACK proc(HWND, UINT, WPARAM, LPARAM);

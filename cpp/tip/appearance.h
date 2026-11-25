@@ -49,6 +49,15 @@ double luminance(COLORREF c);
 bool draw_background(HDC dc, double scale, int w, int h, const char* window, int radius, COLORREF border,
                      const PhotoFrame* frame = nullptr);
 
+// 動圖 (#56): the time since the window being painted was shown (Popup::paint sets it before drawing), and after
+// draw_background the time since then of the photo's next frame change (-1: none - no photo, a still, or the last frame
+// of the last play), for the window's timer
+struct AnimClock {
+    long long elapsed_ms = 0;
+    long long next_ms = -1;
+};
+AnimClock& anim_clock();
+
 // a rectangle of `color` at `alpha` (0-255) over what is drawn, rounded by `radius` (device pixels)
 void glass(HDC dc, int x, int y, int w, int h, COLORREF color, BYTE alpha, int radius);
 

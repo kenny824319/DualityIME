@@ -5,6 +5,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+
+#include "anim_image.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -47,7 +50,7 @@ double number(const Json* o, const char* key, double def, double lo, double hi) 
     return v && v->is_number() ? std::clamp(v->as_number(), lo, hi) : def;
 }
 
-// a file name of the appearance folder (<slot>.jpg or .png): nothing with a path in it
+// a file name of the appearance folder (<slot>.jpg, .png or .gif): nothing with a path in it
 bool safe_name(const std::wstring& n) {
     return !n.empty() && n.find_first_of(L"\\/:") == std::wstring::npos && n.find(L"..") == std::wstring::npos;
 }
@@ -76,19 +79,70 @@ COLORREF mix(COLORREF a, COLORREF b, double t) {  // t of b
 COLORREF shade(COLORREF c, double t) { return mix(c, luminance(c) > 0.5 ? RGB(0, 0, 0) : RGB(255, 255, 255), t); }
 
 // ---- photos: loaded once (WIC), kept until the file changes ----------------------------------------------------
+// (an animated photo's frames together at most this much: a larger one shows its first frame, as a still - #56)
+constexpr size_t MAX_ANIM_BYTES = 64u << 20;
+
 struct Photo {
     std::wstring path;
     FILETIME written{};
-    HBITMAP bmp = nullptr;  // 32 bpp, premultiplied alpha
+    HBITMAP bmp = nullptr;  // 32 bpp, premultiplied alpha (an animated photo: the frame last drawn)
+    void* bits = nullptr;   // (bmp's pixels)
     int w = 0, h = 0;
     bool alpha = false;  // (a PNG with see-through pixels: drawn over the background color)
+    // an animated photo (#56): every frame composited, premultiplied BGRA; empty for a still
+    std::vector<std::vector<uint8_t>> frames;
+    std::vector<int> delays_ms;
+    int loops = 0, shown = -1;  // (shown: the frame in bmp now)
     ~Photo() {
         if (bmp) DeleteObject(bmp);
     }
 };
 thread_local Photo g_photos[8];  // (the photo of "all" and one per window at most)
+thread_local AnimClock g_clock;
+
+HBITMAP make_dib(int w, int h, void** bits) {
+    BITMAPINFO bi{};
+    bi.bmiHeader.biSize = sizeof bi.bmiHeader;
+    bi.bmiHeader.biWidth = w;
+    bi.bmiHeader.biHeight = -h;
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    return CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS, bits, nullptr, 0);
+}
+
+void set_bitmap(Photo& p, HBITMAP bmp, void* bits, int w, int h, bool alpha) {
+    if (p.bmp) DeleteObject(p.bmp);
+    p.bmp = bmp;
+    p.bits = bits;
+    p.alpha = alpha;
+    p.w = w;
+    p.h = h;
+}
+
+// an animated GIF or APNG: every frame kept, the first one in bmp
+bool load_animated(const std::wstring& path, Photo& p) {
+    AnimImage im;
+    if (!load_anim(path, im, MAX_ANIM_BYTES)) return false;
+    void* bits = nullptr;
+    HBITMAP bmp = make_dib(im.w, im.h, &bits);
+    if (!bmp) return false;
+    std::memcpy(bits, im.frames[0].data(), im.frames[0].size());
+    bool alpha = false;
+    for (auto& fr : im.frames)
+        for (size_t i = 3; i < fr.size() && !alpha; i += 4) alpha = fr[i] != 255;
+    set_bitmap(p, bmp, bits, im.w, im.h, alpha);
+    p.frames = std::move(im.frames);
+    p.delays_ms = std::move(im.delays_ms);
+    p.loops = im.loops;
+    p.shown = 0;
+    return true;
+}
 
 bool load(const std::wstring& path, Photo& p) {
+    std::vector<std::vector<uint8_t>>().swap(p.frames);
+    p.delays_ms.clear();
+    p.shown = -1;
+    if (load_animated(path, p)) return true;
     ComPtr<IWICImagingFactory> f;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&f)))) return false;
     ComPtr<IWICBitmapDecoder> dec;
@@ -103,14 +157,8 @@ bool load(const std::wstring& path, Photo& p) {
         return false;
     UINT w = 0, h = 0;
     if (FAILED(conv->GetSize(&w, &h)) || !w || !h || w > 8000 || h > 8000) return false;
-    BITMAPINFO bi{};
-    bi.bmiHeader.biSize = sizeof bi.bmiHeader;
-    bi.bmiHeader.biWidth = static_cast<LONG>(w);
-    bi.bmiHeader.biHeight = -static_cast<LONG>(h);
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 32;
     void* bits = nullptr;
-    HBITMAP bmp = CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    HBITMAP bmp = make_dib(static_cast<int>(w), static_cast<int>(h), &bits);
     if (!bmp) return false;
     if (FAILED(conv->CopyPixels(nullptr, w * 4, w * h * 4, static_cast<BYTE*>(bits)))) {
         DeleteObject(bmp);
@@ -119,15 +167,11 @@ bool load(const std::wstring& path, Photo& p) {
     bool alpha = false;
     const BYTE* px = static_cast<const BYTE*>(bits);
     for (size_t i = 3; i < static_cast<size_t>(w) * h * 4 && !alpha; i += 4) alpha = px[i] != 255;
-    if (p.bmp) DeleteObject(p.bmp);
-    p.bmp = bmp;
-    p.alpha = alpha;
-    p.w = static_cast<int>(w);
-    p.h = static_cast<int>(h);
+    set_bitmap(p, bmp, bits, static_cast<int>(w), static_cast<int>(h), alpha);
     return true;
 }
 
-const Photo* photo(const std::wstring& path) {
+Photo* photo(const std::wstring& path) {
     WIN32_FILE_ATTRIBUTE_DATA fa{};
     if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &fa)) return nullptr;  // (gone, or not ours to read)
     Photo* slot = nullptr;
@@ -146,12 +190,16 @@ const Photo* photo(const std::wstring& path) {
     if (!load(path, *slot)) {
         if (slot->bmp) DeleteObject(slot->bmp);
         slot->bmp = nullptr;
+        slot->bits = nullptr;
+        std::vector<std::vector<uint8_t>>().swap(slot->frames);
         return nullptr;
     }
     return slot;
 }
 
 }  // namespace
+
+AnimClock& anim_clock() { return g_clock; }
 
 double luminance(COLORREF c) {
     auto lin = [](int v) {
@@ -251,8 +299,18 @@ bool draw_background(HDC dc, double scale, int w, int h, const char* window, int
     auto it = a.windows.find(window);
     const Look& l = it != a.windows.end() ? it->second : a.all;
     if (l.image.empty()) return false;
-    const Photo* p = photo(a.dir + L"\\" + l.image);
+    Photo* p = photo(a.dir + L"\\" + l.image);
     if (!p) return false;
+    if (!p->frames.empty()) {  // 動圖 (#56): the frame of the time since the window was shown, and when the next is due
+        long long next = -1;
+        int k = frame_at(p->delays_ms, p->loops, g_clock.elapsed_ms, &next);
+        if (k != p->shown && k < static_cast<int>(p->frames.size())) {
+            GdiFlush();  // (GDI done with the bitmap before its pixels change)
+            std::memcpy(p->bits, p->frames[k].data(), p->frames[k].size());
+            p->shown = k;
+        }
+        g_clock.next_ms = next;
+    }
     // the photo's scale and centre come from its frame (#35: a whole page with these settings, the same as the
     // settings page's preview), measured from the window's top-left corner: a window growing or shrinking while
     // typing only shows more or less of the same picture

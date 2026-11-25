@@ -15,8 +15,8 @@ add_library(sz_engine STATIC
     engine/script.cpp)
 target_include_directories(sz_engine PUBLIC engine)
 
-add_executable(sz_trace tools/trace.cpp)
-target_link_libraries(sz_trace sz_engine)
+add_executable(sz_trace tools/trace.cpp common/anim_image.cpp)
+target_link_libraries(sz_trace sz_engine ole32 windowscodecs bcrypt shell32)
 
 # the engine program behind the input method (x64 / ARM64 only)
 add_executable(DualityIMEEngine WIN32 server/engine_main.cpp common/pipe.cpp)
@@ -31,7 +31,7 @@ else()
 endif()
 add_library(${TIP_NAME} SHARED
     tip/dllmain.cpp tip/text_service.cpp tip/langbar.cpp tip/ui.cpp tip/appearance.cpp tip/engine_client.cpp tip/key_record.cpp
-    common/pipe.cpp tip/tip.def tip/tip.rc)
+    common/pipe.cpp common/anim_image.cpp tip/tip.def tip/tip.rc)
 target_include_directories(${TIP_NAME} PRIVATE common tip)
 target_link_libraries(${TIP_NAME} sz_engine ole32 oleaut32 uuid user32 gdi32 shell32 dwmapi advapi32 imm32 msimg32 d2d1 dwrite
                       windowscodecs)
@@ -43,7 +43,7 @@ target_link_libraries(sz_keytest advapi32)
 
 # the input method's windows drawn in a process of their own and saved as pictures (look at a window change without
 # installing the DLL: #69, #73)
-add_executable(sz_uishot tools/ui_shot.cpp tip/ui.cpp tip/appearance.cpp)
+add_executable(sz_uishot tools/ui_shot.cpp tip/ui.cpp tip/appearance.cpp common/anim_image.cpp)
 target_include_directories(sz_uishot PRIVATE common tip)
 target_link_libraries(sz_uishot sz_engine ole32 user32 gdi32 shell32 dwmapi advapi32 msimg32 windowscodecs d2d1 dwrite psapi)
 

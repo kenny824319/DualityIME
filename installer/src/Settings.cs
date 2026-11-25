@@ -272,7 +272,7 @@ public class Backend {
                     return ReadBackup(o.FileName);
                 }
             case "pickImage":  // 自訂外觀 (#22): {file, url} of the photo copied in, or null
-                using (var o = new OpenFileDialog { Filter = "圖片 (*.jpg;*.jpeg;*.png)|*.jpg;*.jpeg;*.png" }) {
+                using (var o = new OpenFileDialog { Filter = "圖片 (*.jpg;*.jpeg;*.png;*.gif)|*.jpg;*.jpeg;*.png;*.gif" }) {
                     if (o.ShowDialog(form) != DialogResult.OK) return null;
                     string file = ImportImage(o.FileName, Str(a, "slot"));
                     // (name: the user's file as it was named, shown on the page)
@@ -741,16 +741,46 @@ public class Backend {
         return rows.Count;
     }
 
-    // ---- 自訂外觀 (#22): the photos, appearance\<slot>.jpg|png next to config.json ----------------------------
+    // ---- 自訂外觀 (#22): the photos, appearance\<slot>.jpg|png|gif next to config.json ------------------------
     static readonly string[] ImageSlots = { "all", "cand", "tip", "mode", "notice", "fill", "keyboard", "bar" };
     string AppearanceDir { get { return Path.Combine(dataDir, "appearance"); } }
 
-    // a file name of the folder: <slot>.jpg or <slot>.png, nothing else (a backup names them too)
+    static readonly string[] ImageExts = { ".jpg", ".png", ".gif" };  // (.gif: an animated GIF, #56; an APNG is a .png)
+
+    // a file name of the folder: <slot>.jpg, .png or .gif, nothing else (a backup names them too)
     static bool ImageName(string name) {
         // (no path in it: ..\all.png or C:\x\all.png from a backup would be written outside the folder)
         if (string.IsNullOrEmpty(name) || name.IndexOfAny(new[] { '\\', '/', ':' }) >= 0 || Path.GetFileName(name) != name) return false;
         string ext = Path.GetExtension(name).ToLowerInvariant();
-        return (ext == ".jpg" || ext == ".png") && Array.IndexOf(ImageSlots, Path.GetFileNameWithoutExtension(name)) >= 0;
+        return Array.IndexOf(ImageExts, ext) >= 0 && Array.IndexOf(ImageSlots, Path.GetFileNameWithoutExtension(name)) >= 0;
+    }
+
+    // 動圖 (#56): what an animation copied in may be - its file, its frames, its long side, and its frames composited
+    // together (what the IME keeps of it: cpp/tip/appearance.cpp MAX_ANIM_BYTES; past that it would show a still)
+    const long MaxAnimFile = 20L << 20, MaxAnimBytes = 64L << 20;
+    const int MaxAnimFrames = 300, MaxAnimSide = 1200;
+
+    static void CheckAnimation(long fileBytes, int w, int h, int frames) {
+        if (fileBytes > MaxAnimFile || frames > MaxAnimFrames || Math.Max(w, h) > MaxAnimSide || (long)w * h * 4 * frames > MaxAnimBytes)
+            throw new Exception("動圖太大，請換一張檔案較小、張數較少的");
+    }
+
+    // an APNG's {width, height, frames} (its acTL, before the image data), or null: a PNG of no animation, or none
+    static int[] ApngInfo(byte[] b) {
+        byte[] sig = { 0x89, (byte)'P', (byte)'N', (byte)'G', 13, 10, 26, 10 };
+        if (b.Length < 8 || !b.Take(8).SequenceEqual(sig)) return null;
+        Func<int, long> be32 = (i) => ((long)b[i] << 24) | ((long)b[i + 1] << 16) | ((long)b[i + 2] << 8) | b[i + 3];
+        long w = 0, h = 0;
+        for (long pos = 8; pos + 12 <= b.Length;) {
+            long n = be32((int)pos);
+            string type = Encoding.ASCII.GetString(b, (int)pos + 4, 4);
+            if (n > b.Length - pos - 12) return null;
+            if (type == "IHDR" && n >= 8) { w = be32((int)pos + 8); h = be32((int)pos + 12); }
+            else if (type == "acTL" && n >= 8) return new[] { (int)Math.Min(w, int.MaxValue), (int)Math.Min(h, int.MaxValue), (int)Math.Min(be32((int)pos + 8), int.MaxValue) };
+            else if (type == "IDAT") return null;
+            pos += 12 + n;
+        }
+        return null;
     }
 
     void MakeAppearanceDir() {
@@ -769,19 +799,34 @@ public class Backend {
         } catch { }  // (then those apps show the colors only)
     }
 
-    // copies a JPG or PNG in as <slot>.jpg|png (the other one of the slot goes), the long side 1200 at most
+    // copies a JPG or PNG in as <slot>.jpg|png (the slot's other files go), the long side 1200 at most; an animated GIF
+    // or APNG as it is (#56: <slot>.gif, an APNG <slot>.png), within the limits above; a GIF of one frame as a PNG
     public string ImportImage(string source, string slot) {
         if (Array.IndexOf(ImageSlots, slot) < 0) throw new Exception("unknown slot " + slot);
         byte[] bytes = File.ReadAllBytes(source);
+        int[] apng = ApngInfo(bytes);
+        if (apng != null && apng[2] > 1) {
+            CheckAnimation(bytes.Length, apng[0], apng[1], apng[2]);
+            return StoreImage(slot, ".png", bytes);
+        }
         string ext;
         System.Drawing.Imaging.ImageFormat format;
         using (var ms = new MemoryStream(bytes)) {
             Image img;
-            try { img = Image.FromStream(ms); } catch { throw new Exception("請選擇 JPG 或 PNG 圖片"); }
+            try { img = Image.FromStream(ms); } catch { throw new Exception("請選擇 JPG、PNG 或 GIF 圖片"); }
             using (img) {
                 if (img.RawFormat.Equals(System.Drawing.Imaging.ImageFormat.Jpeg)) { ext = ".jpg"; format = System.Drawing.Imaging.ImageFormat.Jpeg; }
                 else if (img.RawFormat.Equals(System.Drawing.Imaging.ImageFormat.Png)) { ext = ".png"; format = System.Drawing.Imaging.ImageFormat.Png; }
-                else throw new Exception("請選擇 JPG 或 PNG 圖片");
+                else if (img.RawFormat.Equals(System.Drawing.Imaging.ImageFormat.Gif)) {
+                    int frames = img.GetFrameCount(System.Drawing.Imaging.FrameDimension.Time);
+                    if (frames > 1) {
+                        CheckAnimation(bytes.Length, img.Width, img.Height, frames);
+                        return StoreImage(slot, ".gif", bytes);
+                    }
+                    ext = ".png";  // (one frame: a still, as the others)
+                    format = System.Drawing.Imaging.ImageFormat.Png;
+                }
+                else throw new Exception("請選擇 JPG、PNG 或 GIF 圖片");
                 // a photo taken upright on a phone has EXIF orientation: turned upright here (the IME does not read
                 // it), and saved again without it, so the page and the IME show the same
                 if (Array.IndexOf(img.PropertyIdList, 0x0112) >= 0) {
@@ -811,11 +856,18 @@ public class Backend {
                 }
             }
         }
+        return StoreImage(slot, ext, bytes);
+    }
+
+    // the photo written as <slot><ext>, the slot's files of the other kinds removed
+    string StoreImage(string slot, string ext, byte[] bytes) {
         MakeAppearanceDir();
         string name = slot + ext;
         File.WriteAllBytes(Path.Combine(AppearanceDir, name), bytes);
-        string other = Path.Combine(AppearanceDir, slot + (ext == ".jpg" ? ".png" : ".jpg"));
-        if (File.Exists(other)) File.Delete(other);
+        foreach (string e in ImageExts) {
+            string other = Path.Combine(AppearanceDir, slot + e);
+            if (e != ext && File.Exists(other)) File.Delete(other);
+        }
         return name;
     }
 
@@ -824,13 +876,14 @@ public class Backend {
         if (!ImageName(file)) return null;
         string p = Path.Combine(AppearanceDir, file);
         if (!File.Exists(p)) return null;
-        string mime = Path.GetExtension(file).ToLowerInvariant() == ".png" ? "image/png" : "image/jpeg";
+        string e = Path.GetExtension(file).ToLowerInvariant();
+        string mime = e == ".png" ? "image/png" : e == ".gif" ? "image/gif" : "image/jpeg";
         return "data:" + mime + ";base64," + Convert.ToBase64String(File.ReadAllBytes(p));
     }
 
     void RemoveImage(string slot) {
         if (Array.IndexOf(ImageSlots, slot) < 0) return;
-        foreach (string ext in new[] { ".jpg", ".png" }) {
+        foreach (string ext in ImageExts) {
             string p = Path.Combine(AppearanceDir, slot + ext);
             if (File.Exists(p)) File.Delete(p);
         }

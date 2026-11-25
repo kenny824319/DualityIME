@@ -8,6 +8,7 @@
 #include <objbase.h>
 #include <psapi.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -107,6 +108,45 @@ int wmain(int argc, wchar_t** argv) {
         std::printf("first show and paint: %.1f ms\nrepaint: %.2f ms (50)\nworking set: %.1f -> %.1f MB\n",
                     1000.0 * (t1.QuadPart - t0.QuadPart) / f.QuadPart, 1000.0 * (t2.QuadPart - t1.QuadPart) / f.QuadPart / 50,
                     before.WorkingSetSize / 1048576.0, after.WorkingSetSize / 1048576.0);
+        return 0;
+    }
+    if (out == L"--anim" && argc > 4) {
+        // 動圖 (#56): sz_uishot --anim <out folder> <photo folder> <file name> [seconds]: the candidate list with that
+        // photo in a window of its own - saved at 0, 0.25, 0.5, 1 s (cand_<ms>.bmp), then shown `seconds` (default 10)
+        // more: this process's CPU time and working set while it plays, and its repaints
+        std::wstring folder = argv[2], dir = argv[3], file = argv[4];
+        int seconds = argc > 5 ? _wtoi(argv[5]) : 10;
+        CreateDirectoryW(folder.c_str(), nullptr);
+        std::string name;
+        for (wchar_t c : file) name += static_cast<char>(c);  // (an ASCII name: the photo copied there by the caller)
+        bool ok = false;
+        Json a = Json::parse("{\"on\": true, \"bg\": \"#1d2340\", \"text\": \"#e6e9ff\", \"select\": \"#6c7cff\", "
+                             "\"all\": {\"image\": \"" + name + "\", \"fade\": 30}}", &ok);
+        set_appearance(parse_appearance(&a, dir));
+        CandidateWindow cand;
+        RECT caret{400, 300, 402, 320};
+        std::vector<std::wstring> items = {L"你", L"妳", L"擬", L"尼", L"泥", L"逆", L"膩", L"倪", L"霓"};
+        cand.show(items, 0, 0, 3, L"Microsoft JhengHei UI", 20, L"123456789", 1, caret);
+        HWND hwnd = FindWindowW(L"DualityIMECandidates", nullptr);
+        DWORD start = GetTickCount();
+        for (int ms : {0, 250, 500, 1000}) {
+            pump(static_cast<DWORD>(std::max<LONG>(0, static_cast<LONG>(start + ms - GetTickCount()))));
+            save(hwnd, folder + L"\\cand_" + std::to_wstring(ms) + L".bmp");
+        }
+        FILETIME c0, e0, k0, u0, c1, e1, k1, u1;
+        PROCESS_MEMORY_COUNTERS mem{};
+        GetProcessTimes(GetCurrentProcess(), &c0, &e0, &k0, &u0);
+        LARGE_INTEGER f, t0, t1;
+        QueryPerformanceFrequency(&f);
+        QueryPerformanceCounter(&t0);
+        pump(static_cast<DWORD>(seconds) * 1000);
+        QueryPerformanceCounter(&t1);
+        GetProcessTimes(GetCurrentProcess(), &c1, &e1, &k1, &u1);
+        GetProcessMemoryInfo(GetCurrentProcess(), &mem, sizeof mem);
+        auto ticks = [](FILETIME t) { return (static_cast<unsigned long long>(t.dwHighDateTime) << 32) | t.dwLowDateTime; };
+        double cpu = (ticks(k1) - ticks(k0) + ticks(u1) - ticks(u0)) / 1e4, wall = 1000.0 * (t1.QuadPart - t0.QuadPart) / f.QuadPart;
+        std::printf("visible %d; cpu %.0f ms in %.0f ms (%.2f%% of one core); working set %.1f MB\n", cand.visible() ? 1 : 0,
+                    cpu, wall, 100.0 * cpu / wall, mem.WorkingSetSize / 1048576.0);
         return 0;
     }
     std::wstring photo_dir = argc > 3 && std::wstring(argv[2]) == L"--photo" ? argv[3] : L"";

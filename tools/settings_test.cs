@@ -522,18 +522,60 @@ static class SettingsTest {
             Check("a photo with EXIF orientation 6 is turned upright", got == "tip.jpg" &&
                   sizeOf(Path.Combine(looks, "tip.jpg")) == new System.Drawing.Size(200, 300), got);
             bool refusedBmp = false;
-            try { b.ImportImage(picture("x.bmp", 10, 10, System.Drawing.Imaging.ImageFormat.Bmp), "all"); } catch (Exception e) { refusedBmp = e.Message == "請選擇 JPG 或 PNG 圖片"; }
+            try { b.ImportImage(picture("x.bmp", 10, 10, System.Drawing.Imaging.ImageFormat.Bmp), "all"); } catch (Exception e) { refusedBmp = e.Message == "請選擇 JPG、PNG 或 GIF 圖片"; }
             Check("a BMP is refused", refusedBmp, "");
+            // 動圖 (#56): an animated GIF or APNG is copied as it is (re-encoding would stop it), a one-frame GIF becomes a
+            // PNG as other stills; too large (file, frames, long side, or its frames together) is refused; the slot's
+            // other files go
+            Func<string, byte[], string> file_of = (name, bytes) => { string p = Path.Combine(pics, name); File.WriteAllBytes(p, bytes); return p; };
+            string tooBig = "動圖太大，請換一張檔案較小、張數較少的";
+            Func<string, string, string> refusal = (path, slot) => {
+                try { b.ImportImage(path, slot); return null; } catch (Exception e) { return e.Message; }
+            };
+            byte[] gif = AnimGif(40, 30, 3, 0, 0);
+            File.WriteAllBytes(Path.Combine(looks, "keyboard.jpg"), new byte[] { 1 });
+            File.WriteAllBytes(Path.Combine(looks, "keyboard.png"), new byte[] { 2 });
+            got = b.ImportImage(file_of("dance.gif", gif), "keyboard");
+            Check("an animated GIF is copied byte for byte as <slot>.gif, the slot's JPG and PNG gone", got == "keyboard.gif" &&
+                  File.ReadAllBytes(Path.Combine(looks, "keyboard.gif")).SequenceEqual(gif) &&
+                  !File.Exists(Path.Combine(looks, "keyboard.jpg")) && !File.Exists(Path.Combine(looks, "keyboard.png")), got);
+            byte[] apng = Apng(24, 16, 3, 0);
+            got = b.ImportImage(file_of("dog.png", apng), "fill");
+            Check("an APNG is copied byte for byte as <slot>.png", got == "fill.png" &&
+                  File.ReadAllBytes(Path.Combine(looks, "fill.png")).SequenceEqual(apng), got);
+            got = b.ImportImage(file_of("one.gif", AnimGif(40, 30, 1, 0, 0)), "keyboard");
+            Check("a one-frame GIF becomes <slot>.png (a still), the slot's GIF gone", got == "keyboard.png" &&
+                  sizeOf(Path.Combine(looks, "keyboard.png")) == new System.Drawing.Size(40, 30) &&
+                  !File.Exists(Path.Combine(looks, "keyboard.gif")), got);
+            got = b.ImportImage(file_of("one.png", Apng(24, 16, 1, 0)), "bar");
+            Check("an APNG of one frame is a still: saved again as PNG", got == "bar.png" &&
+                  !File.ReadAllBytes(Path.Combine(looks, "bar.png")).SequenceEqual(Apng(24, 16, 1, 0)), got);
+            string r1 = refusal(file_of("many.gif", AnimGif(4, 4, 301, 0, 0)), "mode");
+            string r2 = refusal(file_of("wide.gif", AnimGif(1300, 10, 2, 0, 0)), "mode");
+            string r3 = refusal(file_of("heavy.gif", AnimGif(4, 4, 2, 0, 21 << 20)), "mode");
+            string r4 = refusal(file_of("huge.png", Apng(1200, 1200, 13, 0, 1)), "mode");  // (13 x 5.76 MB over 64 MB)
+            string r5 = refusal(file_of("fine.png", Apng(1200, 1200, 11, 0, 1)), "mode");  // (11: 63 MB)
+            Check("an animation of 301 frames, 1300 px, over 20 MB, or frames over 64 MB together is refused",
+                  r1 == tooBig && r2 == tooBig && r3 == tooBig && r4 == tooBig, r1 + " | " + r2 + " | " + r3 + " | " + r4);
+            Check("frames of 63 MB together are taken", r5 == null && File.Exists(Path.Combine(looks, "mode.png")), r5);
+            Check("a refused animation leaves the slot as it was", !File.Exists(Path.Combine(looks, "mode.gif")), "");
+            got = b.ImportImage(file_of("dance2.gif", gif), "keyboard");
+            Check("the page's preview of a GIF is a data:image/gif URL",
+                  ((string)call("imageUrl", new Dictionary<string, object> { { "file", "keyboard.gif" } })).StartsWith("data:image/gif;base64,"), "");
             byte[] allBytes = File.ReadAllBytes(Path.Combine(looks, "all.png"));
             b.WriteBackup(file);
             var withPics = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(file, Encoding.UTF8));
             var images = withPics.ContainsKey("appearance_images") ? withPics["appearance_images"] as Dictionary<string, object> : null;
-            Check("the backup has the photos", images != null && images.ContainsKey("all.png") && images.ContainsKey("cand.jpg"), json.Serialize(images));
+            Check("the backup has the photos", images != null && images.ContainsKey("all.png") && images.ContainsKey("cand.jpg") &&
+                  images.ContainsKey("keyboard.gif") && images.ContainsKey("fill.png"), json.Serialize(images.Keys));
             Directory.Delete(looks, true);
             b.ReadBackup(file);
             call("restoreBackup", new Dictionary<string, object> { { "config", true } });
             Check("restoring 設定 writes the photos back", File.Exists(Path.Combine(looks, "all.png")) &&
                   File.ReadAllBytes(Path.Combine(looks, "all.png")).SequenceEqual(allBytes), "");
+            Check("restoring 設定 writes an animated GIF and APNG back as they were",
+                  File.Exists(Path.Combine(looks, "keyboard.gif")) && File.ReadAllBytes(Path.Combine(looks, "keyboard.gif")).SequenceEqual(gif) &&
+                  File.ReadAllBytes(Path.Combine(looks, "fill.png")).SequenceEqual(apng), "");
             // a backup naming a file with a path in it writes nothing outside appearance\ (review 2026-11-13)
             var evil = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(file, Encoding.UTF8));
             string outside = Path.Combine(dir, "all.png");
@@ -597,6 +639,97 @@ static class SettingsTest {
         }
         Console.WriteLine(failed == 0 ? "all passed" : failed + " failed");
         return failed;
+    }
+
+    // 動圖 (#56): a GIF written by hand - frames of solid colours (the first the whole picture, the rest 1x1 at the
+    // corner), NETSCAPE loop `loop` (-1: none), and `pad` bytes of a comment (a file over a size). LZW with literal
+    // codes only (8-bit codes, a clear code every 120), as tests/test_anim_image.py writes them
+    static byte[] AnimGif(int w, int h, int frames, int loop, int pad) {
+        var o = new List<byte>(Encoding.ASCII.GetBytes("GIF89a"));
+        Action<int> u16 = (v) => { o.Add((byte)(v & 0xFF)); o.Add((byte)(v >> 8)); };
+        u16(w); u16(h);
+        o.AddRange(new byte[] { 0xF6, 0, 0 });
+        for (int i = 0; i < 128; ++i) o.AddRange(new byte[] { (byte)(i * 2), (byte)(255 - i), (byte)(i * 37) });
+        if (loop >= 0) { o.AddRange(new byte[] { 0x21, 0xFF, 0x0B }); o.AddRange(Encoding.ASCII.GetBytes("NETSCAPE2.0")); o.AddRange(new byte[] { 3, 1 }); u16(loop); o.Add(0); }
+        if (pad > 0) {
+            o.AddRange(new byte[] { 0x21, 0xFE });
+            for (int left = pad; left > 0; left -= 255) { int n = Math.Min(255, left); o.Add((byte)n); o.AddRange(new byte[n]); }
+            o.Add(0);
+        }
+        for (int k = 0; k < frames; ++k) {
+            int fw = k == 0 ? w : 1, fh = k == 0 ? h : 1;
+            o.AddRange(new byte[] { 0x21, 0xF9, 4, 4 }); u16(10); o.AddRange(new byte[] { 0, 0 });
+            o.Add(0x2C); u16(0); u16(0); u16(fw); u16(fh); o.Add(0);
+            var data = new List<byte> { 128 };
+            for (int i = 0; i < fw * fh; ++i) {
+                if (i > 0 && i % 120 == 0) data.Add(128);
+                data.Add((byte)(k % 128));
+            }
+            data.Add(129);
+            o.Add(7);
+            for (int i = 0; i < data.Count; i += 255) { int n = Math.Min(255, data.Count - i); o.Add((byte)n); o.AddRange(data.GetRange(i, n)); }
+            o.Add(0);
+        }
+        o.Add(0x3B);
+        return o.ToArray();
+    }
+
+    // an APNG written by hand: RGBA, `frames` frames (1: acTL of one frame, a still), the first the whole picture, the
+    // rest whole too or (side > 0) side x side at the corner; num_plays `plays`
+    static byte[] Apng(int w, int h, int frames, int plays, int side = 0) {
+        var png = new List<byte> { 0x89, (byte)'P', (byte)'N', (byte)'G', 13, 10, 26, 10 };
+        Action<string, byte[]> chunk = (type, data) => {
+            var body = new List<byte>(Encoding.ASCII.GetBytes(type));
+            body.AddRange(data);
+            png.AddRange(Be32((uint)data.Length));
+            png.AddRange(body);
+            png.AddRange(Be32(Crc32(body.ToArray())));
+        };
+        var ihdr = new List<byte>(); ihdr.AddRange(Be32((uint)w)); ihdr.AddRange(Be32((uint)h)); ihdr.AddRange(new byte[] { 8, 6, 0, 0, 0 });
+        chunk("IHDR", ihdr.ToArray());
+        var actl = new List<byte>(); actl.AddRange(Be32((uint)frames)); actl.AddRange(Be32((uint)plays));
+        chunk("acTL", actl.ToArray());
+        uint seq = 0;
+        for (int k = 0; k < frames; ++k) {
+            int fw = k > 0 && side > 0 ? side : w, fh = k > 0 && side > 0 ? side : h;
+            var fc = new List<byte>(); fc.AddRange(Be32(seq++)); fc.AddRange(Be32((uint)fw)); fc.AddRange(Be32((uint)fh));
+            fc.AddRange(Be32(0)); fc.AddRange(Be32(0)); fc.AddRange(new byte[] { 0, 1, 0, 10, 0, 0 });
+            chunk("fcTL", fc.ToArray());
+            byte[] raw = new byte[(fw * 4 + 1) * fh];
+            for (int r = 0; r < fh; ++r)
+                for (int c = 0; c < fw; ++c) {
+                    int at = r * (fw * 4 + 1) + 1 + c * 4;
+                    raw[at] = (byte)(40 * k); raw[at + 1] = 120; raw[at + 2] = (byte)(255 - 30 * k); raw[at + 3] = 255;
+                }
+            byte[] z = Zlib(raw);
+            if (k == 0) chunk("IDAT", z);
+            else { var fd = new List<byte>(Be32(seq++)); fd.AddRange(z); chunk("fdAT", fd.ToArray()); }
+        }
+        chunk("IEND", new byte[0]);
+        return png.ToArray();
+    }
+
+    static byte[] Be32(uint v) { return new[] { (byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v }; }
+
+    static uint Crc32(byte[] data) {
+        uint c = 0xFFFFFFFF;
+        foreach (byte x in data) {
+            c ^= x;
+            for (int j = 0; j < 8; ++j) c = (c & 1) != 0 ? 0xEDB88320 ^ (c >> 1) : c >> 1;
+        }
+        return c ^ 0xFFFFFFFF;
+    }
+
+    static byte[] Zlib(byte[] raw) {
+        using (var ms = new MemoryStream()) {
+            ms.WriteByte(0x78); ms.WriteByte(0x01);
+            using (var d = new System.IO.Compression.DeflateStream(ms, System.IO.Compression.CompressionMode.Compress, true)) d.Write(raw, 0, raw.Length);
+            uint a = 1, b2 = 0;
+            foreach (byte x in raw) { a = (a + x) % 65521; b2 = (b2 + a) % 65521; }
+            byte[] adler = Be32((b2 << 16) | a);
+            ms.Write(adler, 0, 4);
+            return ms.ToArray();
+        }
     }
 
     static Dictionary<string, object> Obj(JavaScriptSerializer json, string text) {

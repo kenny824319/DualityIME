@@ -22,6 +22,7 @@ namespace {
 
 constexpr UINT_PTR TIMER_HIDE = 1;
 constexpr UINT_PTR TIMER_CARET = 2;
+constexpr UINT_PTR TIMER_ANIM = 0x5638;  // an animated photo's next frame (#56; every popup's own)
 
 const Theme kDark = {RGB(12, 12, 12), RGB(30, 30, 30), RGB(58, 58, 58), RGB(17, 17, 17), RGB(240, 240, 240),
                      RGB(130, 130, 130), RGB(0, 103, 192), RGB(255, 255, 255), RGB(70, 70, 70), RGB(64, 64, 64),
@@ -255,6 +256,7 @@ double Popup::scale() const {
 }
 
 void Popup::place(int x, int y, int w, int h) {
+    if (!visible_) shown_tick_ = GetTickCount64();  // (shown again: an animated photo starts over)
     SetWindowPos(hwnd_, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     visible_ = true;
     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -262,6 +264,7 @@ void Popup::place(int x, int y, int w, int h) {
 
 void Popup::hide() {
     if (hwnd_ && visible_) ShowWindow(hwnd_, SW_HIDE);
+    if (hwnd_) KillTimer(hwnd_, TIMER_ANIM);  // (hidden: no frame plays)
     visible_ = false;
 }
 
@@ -274,7 +277,15 @@ void Popup::paint() {
     HDC mem = CreateCompatibleDC(dc);
     HBITMAP bmp = CreateCompatibleBitmap(dc, w, h);
     HGDIOBJ old = SelectObject(mem, bmp);
+    // (an animated photo: draw_background picks the frame of the time since shown and says when the next is due)
+    AnimClock& clock = anim_clock();
+    long long elapsed = static_cast<long long>(GetTickCount64() - shown_tick_);
+    clock = AnimClock{elapsed, -1};
     draw(mem, w, h);
+    if (clock.next_ms >= 0 && visible_)
+        SetTimer(hwnd_, TIMER_ANIM, static_cast<UINT>(std::clamp<long long>(clock.next_ms - elapsed, 20, 60000)), nullptr);
+    else
+        KillTimer(hwnd_, TIMER_ANIM);
     BitBlt(dc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
     SelectObject(mem, old);
     DeleteObject(bmp);
@@ -304,6 +315,11 @@ LRESULT CALLBACK Popup::proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     try {
         if (msg == WM_PAINT) {
             self->paint();
+            return 0;
+        }
+        if (msg == WM_TIMER && wp == TIMER_ANIM) {  // an animated photo's next frame: painted again (it sets the next)
+            KillTimer(hwnd, TIMER_ANIM);
+            if (self->visible_) InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         bool done = false;
@@ -984,7 +1000,7 @@ void SymbolKeyboard::draw(HDC dc, int w, int h) {
     auto emoji = [](const std::wstring& t) {
         // the emoji BMP characters shown as emoji by default (Unicode Emoji_Presentation: ✨ ☕ ⭐ ⚡ ✅ ❌ ⚽ ⛄ ⌛ ❗,
         // which the emoji panel types without FE0F - findings #128; none on the built-in pages)
-        static const std::pair<wchar_t, wchar_t> bmp[] = {
+        static const std::pair<unsigned, unsigned> bmp[] = {
             {0x231A, 0x231B}, {0x23E9, 0x23EC}, {0x23F0, 0x23F0}, {0x23F3, 0x23F3}, {0x25FD, 0x25FE}, {0x2614, 0x2615},
             {0x2648, 0x2653}, {0x267F, 0x267F}, {0x2693, 0x2693}, {0x26A1, 0x26A1}, {0x26AA, 0x26AB}, {0x26BD, 0x26BE},
             {0x26C4, 0x26C5}, {0x26CE, 0x26CE}, {0x26D4, 0x26D4}, {0x26EA, 0x26EA}, {0x26F2, 0x26F3}, {0x26F5, 0x26F5},

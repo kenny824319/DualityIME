@@ -8,6 +8,9 @@
 //     tools/compare.py checks them against tests/photo_frames.json)
 //   sz_trace --places: lines "frame_w frame_h zoom x y w h photo_w photo_h" on stdin, "left top w h" for each
 //     (where the photo goes: tests/photo_places.json)
+//   sz_trace --anim <file>: an animated photo as the DLL reads it (#56): "w h frames loops", then "delay_ms sha1" for
+//     each frame (sha1 of its RGBA bytes, see-through pixels 0 0 0 0), or "still" (tests/test_anim_image.py)
+//   sz_trace --anim-at <file> <ms>...: for each time, "frame next_ms" (the frame shown then, the next change or -1)
 // Script lines: characters as typed, {DOWN} {ENTER} ... special keys,
 // {#5} a numpad key, {CAPS} Caps Lock on/off, {UNDO} take back the last commit,
 // {FW} 全形 on/off, {SC} 簡體輸出 on/off (#32), {RESET} focus change, {CL} context lost (#37), {LB} a literal "{".
@@ -27,8 +30,12 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <bcrypt.h>
+#include <objbase.h>
 #include <psapi.h>
+#include <shellapi.h>
 
+#include "../common/anim_image.h"
 #include "../engine/composer.h"
 #include "../engine/lm.h"
 #include "../engine/lm_pool.h"
@@ -159,6 +166,53 @@ static void print_memory(const char* when) {
                 m.WorkingSetSize / 1048576.0, m.PeakWorkingSetSize / 1048576.0, m.PrivateUsage / 1048576.0);
 }
 
+// sha1 of a frame's RGBA bytes (from premultiplied BGRA; see-through pixels 0 0 0 0), as tests/test_anim_image.py
+static std::string rgba_sha1(const std::vector<uint8_t>& bgra) {
+    std::vector<uint8_t> rgba(bgra.size());
+    for (size_t i = 0; i + 3 < bgra.size(); i += 4) {
+        int a = bgra[i + 3];
+        auto un = [&](int c) { return static_cast<uint8_t>(a ? std::min(255, (c * 255 + a / 2) / a) : 0); };
+        rgba[i] = un(bgra[i + 2]);
+        rgba[i + 1] = un(bgra[i + 1]);
+        rgba[i + 2] = un(bgra[i]);
+        rgba[i + 3] = static_cast<uint8_t>(a);
+    }
+    unsigned char digest[20] = {};
+    BCryptHash(BCRYPT_SHA1_ALG_HANDLE, nullptr, 0, rgba.data(), static_cast<ULONG>(rgba.size()), digest, 20);
+    std::string hex;
+    char b[3];
+    for (unsigned char c : digest) {
+        std::snprintf(b, sizeof b, "%02x", c);
+        hex += b;
+    }
+    return hex;
+}
+
+static int anim(int argc, char** argv) {
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    // (the file's name from the wide command line: argv is in the ANSI code page, 梅露露汪汪叫.png did not survive it)
+    int wargc = 0;
+    LPWSTR* wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
+    std::wstring path = wargv && wargc > 2 ? std::wstring(wargv[2]) : widen(argv[2]);
+    if (wargv) LocalFree(wargv);
+    AnimImage im;
+    if (!load_anim(path, im, size_t(1) << 31)) {
+        std::printf("still\n");
+        return 0;
+    }
+    if (std::string(argv[1]) == "--anim-at") {
+        for (int i = 3; i < argc; ++i) {
+            long long next = 0;
+            int k = frame_at(im.delays_ms, im.loops, std::atoll(argv[i]), &next);
+            std::printf("%d %lld\n", k, next);
+        }
+        return 0;
+    }
+    std::printf("%d %d %zu %d\n", im.w, im.h, im.frames.size(), im.loops);
+    for (size_t k = 0; k < im.frames.size(); ++k) std::printf("%d %s\n", im.delays_ms[k], rgba_sha1(im.frames[k]).c_str());
+    return 0;
+}
+
 int main(int argc, char** argv) {
     // (debug builds: a failed check is printed instead of opening a window)
     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
@@ -166,6 +220,8 @@ int main(int argc, char** argv) {
     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
     if (argc == 4 && std::string(argv[1]) == "--lm-check") return lm_check(argv[2], argv[3]);
+    if ((argc == 3 && std::string(argv[1]) == "--anim") || (argc >= 3 && std::string(argv[1]) == "--anim-at"))
+        return anim(argc, argv);
     if (argc == 2 && std::string(argv[1]) == "--frames") {
         std::string window;
         int keys, per_line, font;
