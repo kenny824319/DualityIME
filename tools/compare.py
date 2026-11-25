@@ -72,6 +72,10 @@ CASES = [
     # no text before it, 在 written right staying, 下輩子不一定能再遇見 (refine's 再 at the end), and a pick of 在 kept
     "{CL}y94fm4d042u04u/3{ENTER}", "{CL}w8 y94vm,6vul42j6gj {ENTER}ji3y94ru8 d04gj {ENTER}",
     "{CL}vu841o4y71j4u 2u/4s/6y94m4ru04{ENTER}", "{CL}y94fm4d042u04u/3{HOME}{DOWN}{DOWN}{ENTER}{ENTER}{RESET}",
+    # a digit key after an English word starting a syllable (#75, thirty-first to thirty-third: --cases 33 runs them):
+    # 用tab補 and 用google找; win10 的, iphone15 很貴, tab1, MP5k (a capital before: a code) stay English
+    "m/4tab1j3y4{ENTER}m/4google5l3{ENTER}", "win102k7{ENTER}iphone15cp3ejo4{ENTER}tab1{ENTER}",
+    "MP5k {ENTER}g3m/4tab12k7{ENTER}{RESET}",
     # 接續前文選字 (#37): 我們先去吃飯 sent, then ㄗㄞˋ去看電影 read after it; after {CL} (the caret moved) and after
     # English at the buffer's start, without it; three sentences in a row; undo puts the context back
     "ji3ap7vu0 fm4t z04{ENTER}y94fm4d042u04u/3{ENTER}ji3ap7vu0 fm4t z04{ENTER}{CL}y94fm4d042u04u/3{ENTER}",

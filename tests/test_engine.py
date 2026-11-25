@@ -7072,6 +7072,48 @@ class RefineTierTest(unittest.TestCase):
         self.assertNotIn("别", c.composition)
 
 
+class DigitAfterEnglishTest(Base):
+    """#75 (the user 2026-11-25): a digit key right after an English word that starts, with the keys after it, a whole
+    syllable typed with its tone is zhuyin (用tab補字, 用google找: ㄅ ㄓ are 1 5); a digit with no syllable after it
+    stays in the English (win10 的, ps5 的遊戲, iphone15 很貴, tab1)."""
+
+    def typed(self, text):
+        c = self.c
+        c.reset()
+        for ch in keys(text):
+            c.key(ch)
+        out = c.composition
+        c.reset()
+        return out
+
+    def test_a_syllable_starting_with_a_digit_key(self):
+        # (補 read as zhuyin; 字 after it is the dictionary's: 補字 is no word in it, 補自 with no memory - apart from #75)
+        self.assertTrue(self.typed("ㄩㄥˋ tab ㄅㄨˇ ㄗˋ").startswith("用tab補"))
+        self.assertEqual(self.typed("ㄩㄥˋ google ㄓㄠˇ"), "用google找")
+
+    def test_a_digit_with_no_syllable_after_it_stays_english(self):
+        for text, want in (("win10 ㄉㄜ˙", "win10的"), ("ps5 ㄉㄜ˙ ㄧㄡˊ ㄒㄧˋ", "ps5的遊戲"),
+                           ("iphone15 ㄏㄣˇ ㄍㄨㄟˋ", "iphone15很貴"), ("ㄨㄛˇ ㄩㄥˋ iphone15", "我用iphone15"),
+                           ("covid19 ㄧˋ ㄑㄧㄥˊ", "covid19疫情"), ("h264 ㄅㄧㄢ ㄇㄚˇ", "h264編碼"), ("tab1", "tab1"),
+                           ("ㄕˇ ㄩㄥˋ tab1 ㄉㄜ˙", "使用tab1的"), ("v3.2", "v3.2"),
+                           ("ㄨㄛˇ ㄩㄥˋ python3 ㄒㄧㄝˇ", "我用python3寫")):
+            with self.subTest(text):
+                self.assertEqual(self.typed(text), want)
+
+    def test_a_code_with_a_space_or_digits_after_the_digit(self):
+        # (a space is no first tone here, digits no syllable: ps5 + space after Chinese stayed a code, not 之 - code
+        # memory's codes, tools/code_memory_eval.py, found the first rule turning ten of them)
+        for keys_typed, want in (("ji3ps5 ", "我ps5 "), ("ji3win10 ", "我win10 "), ("ji3a54 ", "我a54 "),
+                                 ("ji3utf8 ", "我utf8 "), ("ji3html5 ", "我html5 ")):
+            with self.subTest(keys_typed):
+                c = self.c
+                c.reset()
+                for ch in keys_typed:
+                    c.key(ch)
+                self.assertEqual(c.composition, want)
+                c.reset()
+
+
 class ZaiPairTest(unittest.TestCase):
     """「在」和「再」 (#24): at a single-character place written 在 or 再, each tier writes 再 when d + w·u > θ (d: the
     path's own score with 再 minus with 在, u: the model's log10 of the whole text with 再 minus with 在; REFINE_ZAI,

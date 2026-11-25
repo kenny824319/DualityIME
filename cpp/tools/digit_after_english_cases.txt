@@ -1,0 +1,9 @@
+# A digit key after an English word that starts a syllable typed with its tone is zhuyin (#75, the user 2026-11-25:
+# 用tab補字 came out 用tab1五字 - 補 here, 字 after it is the dictionary's until 3.3.2 #79 - and 用google找 用google5l3);
+# a digit no syllable follows stays in the English (win10 的, iphone15 很貴, ps5 的遊戲, tab1, a capital before: MP5)
+m/4tab1j3{ENTER} => 用tab補
+m/4google5l3{ENTER} => 用google找
+win102k7{ENTER} => win10的
+iphone15cp3ejo4{ENTER} => iphone15很貴
+ps52k7u.6vu4{ENTER} => ps5的遊戲
+g3m/4tab12k7{ENTER} => 使用tab1的

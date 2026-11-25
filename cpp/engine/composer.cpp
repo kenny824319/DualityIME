@@ -377,6 +377,7 @@ constexpr double EN_KNOWN_AFTER = -0.6; // ...it follows an English word (look u
 constexpr double EN_CAPITAL = 0.3;      // each letter of a run with a capital in it, no word: surely English
 constexpr double EN_UNKNOWN = 1.0;      // each letter of a run that is no word (asdf, pime)
 constexpr double EN_DIGIT = 1.4;        // each digit (python3, h264)
+constexpr double EN_DIGIT_SYLLABLE = 3.0;  // English holding a digit key that starts a syllable after a letter (#75)
 constexpr double EN_SYMBOL = 1.0;       // each other key inside (setup.exe, abc@example.com)
 constexpr double EN_LEARNED = -1.0;     // the user picked these keys as English before
 constexpr double EN_SWITCH = 2.8;       // zhuyin right after English with no space (python是)
@@ -496,6 +497,24 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
     // exact: raw offsets where a syllable is not autocorrected; text_start: the run is the text's start (not after a cut);
     // starts: 補字提示 is on (#54)
     const size_t n = raw.size();
+    // (#75) digit keys right after a lower-case letter (capitals are codes: MP5k) that start, with the keys after them,
+    // a whole syllable with its tone (the 1 of tab1j3, the 5 of google5l3): English holding one pays EN_DIGIT_SYLLABLE
+    // (engine/composer.py syllable_digits); syllable_digits_before[x]: how many of them before x
+    std::vector<int> syllable_digits_before(n + 1, 0);
+    for (size_t p = 0; p < n; ++p) {
+        bool is = false;
+        if (p > 0 && raw[p] >= '0' && raw[p] <= '9' && !table.is_tone_key(raw[p]) && raw[p - 1] >= 'a' && raw[p - 1] <= 'z')
+            for (size_t k = p + 3; k <= std::min(n, p + 5) && !is; ++k) {
+                // (a key after the digit that is no digit, a tone that is no space: ps5 + space, a54 stay codes)
+                if (raw[k - 1] == ' ') continue;
+                bool body_digits = true;
+                for (size_t q = p + 1; q < k - 1; ++q) body_digits = body_digits && raw[q] >= '0' && raw[q] <= '9';
+                if (body_digits) continue;
+                auto s = table.parse_syllable(std::string_view(raw).substr(p, k - p));
+                is = s && s->second;
+            }
+        syllable_digits_before[p + 1] = syllable_digits_before[p] + (is ? 1 : 0);
+    }
     // The cheapest split of raw[:j] whose last token is zhuyin right after English with no space - English cut short
     // there, not English the user asked for (state 1) - and the cheapest of all the others (state 0), in the order
     // first reached: as one they lost to a longer English token whose switch was still to come (Session + 能, #42;
@@ -968,6 +987,8 @@ std::vector<Token> tokenize_run(const std::string& raw, const SyllableTable& tab
             }
             double cost = english_piece_cost(piece, english, learned, word_after, mine, contains(exact, ii) ? none : codes);
             if (starts && word_start && j == end && user && user->is_completion_start(piece)) cost = std::min(cost, EN_LEARNED);
+            // (#75: a digit inside that starts a syllable; not for keys picked or remembered as English)
+            if (cost > EN_LEARNED && syllable_digits_before[j] - syllable_digits_before[i + 1] > 0) cost += EN_DIGIT_SYLLABLE;
             cost += bonus + crosses(i, j);
             if (j == end && sp != std::string::npos)
                 offer(i, j + 1, cost, Token{Kind::En, piece + " ", U(piece + " "), ii});

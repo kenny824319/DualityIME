@@ -324,6 +324,15 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
     # English token's switch still to come (u dk y h0 dl3 as English u, dk, y; gpt4 as 申斥; mp3 learned as English, 允).
     best = [{} for _ in range(n + 1)]
     best[0] = {None: (0.0, [])}
+    # (#75) digit keys right after a lower-case letter (capitals are codes: MP5k, D2l) that start, with the keys after
+    # them, a whole syllable with its tone (the 1 of tab1j3: ㄅㄨˇ; the 5 of google5l3: ㄓㄠˇ): English holding one pays
+    # EN["digit_syllable"], so 用tab補 and 用google找 come out; a digit no syllable follows (win10 的, ps5 的,
+    # iphone15 很貴, tab1) is as before
+    # ...a key after the digit that is no digit and a tone that is no space (ps5 + space is no 之, win10 + space no 班,
+    # a54 no 至: 代碼記憶's codes, tools/code_memory_eval.py)
+    syllable_digits = {p for p in range(1, n) if raw[p].isdigit() and raw[p] not in table.tones and raw[p - 1].islower()
+                       and any(raw[k - 1] != " " and not raw[p + 1:k - 1].isdigit() and
+                               (s := table.parse_syllable(raw[p:k])) and s[1] for k in range(p + 3, min(n, p + 5) + 1))}
     learned = user.english if user else set()
     mine = user.sure_english() if user else set()  # 自訂詞彙's English words, and the ones sent twice
     # 代碼記憶: codes the user put back as typed twice are English too (mp3, not 允), the setting on or off
@@ -692,6 +701,8 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
             cost = english_piece_cost(piece, english, learned, word_after, mine, () if i in exact else codes)
             if starts and word_start and j == end and user is not None and user.is_completion_start(piece):
                 cost = min(cost, EN["learned"])  # (as one sent before)
+            if cost > EN["learned"] and any(i < p < j for p in syllable_digits):
+                cost += EN["digit_syllable"]  # (#75: not for keys picked or remembered as English)
             cost += bonus + crosses(i, j)
             if j == end and sp >= 0:
                 offer(j + 1, cost, prev, Token("en", piece + " ", piece + " ", i))
@@ -714,6 +725,7 @@ EN = {
     "capital": 0.3,       # each letter of a run with a capital in it, no word (ASUS): surely English
     "unknown": 1.0,       # each letter of a run that is no word (asdf, pime)
     "digit": 1.4,         # each digit (python3, h264)
+    "digit_syllable": 3.0,  # English holding a digit key that starts a whole syllable after a letter (tab1j3: #75)
     "symbol": 1.0,        # each other key inside (setup.exe, abc@example.com)
     "learned": -1.0,      # the user picked these keys as English before
     "switch": 2.8,        # zhuyin right after English with no space (python是)
