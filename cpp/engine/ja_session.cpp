@@ -12,6 +12,8 @@ bool JaData::ready() {
         if (!table || !dict) {
             table.reset();
             dict.reset();
+        } else {
+            mixed = std::make_unique<JaMixed>(*table, *dict);
         }
     }
     return table && dict;

@@ -323,8 +323,9 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* tm, TfClientId id, DWORD) {
         if (cfg_.start_mode == "english") {
             english_ = true;
             update_mode_ui();
-        } else if (cfg_.start_mode == "ja_only" && cfg_.ja_enabled) {  // 日文 (#36): 純日文 from the start
-            japanese_ = true;
+        } else if ((cfg_.start_mode == "ja_only" || cfg_.start_mode == "ja_mixed") && cfg_.ja_enabled) {
+            japanese_ = true;  // 日文 (#36): 純日文 or 中日混打 from the start
+            ja_mixed_ = cfg_.start_mode == "ja_mixed";
             update_mode_ui();
         }
         activated_at_ = GetTickCount();
@@ -585,11 +586,21 @@ const char* TextService::ja_key(WPARAM vk) const {
     return nullptr;
 }
 
+namespace {
+ComPtr<ITfContext> focused_context(ITfThreadMgr* tm);  // (below: the context with the focus)
+}  // namespace
+
 void TextService::switch_side(ITfContext* ctx) {
     // 中文／日文切換 (#36): what is typed on the side left is sent first; each side keeps its own mode (英 stays 英)
     if (state_.symbol_page >= 0 || state_.fill_open) close_symbols();
     Json req = Json::object();
     if (japanese_) {
+        if (ja_mixed_ && !state_.composition.empty()) {  // (中日混打's text is the Chinese composer's: sent first)
+            Json flush = Json::object();
+            flush["op"] = Json("flush");
+            flush["esc"] = Json(false);
+            call(ctx, flush);
+        }
         req["op"] = Json("ja_flush");  // (the kana lock goes back to 自動 there)
         call(ctx, req);
         japanese_ = false;
@@ -599,10 +610,31 @@ void TextService::switch_side(ITfContext* ctx) {
             req["esc"] = Json(false);
             call(ctx, req);
         }
-        japanese_ = true;
+        japanese_ = true;  // (in the Japanese side's last mode: 中日混打 the first time - 目標 9)
     }
     update_mode_ui();
-    show_mode(japanese_ ? L"日" : english_ ? L"英" : L"中");
+    show_mode(japanese_ ? (ja_mixed_ ? L"中日" : L"日") : english_ ? L"英" : L"中");
+}
+
+void TextService::toggle_ja_mode() {
+    // Shift on the Japanese side (目標 9): 中日混打 <-> 純日文, what is typed in the mode left sent first
+    ComPtr<ITfContext> ctx = comp_context_ ? comp_context_ : focused_context(thread_mgr_.Get());
+    if (state_.symbol_page >= 0 || state_.fill_open) close_symbols();
+    if (!state_.composition.empty() && ctx) {
+        Json req = Json::object();
+        if (ja_mixed_) {  // (the Chinese composer's text)
+            req["op"] = Json("flush");
+            req["esc"] = Json(false);
+        } else {  // (the Japanese composer's: Enter sends it)
+            req["op"] = Json("key");
+            req["special"] = Json("ENTER");
+            req["ja"] = Json(true);
+        }
+        call(ctx.Get(), req);
+    }
+    ja_mixed_ = !ja_mixed_;
+    if (button_) button_->update();
+    show_mode(ja_mixed_ ? L"中日" : L"日");
 }
 
 bool TextService::is_width_key(WPARAM vk) const {
@@ -844,7 +876,7 @@ bool TextService::test_key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
         if (!mark && !held_unseen_) return false;  // (Ctrl+C and the like: nothing more looked at, as before)
     if (!mark) notice_key_ = vk;
         // (not on the Japanese side either: its marks come from the romaji table)
-        bool here = !english_ && !japanese_ &&
+        bool here = !en() && !pure_ja() &&
                     !(state_.composition.empty() && state_.symbol_page < 0 && no_text_field(ctx));
         // (a key no input method saw go down kept it the program's: named at the caret - #73)
         if (!mark && here) stuck_key_hint(held_unseen_);
@@ -852,9 +884,9 @@ bool TextService::test_key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
     }
     // (a Shift tap still switches Chinese/English there)
     if (state_.composition.empty() && state_.symbol_page < 0 && !state_.fill_open && no_text_field(ctx)) return false;
-    if (is_width_key(vk) && !japanese_) return true;  // (Shift+Space on the Japanese side: a space, below - #155)
+    if (is_width_key(vk) && !pure_ja()) return true;  // (Shift+Space in 純日文: a space, below - #155)
     bool composing = !state_.composition.empty();
-    if (japanese_) {
+    if (pure_ja()) {
         // 日文 (#36): every key while Japanese is being typed (F6 / F7 / F8 only with their setting: off, they stay
         // the app's - a key eaten here never reaches an app typing through the IMM32 layer); with nothing typed the
         // printable keys (a space too: a full-width one)
@@ -863,7 +895,7 @@ bool TextService::test_key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
         wchar_t c = char_of(vk, lp);
         return printable(c) && c != L'`';  // (` with nothing typed is the app's: no symbol keyboard here - #157)
     }
-    if (english_) {
+    if (en()) {
         // text typed before switching still has to go out: the next key does it;
         // in 全形 mode every character is ours to type in full width
         return vk != VK_SHIFT && (composing || (cfg_.full_width && printable(char_of(vk, lp))));
@@ -932,6 +964,12 @@ void TextService::stuck_key_hint(unsigned vk) {
 }
 
 bool TextService::key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
+    if (japanese_ && ja_mixed_ && !cfg_.ja_enabled) {
+        // (日文輸入 turned off in the settings while in 中日混打: back to Chinese - the engine reads no romaji now)
+        japanese_ = false;
+        update_mode_ui();
+        show_mode(english_ ? L"英" : L"中");
+    }
     if (!test_key_down(ctx, vk, lp)) return false;
     // ` held down: Windows repeats it; with the symbol keyboard up a second ` would type a ` (` then Space,
     // held or not, opens 快速填入 - #21)
@@ -978,14 +1016,14 @@ bool TextService::key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
         debug("no undo: can_undo=" + std::to_string(state_.can_undo) + " range=" + std::to_string(sent_range_ != nullptr) +
               " composing=" + std::to_string(!state_.composition.empty()));
     Json req = Json::object();
-    if (is_width_key(vk) && !japanese_) {
+    if (is_width_key(vk) && !pure_ja()) {
         req["op"] = Json("full_width");
         call(ctx, req);
         show_mode(cfg_.full_width ? L"全形" : L"半形");
         return true;
     }
     wchar_t ch = char_of(vk, lp);
-    if (japanese_) {  // 日文 (#36): to the engine's Japanese composer
+    if (pure_ja()) {  // 純日文 (#36): to the engine's Japanese composer
         req["op"] = Json("key");
         req["ja"] = Json(true);
         bool shift = down(VK_SHIFT);
@@ -1015,7 +1053,7 @@ bool TextService::key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
         }
         return handled;
     }
-    if (english_) {
+    if (en()) {
         // first key after switching to English with text still being typed:
         // send that text, plus the character of this key
         if (state_.composition.empty()) check_context(ctx);  // (a full-width character sent: as ctrl_punct, #37)
@@ -1054,8 +1092,8 @@ void TextService::key_up(WPARAM vk) {
     if (vk == VK_SHIFT && shift_alone_ && now - shift_down_at_ < SHIFT_TAP_MS && !other_modifier()) {
         shift_alone_ = false;
         // (in a game only in a text box: elsewhere there it is the game's key, see direct; on the Japanese side Shift
-        // switches nothing until 中日混打 comes - #36 plan 3)
-        if (!japanese_) toggle_mode();
+        // switches 中日混打 <-> 純日文 - #36 目標 9)
+        if (japanese_) toggle_ja_mode(); else toggle_mode();
     }
     shift_alone_ = false;
     if (vk == VK_CONTROL && ctrl_alone_ && cfg_.lookup) {
@@ -1173,6 +1211,9 @@ void TextService::read_reply(const Json& r) {
 }
 
 bool TextService::call(ITfContext* ctx, Json request) {
+    // 中日混打 (#36): every request to the Chinese composer (and a kana lock) says whether that mode is on - the engine
+    // reads the letters as romaji then; a new engine (restarted) learns it from the next key too
+    if (!request.get("ja")) request["ja_mixed"] = Json(japanese_ && ja_mixed_);
     Json reply;
     if (!ask(request, reply)) {
         // the engine is gone: leave what is on screen and let keys through
@@ -1863,7 +1904,7 @@ void TextService::pick_candidate(int index) {
     Json req = Json::object();
     req["op"] = Json("key");
     req["ch"] = Json(narrow(std::wstring(1, state_.cand_labels[index])));
-    if (japanese_) req["ja"] = Json(true);  // (日文 #36: the Japanese composer's list)
+    if (pure_ja()) req["ja"] = Json(true);  // (日文 #36: the Japanese composer's list)
     call(ctx.Get(), req);
 }
 
@@ -1893,7 +1934,7 @@ void TextService::candidates_op(const char* op) {
     if (std::string(op) == "expand") {
         req["op"] = Json("key");
         req["special"] = Json("RIGHT");
-        if (japanese_) req["ja"] = Json(true);  // (日文 #36: its list does not spread out; → is the next one)
+        if (pure_ja()) req["ja"] = Json(true);  // (日文 #36: its list does not spread out; → is the next one)
     } else {
         req["op"] = Json("fold");
     }

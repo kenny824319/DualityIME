@@ -9,6 +9,7 @@
 #include "config.h"
 #include "ja_composer.h"
 #include "ja_dict.h"
+#include "ja_mixed.h"
 #include "ja_romaji.h"
 #include "json.h"
 
@@ -19,6 +20,7 @@ struct JaData {
     std::wstring dir;  // data\ beside the engine
     std::unique_ptr<RomajiTable> table;
     std::unique_ptr<JaDict> dict;
+    std::unique_ptr<JaMixed> mixed;  // 中日混打's romaji cost over them (the Chinese composers share it)
     bool tried = false;
     bool ready();  // loads on the first call; false when the files cannot be read
 };

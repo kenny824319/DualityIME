@@ -199,6 +199,7 @@ Json state(Session& s, bool handled) {
         o["fill"] = fill;
     }
     o["can_undo"] = Json(c.can_undo());
+    if (c.japanese()) o["kana_lock"] = Json(c.ja_lock());  // (中日混打, #36: the taskbar's 中ア while katakana is locked)
     // the settings the IME needs: on a connection's first reply and when config.json changed, not on every key
     // (the IME keeps what it got; one connection per TextService - /code-review 2026-11-13)
     if (s.cfg_sent != g->cfg_gen) {
@@ -227,12 +228,34 @@ Json handle(Session& s, const Json& req) {
         c.settings_changed();
     }
     if (JaSession::is_japanese(req)) {  // 日文 (#36): a key on the Japanese side, a kana lock, switching away
+        // (the kana lock holds on 中日混打's Japanese too, the Chinese composer's; switching away sets it back)
+        const Json* opj = req.get("op");
+        std::string jop = opj && opj->is_string() ? opj->as_string() : "";
+        if (jop == "ja_kana") {
+            const Json* lock = req.get("lock");
+            c.set_ja_lock(lock && lock->is_string() ? lock->as_string() : "auto");
+        } else if (jop == "ja_flush") {
+            c.set_ja_lock("auto");
+        }
         Json o = s.ja.handle(req, g->ja, *g->config);
+        const Json* jm = req.get("ja_mixed");
+        if (jop == "ja_kana" && jm && jm->is_bool() && jm->as_bool()) {
+            // (asked in 中日混打: what is typed is the Chinese composer's - its state, not 純日文's empty one)
+            o = state(s, true);
+            c.commit.clear();
+            return o;
+        }
         if (s.cfg_sent != g->cfg_gen) {
             o["cfg"] = cfg_json(c.config);
             s.cfg_sent = g->cfg_gen;
         }
         return o;
+    }
+    // 中日混打 (#36): the IME says on every request to the Chinese composer whether it is in that mode ("ja_mixed"); the
+    // composer reads its letters as romaji then (only with 日文輸入 on and the Japanese data there)
+    if (const Json* jm = req.get("ja_mixed"); jm && jm->is_bool()) {
+        bool on = jm->as_bool() && g->config->flag("ja_enabled") && g->ja.ready();
+        c.set_japanese(on ? g->ja.mixed.get() : nullptr);
     }
     const Json* opv = req.get("op");
     std::string op = opv && opv->is_string() ? opv->as_string() : "";

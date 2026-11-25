@@ -1,0 +1,17 @@
+# e2e-args: -Config cpp\tools\ja_config.json
+# 中日混打 (#36 plan 4) through the real IME: Ctrl+F2 lands on the Japanese side's 中日混打 (the first time and every
+# line here: the file never leaves it in 純日文); the expected text is what the reference engine gives for the same keys
+# in that mode (tools/trace.py with {"ja_mixed": true}), the misreadings measured by tools/ja_mixed_eval.py.
+{^F2}kyouhaiitenki{ENTER}{^F2} => 今日はいい天気
+{^F2}ji3rup wu0 fm4konbini{ENTER}{^F2} => 我今天去コンビニ
+{^F2}su3cl3{ENTER}{^F2} => 你好
+{^F2}kyou,{ENTER}{^F2} => 今日、
+{^F2}hasi{DOWN}{DOWN}{ENTER}wo{ENTER}{^F2} => 橋を
+{^F2}kon{ENTER}{^F2} => 今
+{^F2}ji3kyouhaiitenkidesune{ENTER}{^F2} => 我今日はいい天気ですね
+# the kana locks hold on its Japanese too (目標 9)
+{^F2}{^F7}kyou{ENTER}{^F8}{^F2} => キョウ
+# Shift sends what is typed and goes to 純日文 (a second Shift back to 中日混打, nothing typed)
+{^F2}kyou{SHIFT}{SHIFT}{^F2} => 今日
+# switching to Chinese sends what is typed in 中日混打
+{^F2}ji3{^F2} => 我

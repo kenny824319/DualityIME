@@ -2965,8 +2965,20 @@ std::vector<JaNode> Composer::ja_path(const Token& t, ustr& kana, ustr& pending,
     return ja_convert(kana, ja_->d, ja_pins_of(t, kana)).first;
 }
 
+bool Composer::set_ja_lock(const std::string& lock) {
+    if ((lock == "auto" || lock == "hira" || lock == "kata") && lock != ja_lock_) {
+        ja_lock_ = lock;
+        if (ja_) render();
+    }
+    return true;
+}
+
 ustr Composer::ja_text(const Token& t) const {
     ustr kana, pending, spaces, out;
+    if (ja_lock_ != "auto") {  // (a kana lock: the kana as typed, no conversion)
+        ja_piece(t, kana, pending, spaces);
+        return (ja_lock_ == "hira" ? kana : ja_to_katakana(kana)) + pending + spaces;
+    }
     for (auto& n : ja_path(t, kana, pending, spaces)) out += n.surface;
     return out + pending + spaces;
 }

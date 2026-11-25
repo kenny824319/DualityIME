@@ -86,6 +86,7 @@ class ComposerTest(Base):
         self.c.set_japanese(self.ja)
 
     def tearDown(self):
+        self.c.set_ja_lock("auto")  # (the lock outlives reset, as the IME keeps it: not left for the next test)
         self.c.set_japanese(None)
 
     def type(self, keys_typed, enter=False):
@@ -143,6 +144,16 @@ class ComposerTest(Base):
         self.assertEqual(c.suggestions, [])
         c.key(special="ENTER")
         self.assertEqual((set(c.user.english), dict(c.user.words) if hasattr(c.user, "words") else None), before)
+
+    def test_kana_locks(self):
+        # (目標 9: the kana locks hold on the Japanese part of 中日混打 too)
+        c = self.c
+        c.set_ja_lock("hira")
+        self.assertEqual(self.type(keys("ㄨㄛˇ") + "kyou"), "我きょう")
+        c.set_ja_lock("kata")
+        self.assertEqual(c.composition, "我キョウ")
+        c.set_ja_lock("auto")
+        self.assertEqual(c.composition, "我今日")
 
     def test_off_shows_letters(self):
         self.c.set_japanese(None)

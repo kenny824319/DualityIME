@@ -72,7 +72,8 @@ public:
     // for the language bar button and the windows
     void toggle_mode();
     bool english_mode() const { return english_; }
-    bool japanese_mode() const { return japanese_; }  // 日文 (#36): on the Japanese side (純日文 in this version)
+    bool japanese_mode() const { return japanese_; }  // 日文 (#36): on the Japanese side
+    bool ja_mixed_mode() const { return japanese_ && ja_mixed_; }  // ...in 中日混打 (else 純日文)
     bool katakana_locked() const { return japanese_ && state_.kana_lock == "kata"; }  // (its icon: ア)
     void show_menu(POINT pt);
     void pick_candidate(int index);        // clicked in the candidate list
@@ -147,6 +148,9 @@ private:
     bool is_hotkey(const Settings::Hotkey& k, WPARAM vk) const;  // the key with exactly its modifiers
     const char* ja_key(WPARAM vk) const;  // 日文 (#36): "switch", "hira", "kata", "auto" or nullptr
     void switch_side(ITfContext* ctx);    // Ctrl+F2: Chinese <-> Japanese, what is typed sent first
+    void toggle_ja_mode();                // Shift on the Japanese side: 中日混打 <-> 純日文, what is typed sent first
+    bool pure_ja() const { return japanese_ && !ja_mixed_; }  // 純日文: keys to the engine's Japanese composer
+    bool en() const { return english_ && !japanese_; }        // 純英文 (english_ is kept meanwhile on the Japanese side)
     bool other_modifier() const;
     bool direct(ITfContext* ctx);   // 遊戲中 Shift 交給遊戲: in a game, not in a text box (nor typing there)
     bool tsf_text_box(ITfContext* ctx);  // the focus is a text box of an app that talks TSF itself
@@ -210,7 +214,8 @@ private:
     State state_;
     Settings cfg_;
     bool english_ = false;
-    bool japanese_ = false;  // 日文 (#36): the Japanese side (純日文); english_ is the Chinese side's mode, kept meanwhile
+    bool japanese_ = false;  // 日文 (#36): the Japanese side; english_ is the Chinese side's mode, kept meanwhile
+    bool ja_mixed_ = true;   // ...its mode: 中日混打 (the Chinese composer, its letters as romaji) or 純日文; the last kept
     DWORD activated_at_ = 0;  // GetTickCount() at Activate: see OnChange
     DWORD first_focus_at_ = 0;  // GetTickCount() when a document first had the focus after Activate (0: not yet)
     std::string app_;  // this program's exe name, lower case

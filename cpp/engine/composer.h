@@ -160,6 +160,9 @@ public:
     // read as romaji and shown as Japanese; what is typed is read again at once
     void set_japanese(const JaMixed* ja);
     bool japanese() const { return ja_ != nullptr; }
+    // ...its kana lock (Ctrl+F6 / F7 / F8): "hira" / "kata" show the Japanese pieces as kana, unconverted; "auto"
+    bool set_ja_lock(const std::string& lock);
+    const std::string& ja_lock() const { return ja_lock_; }
     void settings_changed();
     ustr undo_commit();
     std::pair<std::vector<ustr>, int> page_candidates() const;
@@ -265,6 +268,7 @@ private:
     void ja_candidates(std::vector<ustr>& labels, std::vector<Action>& actions) const;
     void pick_ja(const Action& a);
     const JaMixed* ja_ = nullptr;
+    std::string ja_lock_ = "auto";
     std::map<int, std::pair<ustr, std::vector<JaPin>>> ja_pins_;
     bool ja_finishing_ = false;
     void refresh(const std::vector<std::pair<int, std::string>>* old_given = nullptr);

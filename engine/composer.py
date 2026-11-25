@@ -2208,7 +2208,16 @@ class Composer:
         self.user.import_memory(self.config.import_memory)  # a backup restored while the engine was off
         self.user.set_simplified(self.config.simplified)  # 簡體輸出 (#32)
         self.ja = None  # 中日混打 (#36): engine/ja_mixed.JaMixed while the IME is in that mode (set_japanese)
+        self.ja_lock = "auto"  # ...its kana lock: "hira" / "kata" show the Japanese pieces as kana, unconverted
         self.reset()
+
+    def set_ja_lock(self, lock):
+        """中日混打 (#36): Ctrl+F6 / F7 / F8 - "hira", "kata" or "auto" (the Japanese pieces as kana, or converted)."""
+        if lock in ("auto", "hira", "kata") and lock != self.ja_lock:
+            self.ja_lock = lock
+            if self.ja is not None:
+                self._render()
+        return True
 
     def set_japanese(self, ja):
         """中日混打 (#36) on (a JaMixed) or off (None): the letters that would be English are read as romaji and shown as
@@ -2243,6 +2252,10 @@ class Composer:
         return kana, pending, spaces, path
 
     def _ja_text(self, t):
+        if self.ja_lock != "auto":  # (a kana lock: the kana as typed, no conversion)
+            from .ja_composer import to_katakana
+            kana, pending, spaces = self._ja_piece(t)
+            return (kana if self.ja_lock == "hira" else to_katakana(kana)) + pending + spaces
         kana, pending, spaces, path = self._ja_path(t)
         return "".join(n.surface for n in path) + pending + spaces
 

@@ -2,6 +2,9 @@
 # 純日文 (#36 plan 3) through the real IME: Ctrl+F2 to the Japanese side and back on each line (the side outlives the
 # line); the expected text is what the reference engine gives for the same keys (tools/ja_convert.py --keys), so a
 # line checks the IME, the engine process and the C++ composer together, the conversion itself being tests/test_ja*.
+# (the Japanese side starts in 中日混打, plan 4: the first line goes there, Shift to 純日文, back - every line after lands
+# in 純日文, the Japanese side's last mode; Chinese typed right after as ever)
+{^F2}{SHIFT}{^F2}su3cl3{ENTER} => 你好
 {^F2}kyouhaiitenki{ENTER}{^F2} => 今日はいい天気
 {^F2}watasihagakusei{LEFT}nihonnno{ENTER}{^F2} => 私は日本の学生
 {^F2}hasi{HOME}{DOWN}{DOWN}{ENTER}{END}wowataru{ENTER}{^F2} => 橋をわたる
