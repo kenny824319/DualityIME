@@ -1,4 +1,5 @@
-"""#36: romaji to hiragana, by Mozc's table (data/ja_romaji.tsv: Google 日本語入力's default romaji, plus / -> ・).
+"""#36: romaji to hiragana, by Mozc's table (data/ja_romaji.tsv: Google 日本語入力's default romaji, plus / -> ・,
+? -> ？, ! -> ！ from its symbol setting: tools/build_ja_dict.py SYMBOL_RULES).
 
 Lines are `input<TAB>output[<TAB>pending]`: typing `input` gives `output` and leaves `pending` to be continued
 (`kk` -> っ, `k` still pending). The walk is Mozc's composer: letters wait while a longer rule could still match;

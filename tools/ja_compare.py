@@ -4,7 +4,7 @@
 
 Lines: the romaji column of tools/ja_sentences_sample.tsv, the Tatoeba romaji file (%DUALITYIME_CORPUS%\\tatoeba\\
 ja_eval.tsv, when it is there), "kyouhaiitenki" x 30 (270 kana), and 2000 random strings (seed 36; length 1-30 over
-a-z - ' , . / z and A B 3 @); --cases <file> uses that file's lines instead. Runs tools/ja_convert.py and
+a-z - ' , . / ? ! z and A B 3 @); --cases <file> uses that file's lines instead. Runs tools/ja_convert.py and
 cpp\\build\\x64-Release\\sz_ja.exe on them and prints "same (N lines)" or each differing line; exit 1 on a difference.
 """
 import argparse
@@ -14,7 +14,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ALPHABET = "abcdefghijklmnopqrstuvwxyz-',./zAB3@"
+ALPHABET = "abcdefghijklmnopqrstuvwxyz-',./?!zAB3@"  # (? ! : the symbol rules build_ja_dict.py adds, findings #154)
 
 
 def romaji_column(path):
