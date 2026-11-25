@@ -87,13 +87,19 @@ def offensive(path):
 
 def inflections(w):
     """w and its regular forms: -s -es -ed -ing -er -ers -y, e dropped before -ing, y as -ies (LDNOOBW lists the word
-    alone: faggots, kikes, wetbacks were left, findings #137)."""
+    alone: faggots, kikes, wetbacks were left, findings #137). (Wider rules - a doubled consonant, -ier, y dropped
+    before any suffix - took pants, busted, honking, scatter, rapier: the derived words go in DERIVED by hand.)"""
     out = {w, w + "s", w + "es", w + "ed", w + "ing", w + "er", w + "ers", w + "y", w + "ty"}
     if w.endswith("e"):
         out |= {w + "d", w[:-1] + "ing", w + "r", w + "rs"}
     if w.endswith("y"):
         out |= {w[:-1] + "ies", w[:-1] + "ied"}
     return out
+
+
+# derived words and compounds of LDNOOBW's that the forms above miss (findings #141, the reviewer's list and their kin)
+DERIVED = {"dickhead", "dickheads", "poofter", "poofters", "whorehouse", "whorehouses", "whoreish", "whorish",
+           "bitchiness", "bitchier", "bitchiest", "sluttish", "sluttier", "sluttiest", "boobies"}
 
 
 # ...words the inflections above make that are plain words of their own (butt -> butter, spic -> spicy, spices, suck ->
@@ -104,6 +110,12 @@ PLAIN = {"butter", "butters", "butting", "butted", "buttes", "butty", "butts", "
          "scats", "scatty", "swingers", "anuses", "nudes", "nuder", "smutty", "smuts", "raped", "rapes"}
 
 
+# slurs against groups neither source marks (findings #142; the user 2026-11-25: 「加，只排除這些歧視字」 - left out of the
+# suggestions only: typed in full they go out as ever, and typed twice memory offers them)
+SLURS = {"redskin", "dago", "golliwog", "negroid", "mulatto", "sodomite", "chinks", "gook", "honky", "honkie", "coolie"}
+# (chinks only: chink, chinking, chinked are plain words too - a crack, filling gaps)
+
+
 def ldnoobw(path):
     """LDNOOBW's single words with their inflections, but the plain words of KEEP (and their forms) and PLAIN."""
     with open(path, encoding="utf-8") as f:
@@ -112,11 +124,16 @@ def ldnoobw(path):
     return set().union(*(inflections(w) for w in words - KEEP)) - keep
 
 
+def slurs():
+    """SLURS with their plurals (redskins, dagoes, mulattoes, honkies) - no other forms: they are nouns."""
+    return set().union(*({w, w + "s", w + "es"} | ({w[:-1] + "ies"} if w.endswith("y") else set()) for w in SLURS))
+
+
 def build(src):
     words = esdb_words(os.path.join(src, "en-wl-en_US.txt"))
     b, b_total = books(os.path.join(src, "hackerb9-frequency-alpha-alldicts.txt"))
     s, s_total = subtitles(os.path.join(src, "hermitdave-content-2018-en-en_full.txt"))
-    bad = offensive(os.path.join(src, "en-wl-scowl.txt")) | ldnoobw(os.path.join(src, "LDNOOBW-en"))
+    bad = offensive(os.path.join(src, "en-wl-scowl.txt")) | ldnoobw(os.path.join(src, "LDNOOBW-en")) | slurs() | DERIVED
     score = {}
     for w in words - bad:
         pm = max(b.get(w, 0) * 1e6 / b_total, s.get(w, 0) * 1e6 / s_total)

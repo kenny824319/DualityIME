@@ -50,6 +50,18 @@ class OffensiveTest(unittest.TestCase):
         for w in ("grope", "gropes", "groped", "groping"):  # (KEEP: a plain word, with its forms)
             self.assertNotIn(w, got)
 
+    def test_derived_words_and_slurs_neither_source_marks(self):
+        # (findings #141: dickhead, poofter, whorehouse...; #142, the user 2026-11-25: slurs against groups, with their
+        # plurals - but chink, chinking (a crack, filling gaps) stay)
+        for w in ("dickhead", "poofter", "whorehouse", "bitchiness", "sluttish", "boobies"):
+            self.assertIn(w, b.DERIVED)
+        got = b.slurs()
+        for w in ("redskins", "dagoes", "golliwog", "negroid", "mulatto", "mulattoes", "sodomite", "chinks", "gooks",
+                  "honkies", "coolies"):
+            self.assertIn(w, got)
+        for w in ("chink", "chinking", "chinked"):
+            self.assertNotIn(w, got)
+
 
 if __name__ == "__main__":
     unittest.main()
