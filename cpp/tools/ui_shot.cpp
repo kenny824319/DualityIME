@@ -113,11 +113,13 @@ int wmain(int argc, wchar_t** argv) {
     CreateDirectoryW(out.c_str(), nullptr);
 
     // ten pages shown, names of 8 cells (4 CJK, 8 ASCII), a page of one's own with emoji (joiners, a flag, a keycap)
+    // (WWWWWWWW: 8 cells of the widest letter, too wide for one of ten tabs - made smaller, then "…", #131)
     std::vector<std::wstring> names = {L"表情 :)", L"一般", L"數學", L"特殊", L"圈圈數字", L"Emoji123", L"箭頭符號",
-                                       L"希臘字母", L"顏文字", L"我的符號"};
+                                       L"希臘字母", L"WWWWWWWW", L"我的符號"};
     std::vector<std::wstring> emoji(47, L"");
+    // (the second row's last keys: emoji with no FE0F, a heart and a keycap with it - #128, #129)
     const wchar_t* faces[] = {L"♪", L"😀", L"😂", L"🥲", L"😍", L"👍🏽", L"🙏", L"👩‍💻", L"❤️", L"🇹🇼", L"1️⃣", L"✨", L"🔥",
-                              L"★", L"é", L"中", L"A", L"《", L"》", L"※", L"🐱", L"🐶", L"🍜", L"☕"};
+                              L"★", L"é", L"中", L"A", L"《", L"》", L"※", L"⭐", L"⚡", L"✅", L"♥️", L"#️⃣", L"☕"};
     for (size_t i = 0; i < std::size(faces); ++i) emoji[i] = faces[i];
     std::vector<std::wstring> builtin;
     for (wchar_t c : std::wstring(L"`1234567890-=《》〈〉“”【】（）〔〕＼※＊○●「」『』：；、！？…‥—｛｝，。／")) builtin.push_back(std::wstring(1, c));
@@ -139,6 +141,13 @@ int wmain(int argc, wchar_t** argv) {
             kb.show(1, 30, names, builtin, caret);
             pump(400);
             save(FindWindowW(L"DualityIMESymbols", nullptr), out + L"\\keyboard_page2" + tag + L".bmp");
+            kb.hide();
+        }
+        {
+            SymbolKeyboard kb;  // the built-in three, as 3.3.0 draws them (tabs 100 wide, #130)
+            kb.show(0, 1, {L"一般", L"數學", L"特殊"}, builtin, caret);
+            pump(400);
+            save(FindWindowW(L"DualityIMESymbols", nullptr), out + L"\\keyboard_builtin" + tag + L".bmp");
             kb.hide();
         }
         int n = 0;

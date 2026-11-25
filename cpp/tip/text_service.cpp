@@ -1007,7 +1007,7 @@ void TextService::read_reply(const Json& r) {
         for (auto& item : rp->items())
             if (item.is_string()) s.replacements.push_back(wide(item.as_string()));
     s.repl_index = num("repl_index", -1);
-    s.symbol_page = num("symbol_page", -1);
+    s.symbol_page = num("symbol_tab", num("symbol_page", -1));  // (symbol_tab: the page past the built-in three, #127)
     if (auto* f = r.get("fill"); f && f->is_object()) {
         s.fill_open = true;
         if (auto* t = f->get("typed"); t && t->is_string()) s.fill_typed = wide(t->as_string());

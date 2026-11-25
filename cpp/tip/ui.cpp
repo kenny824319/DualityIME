@@ -194,6 +194,10 @@ void ColorText::text(const std::wstring& t, double x, double y, double w, double
         f->SetTextAlignment(center ? DWRITE_TEXT_ALIGNMENT_CENTER : DWRITE_TEXT_ALIGNMENT_LEADING);
         f->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         f->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        // (too long for its box: cut with "…", as GDI's DT_END_ELLIPSIS - a page name, #131)
+        Microsoft::WRL::ComPtr<IDWriteInlineObject> sign;
+        DWRITE_TRIMMING trim{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+        if (SUCCEEDED(dwrite_factory()->CreateEllipsisTrimmingSign(f.Get(), &sign))) f->SetTrimming(&trim, sign.Get());
         fmt = f.Get();
         impl_->formats.emplace_back(key, f);
     }
@@ -801,7 +805,7 @@ void SymbolKeyboard::build() {
     // the tabs: 100 wide as ever, narrower when more are shown (at most 10, a name of 8 cells: #69), the × kept free
     int tabs = static_cast<int>(names_.size());
     int room = width - 34 - 8;
-    int step = tabs ? std::min(112, room / tabs) : 112, tab_w = step - 6;
+    int step = tabs ? std::min(112, room / tabs) : 112, tab_w = std::min(100, step - 6);  // (3 tabs: 100 as ever, #130)
     for (int p = 0; p < tabs; ++p) items_.push_back(Item{PAD + p * step, PAD, tab_w, TAB_H - 12, Item::Tab, p, nullptr});
     items_.push_back(Item{PAD + width - 34, PAD + 2, 30, 30, Item::Close, 0, nullptr});
     width_ = PAD * 2 + width;
@@ -977,26 +981,50 @@ void SymbolKeyboard::draw(HDC dc, int w, int h) {
     // none, are drawn as ever, at no cost
     auto sym_of = [&](const Item& it) { return it.value < static_cast<int>(keys_.size()) ? keys_[it.value] : std::wstring(); };
     auto name_of = [&](const Item& it) { return it.value < static_cast<int>(names_.size()) ? names_[it.value] : std::wstring(); };
-    auto emoji = [](const std::vector<std::wstring>& texts) {
-        for (auto& t : texts)
-            for (size_t i = 0; i < t.size(); ++i) {
-                wchar_t c = t[i];
-                // (a surrogate pair: U+10000 and above - the emoji blocks are U+1F000 on; a variation selector 16, a
-                // joiner, a keycap's mark)
-                if ((c >= 0xD83C && c <= 0xD83E) || c == 0xFE0F || c == 0x200D || c == 0x20E3) return true;
-            }
+    auto emoji = [](const std::wstring& t) {
+        // the emoji BMP characters shown as emoji by default (Unicode Emoji_Presentation: ✨ ☕ ⭐ ⚡ ✅ ❌ ⚽ ⛄ ⌛ ❗,
+        // which the emoji panel types without FE0F - findings #128; none on the built-in pages)
+        static const std::pair<wchar_t, wchar_t> bmp[] = {
+            {0x231A, 0x231B}, {0x23E9, 0x23EC}, {0x23F0, 0x23F0}, {0x23F3, 0x23F3}, {0x25FD, 0x25FE}, {0x2614, 0x2615},
+            {0x2648, 0x2653}, {0x267F, 0x267F}, {0x2693, 0x2693}, {0x26A1, 0x26A1}, {0x26AA, 0x26AB}, {0x26BD, 0x26BE},
+            {0x26C4, 0x26C5}, {0x26CE, 0x26CE}, {0x26D4, 0x26D4}, {0x26EA, 0x26EA}, {0x26F2, 0x26F3}, {0x26F5, 0x26F5},
+            {0x26FA, 0x26FA}, {0x26FD, 0x26FD}, {0x2705, 0x2705}, {0x270A, 0x270B}, {0x2728, 0x2728}, {0x274C, 0x274C},
+            {0x274E, 0x274E}, {0x2753, 0x2755}, {0x2757, 0x2757}, {0x2795, 0x2797}, {0x27B0, 0x27B0}, {0x27BF, 0x27BF},
+            {0x2B1B, 0x2B1C}, {0x2B50, 0x2B50}, {0x2B55, 0x2B55}};
+        for (wchar_t c : t) {
+            // (a surrogate pair: U+10000 and above - the emoji blocks are U+1F000 on; a variation selector 16, a
+            // joiner, a keycap's mark)
+            if ((c >= 0xD83C && c <= 0xD83E) || c == 0xFE0F || c == 0x200D || c == 0x20E3) return true;
+            for (auto& [a, b] : bmp)
+                if (c >= a && c <= b) return true;
+        }
         return false;
     };
-    if (emoji(keys_) || emoji(names_)) {
+    auto any_emoji = [&](const std::vector<std::wstring>& texts) {
+        return std::any_of(texts.begin(), texts.end(), emoji);
+    };
+    // a page name too wide for its tab (ten tabs, eight wide letters): smaller, 12 at least, then cut with "…" (#131)
+    std::vector<int> name_size(names_.size(), 16);
+    for (auto& it : items_)
+        if (it.kind == Item::Tab && it.value < static_cast<int>(names_.size()))
+            while (name_size[it.value] > 12 &&
+                   cv.measure(names_[it.value], cv.font(name_size[it.value], L"Microsoft JhengHei UI")).cx > it.w - 8)
+                --name_size[it.value];
+    auto size_of = [&](const Item& it) { return it.value < static_cast<int>(name_size.size()) ? name_size[it.value] : 16; };
+    if (any_emoji(keys_) || any_emoji(names_)) {
         ColorText ct(dc, w, h, s);
         if (ct.ok())
             for (auto& it : items_) {
-                if (it.kind == Item::Key)
-                    ct.text(sym_of(it), it.x, it.y + 12, it.w, it.h - 12, it.value == cursor_ ? th.accent_text : th.text,
-                            L"Microsoft JhengHei UI", 19, true);
-                else if (it.kind == Item::Tab)
-                    ct.text(name_of(it), it.x, it.y, it.w, it.h, it.value == page_ ? th.accent_text : th.text,
-                            L"Microsoft JhengHei UI", 16, true);
+                if (it.kind == Item::Key) {
+                    // (an emoji key in the emoji font: else a keycap 1️⃣ is a digit and a box, ♥️ a plain heart -
+                    // DirectWrite picks a font a character, past FE0F - findings #129)
+                    std::wstring sym = sym_of(it);
+                    ct.text(sym, it.x, it.y + 12, it.w, it.h - 12, it.value == cursor_ ? th.accent_text : th.text,
+                            emoji(sym) ? L"Segoe UI Emoji" : L"Microsoft JhengHei UI", 19, true);
+                } else if (it.kind == Item::Tab) {
+                    ct.text(name_of(it), it.x + 4, it.y, it.w - 8, it.h, it.value == page_ ? th.accent_text : th.text,
+                            L"Microsoft JhengHei UI", size_of(it), true);
+                }
             }
         if (ct.finish()) return;
     }
@@ -1007,8 +1035,9 @@ void SymbolKeyboard::draw(HDC dc, int w, int h) {
             cv.text(sym, it.x, it.y + 12, it.w, it.h - 12, it.value == cursor_ ? th.accent_text : th.text, f,
                     DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         } else if (it.kind == Item::Tab) {
-            cv.text(name_of(it), it.x, it.y, it.w, it.h, it.value == page_ ? th.accent_text : th.text,
-                    cv.font(16, L"Microsoft JhengHei UI"), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            cv.text(name_of(it), it.x + 4, it.y, it.w - 8, it.h, it.value == page_ ? th.accent_text : th.text,
+                    cv.font(size_of(it), L"Microsoft JhengHei UI"),
+                    DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         }
     }
 }
