@@ -243,7 +243,7 @@ def _after_chinese_mark(toks, end=None):
 def tokenize(raw, table, user=None, english=(), forced=(), after_english=False,
              digits_as_zhuyin=False, literal=(), chinese=(), fixed=None, lexicon=None, breaks=(), exact=(),
              taken=None, bigram=None, lm=None, sent="", context_len=None, marks=False, lit_keys=False, starts=False,
-             picks=None):
+             picks=None, ja=None):
     """Split raw keys into the cheapest sequence of tokens.
 
     literal: raw offsets of keys that are always themselves (numpad digits and
@@ -261,6 +261,7 @@ def tokenize(raw, table, user=None, english=(), forced=(), after_english=False,
         starts: 補字提示 is on - the start of what Tab would complete reads as English (#54).
         picks: {raw offset: (keys, reading, character)} the user picked (#60): 注音自動校正 judges the syllables around
         them with those characters (_check_corrections).
+        ja: 中日混打 (#36, engine/ja_mixed.JaMixed): the pieces that would be English are scored as romaji instead.
     Other arguments: see _tokenize_run.
     """
     cuts = sorted([(p, p + 1, None) for p in literal if p < len(raw)] +
@@ -269,7 +270,7 @@ def tokenize(raw, table, user=None, english=(), forced=(), after_english=False,
                   key=lambda c: (c[0], c[1]))
     if not cuts:
         tokens = _tokenize_run(raw, table, user, english, forced, after_english, digits_as_zhuyin, chinese, lexicon,
-                               breaks, exact, True, starts)
+                               breaks, exact, True, starts, ja)
         return _check_corrections(tokens, table, lexicon, user, exact, bigram, lm, sent, context_len, marks,
                                   lit_keys, picks) if table.autocorrect else tokens
     tokens, start, spaced = [], 0, False
@@ -282,7 +283,7 @@ def tokenize(raw, table, user=None, english=(), forced=(), after_english=False,
                                  after_english and start == 0, digits_as_zhuyin,
                                  {c - start for c in chinese if start <= c < a}, lexicon,
                                  {c - start for c in breaks if start <= c < a},
-                                 {c - start for c in exact if start <= c < a}, start == 0 or spaced, starts)
+                                 {c - start for c in exact if start <= c < a}, start == 0 or spaced, starts, ja)
             for t in part:
                 t.start += start
             tokens += part
@@ -301,7 +302,8 @@ def tokenize(raw, table, user=None, english=(), forced=(), after_english=False,
 
 
 def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=False,
-                  digits_as_zhuyin=False, chinese=(), lexicon=None, breaks=(), exact=(), text_start=True, starts=False):
+                  digits_as_zhuyin=False, chinese=(), lexicon=None, breaks=(), exact=(), text_start=True, starts=False,
+                  ja=None):
     """Split raw keys into the cheapest sequence of tokens.
 
     forced: raw offsets where the user asked for English/number, not zhuyin.
@@ -314,6 +316,8 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
     breaks: raw offsets no token may run across (where a syllable picked from the
         replacement bar ends: what follows is read on its own, English or not).
     exact: raw offsets where a syllable is not autocorrected.
+    ja: 中日混打 (#36): a piece's cost is JaMixed.piece_cost (romaji), and what is English alone is off - the user's
+        English and codes, Tab completion's starts, the digit-key rule of #75.
     """
     n = len(raw)
     # best[j]: the cheapest split of raw[:j] whose last token is zhuyin right after English with no space (English cut
@@ -337,6 +341,8 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
     mine = user.sure_english() if user else set()  # 自訂詞彙's English words, and the ones sent twice
     # 代碼記憶: codes the user put back as typed twice are English too (mp3, not 允), the setting on or off
     codes = user.corrections.codes() if user is not None else frozenset()
+    if ja is not None:  # 中日混打 (#36): no English typed in this mode
+        syllable_digits, learned, mine, codes, starts = set(), set(), set(), frozenset(), False
     zh_punct = zhuyin_punct(table)
     # 注音自動校正 leaves English alone (see _protected_offsets)
     protected = _protected_offsets(raw, english, learned, mine, codes) if table.autocorrect else ()
@@ -698,7 +704,10 @@ def _tokenize_run(raw, table, user=None, english=(), forced=(), after_english=Fa
                 if zh and zh[1] and starts_phrase(j + 1, zh[0], SHORT_EN_WORD if common else None,
                                                   tones=SHORT_EN_RARE_TONES):
                     word_after = False
-            cost = english_piece_cost(piece, english, learned, word_after, mine, () if i in exact else codes)
+            if ja is not None:  # 中日混打 (#36): the piece as romaji (still being typed if it reaches the end)
+                cost = ja.piece_cost(piece, j == n)
+            else:
+                cost = english_piece_cost(piece, english, learned, word_after, mine, () if i in exact else codes)
             if starts and word_start and j == end and user is not None and user.is_completion_start(piece):
                 cost = min(cost, EN["learned"])  # (as one sent before)
             if cost > EN["learned"] and any(i < p < j for p in syllable_digits):
