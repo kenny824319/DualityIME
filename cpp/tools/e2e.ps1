@@ -106,6 +106,8 @@ try {
     # (about 3 s a line at most: long scripts, e.g. from tools/asus_diff.py, get the time they need)
     $lines = @(Get-Content $Script | Where-Object { $_ -and -not $_.StartsWith("#") }).Count
     if (-not $p.WaitForExit([Math]::Max(120000, $lines * 3000))) { "HUNG"; Stop-Process $p -Force }
+    # (a key a case left down, {+INS}, let go: a test stopped as HUNG could not do it - else Windows keeps it held, #73)
+    foreach ($vk in 0x2D, 0x7C, 0x87) { [SzE2e.Keys]::keybd_event($vk, 0, $(if ($vk -eq 0x2D) { 3 } else { 2 }), [IntPtr]::Zero) }
     Get-Content $out -Encoding UTF8
     if ($SaveTo) { Copy-Item $out $SaveTo -Force }
     $others = @(Get-Process DualityIMEEngine -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $ours.Id })

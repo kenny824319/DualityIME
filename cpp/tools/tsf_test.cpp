@@ -7,7 +7,8 @@
 // {#5} (a numpad key) {SPACE} {SHIFT} (a Shift tap) {SBACK} (Shift+Backspace) {SSPACE} (Shift+Space)
 // {WAIT} (half a second), {^,} (Ctrl + a key, with Shift if its character needs it), {^^,} (the same
 // with F13 held as well), {+INS} / {-INS} (Insert down only / up only; F13, F24 too), {PAUSE 11} (11 seconds),
-// {UNSEEN INS} (the shared key record forgets Insert, #73).
+// {UNSEEN INS} (the shared key record forgets Insert, #73), {HINT} (the line fails unless the hint box is up).
+// A key {+X} leaves down is let go at the line's end, and before the test leaves early.
 // Lines starting with # are comments. In the expected text {NL} is a line break.
 // A line starting with {PAGE}: the keys go to a window like a web page with no text box in
 // focus (browsers mark its TSF context disabled and empty), {NOFOCUS}: to a window the app
@@ -58,6 +59,27 @@ static void pump(DWORD ms) {
 
 static HWND g_main;
 static HWND g_page, g_plain, g_noime;
+// keys {+INS} left down: always let go - at the line's end, before leaving early, on Ctrl+C - or Windows keeps one
+// held for every program after the test (findings #120: the very trouble of #73)
+static std::vector<WORD> g_held;
+static std::string g_note;  // what a check of the line found wrong ({UNSEEN INS}, {HINT}): it fails the line
+
+static void let_go_held() {
+    for (WORD vk : g_held) {
+        INPUT i{};
+        i.type = INPUT_KEYBOARD;
+        i.ki.wVk = vk;
+        i.ki.wScan = static_cast<WORD>(MapVirtualKeyW(vk, MAPVK_VK_TO_VSC));
+        i.ki.dwFlags = KEYEVENTF_KEYUP | (vk == VK_INSERT ? KEYEVENTF_EXTENDEDKEY : 0);
+        SendInput(1, &i, sizeof(INPUT));
+    }
+    g_held.clear();
+}
+
+static BOOL WINAPI on_console_event(DWORD) {
+    let_go_held();
+    return FALSE;
+}
 static std::wstring g_page_text;
 
 static LRESULT CALLBACK page_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
@@ -70,6 +92,7 @@ static void send(std::vector<std::pair<WORD, bool>> events) {  // (vk, up)
     if (GetForegroundWindow() != g_main) {  // never type into another window
         std::printf("stopped: the test window lost the focus\n");
         std::fflush(stdout);
+        let_go_held();
         ExitProcess(3);
     }
     std::vector<INPUT> in;
@@ -158,6 +181,7 @@ int wmain(int argc, wchar_t** argv) {
     std::string script;
     if (!sz::read_file(argv[1], script)) return 2;
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);  // like current apps
+    SetConsoleCtrlHandler(on_console_event, TRUE);  // (Ctrl+C or the console closed: held keys let go first)
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     LoadLibraryW(L"msftedit.dll");
     WNDCLASSW wc{};
@@ -411,7 +435,12 @@ int wmain(int argc, wchar_t** argv) {
                     static const std::pair<const char*, WORD> holdable[] = {
                         {"INS", VK_INSERT}, {"F13", VK_F13}, {"F24", VK_F24}};
                     for (auto& [n, k] : holdable)
-                        if (name.compare(1, std::string::npos, n) == 0) send({{k, name[0] == '-'}});
+                        if (name.compare(1, std::string::npos, n) == 0) {
+                            WORD vk = k;
+                            send({{vk, name[0] == '-'}});
+                            if (name[0] == '+') g_held.push_back(vk);
+                            else g_held.erase(std::remove(g_held.begin(), g_held.end(), vk), g_held.end());
+                        }
                 }
                 else if (name.rfind("PAUSE ", 0) == 0) pump(std::atoi(name.c_str() + 6) * 1000);  // {PAUSE 11}: seconds
                 else if (name == "UNSEEN INS") {
@@ -420,9 +449,24 @@ int wmain(int argc, wchar_t** argv) {
                     HANDLE h = OpenFileMappingW(FILE_MAP_WRITE, FALSE, sz::keys::SECTION);
                     void* view = h ? MapViewOfFile(h, FILE_MAP_WRITE, 0, 0, sz::keys::KEYS * sizeof(LONG64)) : nullptr;
                     if (view) InterlockedExchange64(static_cast<volatile LONG64*>(view) + VK_INSERT, 0);
-                    else std::printf("no key record to change\n");
+                    else g_note += " [no key record to change]";
                     if (view) UnmapViewOfFile(view);
                     if (h) CloseHandle(h);
+                }
+                else if (name == "HINT") {
+                    // the input method's little box at the caret is up ("Insert 沒有放開", #73): else the line fails
+                    pump(150);
+                    struct Find { bool seen = false; } find;
+                    EnumWindows([](HWND w, LPARAM p) -> BOOL {
+                        DWORD pid = 0;
+                        GetWindowThreadProcessId(w, &pid);
+                        wchar_t cls[64] = {};
+                        GetClassNameW(w, cls, 64);
+                        if (pid == GetCurrentProcessId() && IsWindowVisible(w) && wcscmp(cls, L"DualityIMEHint") == 0)
+                            reinterpret_cast<Find*>(p)->seen = true;
+                        return TRUE;
+                    }, reinterpret_cast<LPARAM>(&find));
+                    if (!find.seen) g_note += " [no hint at the caret]";
                 }
                 else if (name == "SBACK") tap(VK_BACK, true);
                 else if (name == "SSPACE") tap(VK_SPACE, true);
@@ -450,7 +494,9 @@ int wmain(int argc, wchar_t** argv) {
                 flat += got[k];
             }
         }
-        got = flat;
+        got = flat + g_note;
+        g_note.clear();
+        let_go_held();  // (a key {+INS} left down never reaches the next line)
         bool ok = got == expected;
         (ok ? passed : failed)++;
         std::printf("%s  %s => %s%s%s\n", ok ? "ok  " : "FAIL", keys.c_str(), got.c_str(),
@@ -466,6 +512,7 @@ int wmain(int argc, wchar_t** argv) {
             pump(100);
         }
     }
+    let_go_held();
     if (tm) tm->Deactivate();
     std::printf("%d passed, %d failed\n", passed, failed);
     DestroyWindow(main);
