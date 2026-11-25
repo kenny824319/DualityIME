@@ -742,7 +742,7 @@ public class Backend {
     }
 
     // ---- 自訂外觀 (#22): the photos, appearance\<slot>.jpg|png next to config.json ----------------------------
-    static readonly string[] ImageSlots = { "all", "cand", "tip", "mode", "fill", "keyboard", "bar" };
+    static readonly string[] ImageSlots = { "all", "cand", "tip", "mode", "notice", "fill", "keyboard", "bar" };
     string AppearanceDir { get { return Path.Combine(dataDir, "appearance"); } }
 
     // a file name of the folder: <slot>.jpg or <slot>.png, nothing else (a backup names them too)

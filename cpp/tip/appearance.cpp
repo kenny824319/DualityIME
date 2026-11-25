@@ -18,7 +18,7 @@ thread_local Appearance g_look;
 thread_local std::string g_last;  // the appearance object and folder g_look was made from
 
 // the windows that can have a look of their own (their photo frames: photo_frame.h)
-constexpr const char* WINDOWS[] = {"cand", "tip", "mode", "fill", "keyboard", "bar"};
+constexpr const char* WINDOWS[] = {"cand", "tip", "mode", "notice", "fill", "keyboard", "bar"};
 
 std::wstring wide_from_utf8(const std::string& s) {
     int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), nullptr, 0);

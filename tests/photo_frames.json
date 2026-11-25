@@ -13,5 +13,6 @@
   {"window": "keyboard", "keys": 9, "per_line": 1, "font": 18, "w": 918, "h": 292},
   {"window": "tip", "keys": 9, "per_line": 1, "font": 18, "w": 200, "h": 44},
   {"window": "mode", "keys": 9, "per_line": 1, "font": 18, "w": 56, "h": 48},
+  {"window": "notice", "keys": 9, "per_line": 1, "font": 18, "w": 140, "h": 32},
   {"window": "bar", "keys": 9, "per_line": 1, "font": 18, "w": 420, "h": 44}
 ]

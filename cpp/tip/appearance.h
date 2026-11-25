@@ -26,7 +26,7 @@ struct Appearance {
     bool on = false;
     COLORREF bg = RGB(0xf3, 0xe7, 0xd9), text = RGB(0x4a, 0x34, 0x26), select = RGB(0xe0, 0x8a, 0x4c);
     Look all;
-    std::map<std::string, Look> windows;  // only the windows adjusted separately: cand tip mode fill keyboard bar
+    std::map<std::string, Look> windows;  // only the windows adjusted separately: cand tip mode notice fill keyboard bar
     std::wstring dir;                     // the appearance folder
 };
 

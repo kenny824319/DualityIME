@@ -9,6 +9,7 @@ function lookFrame(key, keys, perLine, fontSize) {
   if (key === "keyboard") return [918, 292];
   if (key === "tip") return [200, 44];
   if (key === "mode") return [56, 48];
+  if (key === "notice") return [140, 32];  // (#73 design: "Insert 沒有放開" at 16 px)
   if (key === "bar") return [420, 44];
   if (key === "fill") return [332, 12 + 30 + 9 * (lineH + 10)];
   const n = Math.max(1, keys), p = Math.max(1, perLine);

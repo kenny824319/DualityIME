@@ -19,6 +19,7 @@ inline PhotoFrame photo_frame(const std::string& window, int keys, int per_line,
     if (window == "keyboard") return {918, 292};
     if (window == "tip") return {200, 44};
     if (window == "mode") return {56, 48};
+    if (window == "notice") return {140, 32};  // (訊息提示, #73: "Insert 沒有放開" at 16 px)
     if (window == "bar") return {420, 44};
     if (window == "fill") return {332, static_cast<double>(12 + 30 + 9 * (line_h + 10))};
     int n = std::max(1, keys), p = std::max(1, per_line);

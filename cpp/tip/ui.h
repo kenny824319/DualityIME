@@ -160,7 +160,7 @@ public:
     // where what is typed next does not come out behind it (the 中／英 box)
     void show(const std::wstring& text, const RECT& text_rect, UINT ms = 0, bool follow_caret = false,
               bool below = false);
-    std::string look = "tip";  // its photo in 自訂外觀: "tip" (the Tab hint) or "mode" (the 中／英 box)
+    std::string look = "tip";  // its photo in 自訂外觀: "tip" (the Tab hint), "mode" (the 中／英 box), "notice" (訊息提示, #73)
 
 protected:
     void draw(HDC dc, int w, int h) override;

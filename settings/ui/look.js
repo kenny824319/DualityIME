@@ -9,6 +9,7 @@ const LOOK_PRESETS = [
 // [key, tab name] (each window's photo frame: frame.js lookFrame)
 const LOOK_WINDOWS = [
   ["cand", "候選字視窗"], ["tip", "補字提示"], ["mode", "模式提示"],
+  ["notice", "訊息提示"],  // (#73 design, the user 2026-11-25: a long message at the caret, a look of its own)
   ["fill", "快速填入清單"], ["keyboard", "符號鍵盤"], ["bar", "替換列"]];
 const LOOK_NEW_PHOTO = { image: "", fade: 45, zoom: 100, x: 0.5, y: 0.5 };
 
@@ -177,6 +178,8 @@ function lookCard() {
       }
       case "tip": return `<div class="lp-c">時間 <span style="color:${th.label}">Tab</span></div>`;
       case "mode": return `<div class="lp-c lp-big">中</div>`;
+      // (#73 design, the user 2026-11-25: a long message at the caret has a look of its own)
+      case "notice": return `<div class="lp-c">Insert 沒有放開</div>`;
       case "fill": return `<div class="lp-title" style="color:${th.label}">快速填入</div>` +
         `<div class="lp-c lp-row">sample@example.com<span style="color:${th.label}">[email]</span></div>` +
         `<div class="lp-c lp-row" style="${sel}">王小明<span>[name1]</span></div>` +
@@ -196,7 +199,7 @@ function lookCard() {
   }
   // the preview's size of the windows whose size follows what they show (DIP); the candidate list, quick fill
   // and keyboard are drawn as big as their photo frame (a whole page, frame.js), smaller to fit (#35)
-  const PREVIEW = { tip: [96, 30], mode: [40, 40], bar: [300, 44] };
+  const PREVIEW = { tip: [96, 30], mode: [40, 40], notice: [130, 30], bar: [300, 44] };
   function candFont() { return Math.min(48, Math.max(10, Number(S.config.cand_font_size) || 18)); }
   function frameOf(key) {
     const keys = candKeys();
@@ -318,6 +321,6 @@ function lookCard() {
   }
   draw();
   return card(
-    row("自訂外觀", "候選字視窗、補字提示、模式提示、快速填入清單、符號鍵盤、替換列與注音提示，換成自己的顏色或照片", mode),
+    row("自訂外觀", "候選字視窗、補字提示、模式提示、訊息提示、快速填入清單、符號鍵盤、替換列與注音提示，換成自己的顏色或照片", mode),
     body);
 }

@@ -172,7 +172,8 @@ private:
     DWORD get_compartment(REFGUID guid);
     void advise_compartment(REFGUID guid, DWORD& cookie, bool advise);
     void update_mode_ui();
-    void show_mode(const std::wstring& text);  // 中／英／全形 for a moment at the caret
+    void show_mode(const std::wstring& text, bool notice = false);  // 中／英／全形 for a moment at the caret
+    // (notice: a message - "Insert 沒有放開", #73 - in the 訊息提示 box: 2 s, or till the next key or another box)
 
     LONG refs_ = 1;
     ComPtr<ITfThreadMgr> thread_mgr_;
@@ -225,6 +226,8 @@ private:
     std::unique_ptr<HintWindow> hint_win_;
     std::unique_ptr<ZhuyinTip> tip_win_;
     std::unique_ptr<HintWindow> mode_win_;
+    std::unique_ptr<HintWindow> notice_win_;  // 訊息提示 (#73): its own look in 自訂外觀
+    WPARAM notice_key_ = 0;                   // the key it came up on (its own key-down does not close it)
     std::unique_ptr<SymbolKeyboard> keyboard_;
     std::unique_ptr<FillWindow> fill_win_;
     void pick_fill(int index);

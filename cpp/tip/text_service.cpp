@@ -372,6 +372,7 @@ STDMETHODIMP TextService::Deactivate() {
         hint_win_.reset();
         tip_win_.reset();
         mode_win_.reset();
+        notice_win_.reset();
         keyboard_.reset();
         thread_mgr_.Reset();
         client_id_ = TF_CLIENTID_NULL;
@@ -486,6 +487,9 @@ STDMETHODIMP TextService::OnTestKeyDown(ITfContext* ctx, WPARAM wp, LPARAM lp, B
     *eaten = FALSE;
     try {
         keys::note(static_cast<unsigned>(wp), true);
+        // (a 訊息提示 goes at the next key - Ctrl, Shift, Alt alone are not one: Ctrl+, again keeps it, #73)
+        if (notice_win_ && wp != notice_key_ && wp != VK_CONTROL && wp != VK_SHIFT && wp != VK_MENU)
+            notice_win_->hide();
         *eaten = test_key_down(ctx, wp, lp);
     } catch (...) {
     }
@@ -796,6 +800,7 @@ bool TextService::test_key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
         // where nothing can be typed); every other combination is the app's shortcut (Ctrl+C, Alt+Tab...)
         bool mark = ctrl_punct_key(ctx, vk, lp);
         if (!mark && !held_unseen_) return false;  // (Ctrl+C and the like: nothing more looked at, as before)
+    if (!mark) notice_key_ = vk;
         bool here = !english_ && !(state_.composition.empty() && state_.symbol_page < 0 && no_text_field(ctx));
         // (a key no input method saw go down kept it the program's: named at the caret - #73)
         if (!mark && here) stuck_key_hint(held_unseen_);
@@ -870,7 +875,7 @@ void TextService::stuck_key_hint(unsigned vk) {
     if ((sc & 0xFF00) == 0xE000) lp |= 1 << 24;
     wchar_t name[64];
     int n = sc ? GetKeyNameTextW(lp, name, 64) : 0;
-    show_mode((n > 0 ? std::wstring(name, n) : std::wstring(L"有個鍵")) + L" 沒有放開");
+    show_mode((n > 0 ? std::wstring(name, n) : std::wstring(L"有個鍵")) + L" 沒有放開", true);
 }
 
 bool TextService::key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
@@ -1638,9 +1643,11 @@ void TextService::place_ui(TfEditCookie ec, ITfContext* ctx) {
           " have_end=" + std::to_string(have_end) + " exact_end=" + std::to_string(exact_end) + " end=" +
           std::to_string(end_rc.left) + "," + std::to_string(end_rc.top) + "," + std::to_string(end_rc.right) + "," +
           std::to_string(end_rc.bottom));
-    // the 中／英 box is under the line for a moment: gone as soon as another box comes up there
-    if (mode_win_ && (!state_.candidates.empty() || !state_.zhuyin_tip.empty() || state_.symbol_page >= 0))
-        mode_win_->hide();
+    // the 中／英 box is under the line for a moment: gone as soon as another box comes up there - the 訊息提示 too
+    if (!state_.candidates.empty() || !state_.zhuyin_tip.empty() || state_.symbol_page >= 0) {
+        if (mode_win_) mode_win_->hide();
+        if (notice_win_) notice_win_->hide();
+    }
     if (!state_.candidates.empty()) {
         if (!cand_win_) {
             cand_win_ = std::make_unique<CandidateWindow>();
@@ -1858,7 +1865,7 @@ void TextService::show_menu(POINT pt) {
 
 // ---- Chinese / English --------------------------------------------------------------------
 
-void TextService::show_mode(const std::wstring& text) {
+void TextService::show_mode(const std::wstring& text, bool notice) {
     // a moment's 中／英／全形 box at the caret
     RECT rc;
     ComPtr<ITfContext> ctx = focused_context(thread_mgr_.Get());
@@ -1883,14 +1890,16 @@ void TextService::show_mode(const std::wstring& text) {
     }
     if (!found && !caret_rect(ctx.Get(), rc)) return;
     if (ctx) own_popups(ctx.Get());  // (Shift before anything was typed in the search box)
-    if (!mode_win_) {
-        mode_win_ = std::make_unique<HintWindow>();
-        mode_win_->look = "mode";  // (自訂外觀: its own photo)
+    auto& win = notice ? notice_win_ : mode_win_;
+    if (!win) {
+        win = std::make_unique<HintWindow>();
+        win->look = notice ? "notice" : "mode";  // (自訂外觀: each its own photo - 訊息提示 #73, wider than 中)
     }
     // under the line: right after the caret, what is typed next came out behind it (beside the caret as
     // before while the candidates, the zhuyin under the keys or the symbol keyboard are there already)
     bool below = state_.candidates.empty() && state_.zhuyin_tip.empty() && state_.symbol_page < 0;
-    mode_win_->show(text, rc, 800, false, below);
+    // (a message stays 2 s, long enough to read "Insert 沒有放開" - the user 2026-11-25; 中／英 0.8 s)
+    win->show(text, rc, notice ? 2000 : 800, false, below);
 }
 
 void TextService::toggle_mode() {

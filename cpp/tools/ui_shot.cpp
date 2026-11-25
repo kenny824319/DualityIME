@@ -153,7 +153,7 @@ int wmain(int argc, wchar_t** argv) {
         int n = 0;
         for (const wchar_t* text : {L"中", L"Insert 沒有放開"}) {
             HintWindow hint;
-            hint.look = "mode";
+            hint.look = n == 0 ? "mode" : "notice";  // (中: 模式提示; the message: 訊息提示, #73)
             hint.show(text, caret, 0, false, true);
             pump(300);
             save(FindWindowW(L"DualityIMEHint", nullptr), out + L"\\hint_" + std::to_wstring(++n) + tag + L".bmp");
