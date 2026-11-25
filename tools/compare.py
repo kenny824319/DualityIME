@@ -58,6 +58,11 @@ CASES = [
     "su3{^[}cl3{LEFT}{LEFT}{DOWN}4{LEFT}{DOWN}2{ENTER}",
     "su3{^[}cl3{^[}ji3{^]}{^]}{HOME}{RIGHT}{DOWN}2{ENTER}", "su3{^[}cl3{LEFT}{LEFT}{DOWN}3{ENTER}", "su3{^,}{DOWN}{ESC}{ENTER}",
     "su3<{LEFT}{DOWN}{ENTER}", "su3`f{LEFT}{DOWN}{ENTER}", "su3{^,}{LEFT}{DOWN}2{END}cl3{BACK}{ENTER}{RESET}",
+    # 符號鍵盤自訂 (#69, sixteenth to twentieth: --cases 20 runs them; the setting with custom_symbols types from
+    # SYMBOLS, the others from the built-in pages): a key, a page of one's own first, `` its ` key, Tab through the pages
+    # shown (數學 hidden), an empty key typing nothing, an emoji key whole, Enter at the arrows' cursor
+    "`a{ENTER}", "`{TAB}a{TAB}{ENTER}", "``{ENTER}", "`{TAB}{TAB}{TAB}8{ENTER}",
+    "su3`s{ESC}`d{ENTER}`{DOWN}{RIGHT}{ENTER}{ENTER}{RESET}",
     # 接續前文選字 (#37): 我們先去吃飯 sent, then ㄗㄞˋ去看電影 read after it; after {CL} (the caret moved) and after
     # English at the buffer's start, without it; three sentences in a row; undo puts the context back
     "ji3ap7vu0 fm4t z04{ENTER}y94fm4d042u04u/3{ENTER}ji3ap7vu0 fm4t z04{ENTER}{CL}y94fm4d042u04u/3{ENTER}",
@@ -500,7 +505,8 @@ CONFIGS = [
     {"long_sentence": False},  # 長句選字加強 off ({} above: on, the default)
     {"long_sentence": False, "autocorrect": True},  # 注音自動校正 with the dictionary alone (#60: a pick undoing a swap)
     {"cand_keys": "1234qweras", "cand_layout": "grid",  # other candidate keys, a grid (#23)
-     "no_quick_fill": True},  # (not a setting: no quick_fill.json, so 快速填入 lists its samples, #33)
+     "no_quick_fill": True,  # (not a setting: no quick_fill.json, so 快速填入 lists its samples, #33)
+     "custom_symbols": True},  # (not a setting: SYMBOLS as symbols.json, 符號鍵盤自訂 #69)
     {"simplified": True},  # 簡體輸出 (#32): shown and sent in Simplified characters, its memory in user_simplified.json
     {"seed_user": 1,  # (not a setting: SEEDED_USER as user.json before typing) 記憶清單 (#65): rows deleted while the
      "autocorrect": True,  # engine was off go when it starts - each kind once; typing after shows them gone
@@ -563,6 +569,25 @@ SEEDED_USER = {"phrases": {"ㄋㄧˇ": {"妳": 10}, "ㄕˋ-ㄩㄥˋ": {"適用":
                         "emails": {"kazumasan@example.com": 20000, "a@example.com": 20000}}}
 
 
+def _symbol_keys(changes, page=None):
+    from engine import symbols
+    keys = list(symbols.PAGES[page][1]) if page is not None else [""] * len(symbols.KEYS)
+    for key, symbol in changes.items():
+        keys[symbols.KEYS.index(key)] = symbol
+    return keys
+
+
+# 符號鍵盤自訂 (#69): symbols.json of the custom_symbols setting - a page of one's own first (emoji with joiners,
+# modifiers, a flag, a keycap; most keys empty), 一般 with a key changed and two swapped, 數學 hidden, 特殊
+SYMBOLS = {"format": 1, "pages": [
+    {"builtin": None, "name": "表情 :)", "hidden": False,
+     "keys": _symbol_keys({"`": "♪", "a": "😀", "s": "", "d": "👩‍💻", "f": "❤️", "q": "🇹🇼", "w": "1️⃣", "e": "👍🏽",
+                           "1": "é"})},
+    {"builtin": 0, "name": "一般", "hidden": False, "keys": _symbol_keys({"a": "★", "q": "（", "w": "《"}, 0)},
+    {"builtin": 1, "name": "數學", "hidden": True, "keys": _symbol_keys({}, 1)},
+    {"builtin": 2, "name": "特殊", "hidden": False, "keys": _symbol_keys({}, 2)}]}
+
+
 def run(cmd):
     return subprocess.run(cmd, capture_output=True, check=True).stdout.decode("utf-8").split("\n")
 
@@ -580,10 +605,14 @@ def compare(cases, config, tmp):
         for name in ("user.json", "keys.json", "custom_picks.json", "user_simplified.json", "forgot.json"):
             if os.path.exists(os.path.join(tmp, side, name)):
                 os.remove(os.path.join(tmp, side, name))
-        settings = {k: v for k, v in config.items() if k not in ("no_quick_fill", "seed_user")}
+        settings = {k: v for k, v in config.items() if k not in ("no_quick_fill", "seed_user", "custom_symbols")}
         files = [("config.json", settings), ("dictionary.json", DICTIONARY)]
         if config.get("seed_user"):
             files.append(("user.json", SEEDED_USER))
+        if config.get("custom_symbols"):
+            files.append(("symbols.json", SYMBOLS))
+        elif os.path.exists(os.path.join(tmp, side, "symbols.json")):  # (an earlier setting's)
+            os.remove(os.path.join(tmp, side, "symbols.json"))
         if config.get("no_quick_fill"):
             if os.path.exists(os.path.join(tmp, side, "quick_fill.json")):  # (an earlier setting's)
                 os.remove(os.path.join(tmp, side, "quick_fill.json"))
