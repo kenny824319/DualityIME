@@ -25,10 +25,17 @@ def packed():
 def installed():
     """install.ps1: the data\\ entries of `$files = @(...)`."""
     s = read("installer", "install.ps1")
-    m = re.search(r'\$files = @\((.*?)\)\s*\n', s, re.S)
-    assert m, "install.ps1: $files was not found"
-    body = "\n".join(line.split("#", 1)[0] for line in m.group(1).splitlines())
-    return {f for f in re.findall(r'"([^"]+)"', body) if f.startswith("data\\")}
+    start = s.find("$files = @(")
+    assert start >= 0, "install.ps1: $files was not found"
+    # (to the line whose code - comments dropped - ends the list with ")": a comment holding "(#40)" is no end,
+    # findings #143)
+    body = []
+    for line in s[start + len("$files = @("):].splitlines():
+        code = line.split("#", 1)[0].rstrip()
+        body.append(code)
+        if code.endswith(")"):
+            break
+    return {f for f in re.findall(r'"([^"]+)"', "\n".join(body)) if f.startswith("data\\")}
 
 
 class InstallerListsTest(unittest.TestCase):
