@@ -70,24 +70,46 @@ def subtitles(path):
 
 
 def offensive(path):
-    """The words on ESDB's lines marked (offensive-N) or (vulgar-N), with their inflections."""
+    """Every word on ESDB's lines marked (offensive-N) or (vulgar-N), however the line is written - its forms in
+    parentheses (nigga ...: (niggas | niggaz)), a line with no part of speech (shitted (vulgar-1)), a leading A: / _: /
+    - (findings #137: niggas, shitted, bullshitted were left)."""
     out = set()
     with open(path, encoding="utf-8") as f:
         for line in f:
             if "(offensive" not in line and "(vulgar" not in line:
                 continue
-            base = re.search(r":\s*([A-Za-z'-]+)\s*<", line)
-            if base:
-                out.add(base.group(1).lower())
-            tail = line.split("): ", 1)
-            if len(tail) == 2:
-                out.update(w.strip().lower() for w in tail[1].split(","))
+            entry = line.split("#", 1)[0]
+            entry = entry.split(": ", 1)[1] if ": " in entry else entry  # (after the levels: "60: ", "70 [...]: ")
+            entry = re.sub(r"<[^>]*>|\((offensive|vulgar)-\d+\)", " ", entry)
+            out.update(w.lower() for w in re.findall(r"[A-Za-z][A-Za-z'-]*", entry) if len(w) > 1)
     return out
 
 
+def inflections(w):
+    """w and its regular forms: -s -es -ed -ing -er -ers -y, e dropped before -ing, y as -ies (LDNOOBW lists the word
+    alone: faggots, kikes, wetbacks were left, findings #137)."""
+    out = {w, w + "s", w + "es", w + "ed", w + "ing", w + "er", w + "ers", w + "y", w + "ty"}
+    if w.endswith("e"):
+        out |= {w + "d", w[:-1] + "ing", w + "r", w + "rs"}
+    if w.endswith("y"):
+        out |= {w[:-1] + "ies", w[:-1] + "ied"}
+    return out
+
+
+# ...words the inflections above make that are plain words of their own (butt -> butter, spic -> spicy, spices, suck ->
+# sucked, sex -> sexes): kept (Claude's call, 2026-11-25, listed for the user with findings #137)
+PLAIN = {"butter", "butters", "butting", "butted", "buttes", "butty", "butts", "sucker", "suckers", "sucked", "sucking",
+         "asses", "spicy", "spices", "spiced", "spicing", "cocky", "cocked", "cocking", "cocker", "cockers", "booby",
+         "sexes", "sexed", "sexing", "vibratory", "skeeter", "skeeters", "spunky", "bastardy", "monger", "mongers",
+         "scats", "scatty", "swingers", "anuses", "nudes", "nuder", "smutty", "smuts", "raped", "rapes"}
+
+
 def ldnoobw(path):
+    """LDNOOBW's single words with their inflections, but the plain words of KEEP (and their forms) and PLAIN."""
     with open(path, encoding="utf-8") as f:
-        return {w for w in (line.strip().lower() for line in f) if WORD.fullmatch(w)} - KEEP
+        words = {w for w in (line.strip().lower() for line in f) if WORD.fullmatch(w)}
+    keep = set().union(*(inflections(k) for k in KEEP)) | PLAIN
+    return set().union(*(inflections(w) for w in words - KEEP)) - keep
 
 
 def build(src):
