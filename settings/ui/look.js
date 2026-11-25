@@ -187,11 +187,41 @@ function lookCard() {
         `<div class="lp-c lp-row">0912-345-678<span style="color:${th.label}">[phone]</span></div>` +
         `<div class="lp-c lp-row">感謝您的幫忙<span style="color:${th.label}">[tks]</span></div>`;
       case "keyboard": {
-        const k = (l, s, on) => `<div class="lp-key" style="${on ? sel : ""}"><i>${l}</i>${s}</div>`;
-        return `<div class="lp-tabs"><span style="${sel}">一般</span><span>數學</span><span>特殊</span></div>` +
-          `<div class="lp-keys">${k("Q", "《")}${k("W", "》")}${k("E", "「", true)}${k("R", "」")}${k("T", "『")}${k("Y", "』")}${k("U", "【")}${k("I", "】")}</div>` +
-          `<div class="lp-keys">${k("A", "※")}${k("S", "＊")}${k("D", "○")}${k("F", "●")}${k("G", "，")}${k("H", "、")}${k("J", "。")}${k("K", "；")}</div>` +
-          `<div class="lp-keys">${k("Z", "！")}${k("X", "？")}${k("C", "…")}${k("V", "‥")}${k("B", "—")}${k("N", "｛")}${k("M", "｝")}</div>`;
+        // laid out as the IME draws it (cpp/tip/ui.cpp SymbolKeyboard::build): 4 rows filling the 918 x 292 window,
+        // Tab / Caps / Shift / Enter / ⬅ beside them, the built-in 一般 page (engine/symbols.py PAGES[0]) - the
+        // preview's keys sat in its top left corner before (the user 2026-11-25)
+        const UNIT = 56, GAP = 6, KEY_H = 50, PAD = 14, TAB_H = 46, W = 13 * UNIT + 13 * GAP + UNIT * 1.5;
+        const ROWS = ["`1234567890-=", "qwertyuiop[]\\", "asdfghjkl;'", "zxcvbnm,./"];
+        const PAGE = ["`", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "《", "》", "〈", "〉", "“", "”",
+          "【", "】", "（", "）", "〔", "〕", "＼", "※", "＊", "○", "●", "「", "」", "『", "』", "：", "；", "、", "！", "？",
+          "…", "‥", "—", "｛", "｝", "，", "。", "／"];
+        const at = (x, y, w, hh) => `left:${x}px;top:${y}px;width:${w}px;height:${hh}px`;
+        const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+        let html = "", index = 0;
+        ["一般", "數學", "特殊"].forEach((name, p) => {
+          html += `<div class="lp-kb-tab" style="${at(PAD + p * 112, PAD, 100, TAB_H - 12)}${p === 0 ? ";" + sel : ""}">${name}</div>`;
+        });
+        html += `<div class="lp-kb-close" style="${at(PAD + W - 34, PAD + 2, 30, 30)}">×</div>`;
+        const left = [0, UNIT * 1.5, 0, 0], leftName = ["", "Tab", "Caps", "Shift"], rightName = ["⬅", "", "Enter", "Shift"];
+        ROWS.forEach((row, r) => {
+          const y = PAD + TAB_H + r * (KEY_H + GAP);
+          let x = PAD;
+          let l = left[r], right = 0;
+          if (r === 0) right = W - 13 * UNIT - 13 * GAP;
+          else if (r > 1) l = right = Math.floor((W - row.length * UNIT - (row.length + 1) * GAP) / 2);
+          if (l) {
+            html += `<div class="lp-key lp-kb-deco" style="${at(x, y, l, KEY_H)}">${leftName[r]}</div>`;
+            x += l + GAP;
+          }
+          for (const ch of row) {
+            const on = index === 15;  // (E highlighted, as the list's first item is elsewhere)
+            html += `<div class="lp-key" style="${at(x, y, UNIT, KEY_H)}${on ? ";" + sel : ""}"><i>${esc(ch.toUpperCase())}</i>${esc(PAGE[index])}</div>`;
+            index++;
+            x += UNIT + GAP;
+          }
+          if (right) html += `<div class="lp-key lp-kb-deco" style="${at(x, y, PAD + W - x, KEY_H)}">${rightName[r]}</div>`;
+        });
+        return html;
       }
       case "bar": return `<div class="lp-bar">${["ㄋㄧˇ", "s以", "suˇ", "su3"].map((t, i) => `<span${i === 0 ? ` style="${sel}"` : ""}>${t}</span>`).join("")}</div>`;
       default: return "";
