@@ -12,8 +12,13 @@ add_library(sz_engine STATIC
     engine/util.cpp engine/json.cpp engine/zhuyin.cpp engine/lexicon.cpp engine/bigram.cpp
     engine/config.cpp engine/symbols.cpp engine/composer.cpp engine/lm.cpp engine/lm_next.cpp engine/lm_pool.cpp
     engine/candlayout.cpp
-    engine/script.cpp)
+    engine/script.cpp
+    engine/ja_romaji.cpp engine/ja_dict.cpp engine/ja_convert.cpp)
 target_include_directories(sz_engine PUBLIC engine)
+
+# #36: the Japanese conversion on romaji lines (tools/ja_compare.py runs it beside tools/ja_convert.py)
+add_executable(sz_ja tools/ja_tool.cpp)
+target_link_libraries(sz_ja sz_engine)
 
 add_executable(sz_trace tools/trace.cpp common/anim_image.cpp)
 target_link_libraries(sz_trace sz_engine ole32 windowscodecs bcrypt shell32)
