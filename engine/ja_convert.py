@@ -34,24 +34,51 @@ def _groups(cells):
     return sorted(best.values(), key=lambda c: c.order)
 
 
-def convert(kana, d):
-    """(the cheapest path as Nodes, its cost): BOS and EOS are id 0; cost = sum of node cost + connection cost."""
+def _limits(n, pins, cuts):
+    """For each begin: the pin starting there (or None), whether it lies inside a pin, and the furthest end a word
+    from there may reach (no word crosses a cut, ends inside a pin or runs over one)."""
+    pin_at = {p.begin: p for p in pins}
+    inside = [False] * (n + 1)
+    for p in pins:
+        for i in range(p.begin + 1, p.end):
+            inside[i] = True
+    stops = sorted({c for c in cuts if 0 < c < n} | {p.begin for p in pins if p.begin > 0})
+    reach = [n] * n
+    j = len(stops) - 1
+    nxt = n
+    for b in range(n - 1, -1, -1):
+        while j >= 0 and stops[j] > b:
+            nxt = stops[j]
+            j -= 1
+        reach[b] = nxt
+    return pin_at, inside, reach
+
+
+def convert(kana, d, pins=(), cuts=()):
+    """(the cheapest path as Nodes, its cost): BOS and EOS are id 0; cost = sum of node cost + connection cost.
+    pins: spans whose text is fixed (begin, end, surface, lid, rid - ja_composer.Pin): the only node over its span,
+    cost 0; cuts: kana offsets no word crosses. Without them the lattice is the one described above."""
     n = len(kana)
     bos = _Cell(Node(0, 0, "", "", 0, 0, 0), 0, None, -1)
     ends = [[] for _ in range(n + 1)]
     ends[0].append(bos)
     order = 0
+    pin_at, inside, reach = _limits(n, pins, cuts)
     for begin in range(n):
         preds = _groups(ends[begin])
-        if not preds:
+        if not preds or inside[begin]:
             continue
         starting = []
-        for k in range(1, min(d.max_reading_len, n - begin) + 1):
-            reading = kana[begin:begin + k]
-            for e in d.lookup(reading):
-                starting.append(Node(begin, begin + k, reading, e.surface, e.lid, e.rid, e.cost))
-        ch = kana[begin]
-        starting.append(Node(begin, begin + 1, ch, ch, d.unknown_id, d.unknown_id, FALLBACK_COST))
+        pin = pin_at.get(begin)
+        if pin is not None:
+            starting.append(Node(begin, pin.end, kana[begin:pin.end], pin.surface, pin.lid, pin.rid, 0))
+        else:
+            for k in range(1, min(d.max_reading_len, reach[begin] - begin) + 1):
+                reading = kana[begin:begin + k]
+                for e in d.lookup(reading):
+                    starting.append(Node(begin, begin + k, reading, e.surface, e.lid, e.rid, e.cost))
+            ch = kana[begin]
+            starting.append(Node(begin, begin + 1, ch, ch, d.unknown_id, d.unknown_id, FALLBACK_COST))
         for node in starting:
             best, best_total = None, 0
             for p in preds:
