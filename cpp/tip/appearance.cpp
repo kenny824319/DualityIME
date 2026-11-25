@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <new>
 
 #include "anim_image.h"
 
@@ -93,6 +94,15 @@ struct Photo {
     std::vector<std::vector<uint8_t>> frames;
     std::vector<int> delays_ms;
     int loops = 0, shown = -1;  // (shown: the frame in bmp now)
+    bool failed = false;        // (it did not load: not tried again until the file changes - findings #140)
+    void release() {  // (the slot emptied: its bitmap and frames given back)
+        if (bmp) DeleteObject(bmp);
+        bmp = nullptr;
+        bits = nullptr;
+        std::vector<std::vector<uint8_t>>().swap(frames);
+        std::vector<int>().swap(delays_ms);
+        shown = -1;
+    }
     ~Photo() {
         if (bmp) DeleteObject(bmp);
     }
@@ -139,10 +149,13 @@ bool load_animated(const std::wstring& path, Photo& p) {
 }
 
 bool load(const std::wstring& path, Photo& p) {
-    std::vector<std::vector<uint8_t>>().swap(p.frames);
-    p.delays_ms.clear();
-    p.shown = -1;
-    if (load_animated(path, p)) return true;
+    p.release();
+    // (out of memory reading the frames - a crowded 32-bit app: its first frame as a still, findings #140)
+    try {
+        if (load_animated(path, p)) return true;
+    } catch (const std::bad_alloc&) {
+        p.release();
+    }
     ComPtr<IWICImagingFactory> f;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&f)))) return false;
     ComPtr<IWICBitmapDecoder> dec;
@@ -177,24 +190,46 @@ Photo* photo(const std::wstring& path) {
     Photo* slot = nullptr;
     for (auto& p : g_photos)
         if (p.path == path) slot = &p;
-    if (slot && slot->bmp && CompareFileTime(&slot->written, &fa.ftLastWriteTime) == 0) return slot;
+    if (slot && CompareFileTime(&slot->written, &fa.ftLastWriteTime) == 0 && (slot->bmp || slot->failed))
+        return slot->bmp ? slot : nullptr;
     if (!slot)
         for (auto& p : g_photos)
-            if (p.path.empty() || !p.bmp) {
+            if (p.path.empty() || (!p.bmp && !p.failed)) {
                 slot = &p;
                 break;
             }
     if (!slot) slot = &g_photos[0];
     slot->path = path;
     slot->written = fa.ftLastWriteTime;
-    if (!load(path, *slot)) {
-        if (slot->bmp) DeleteObject(slot->bmp);
-        slot->bmp = nullptr;
-        slot->bits = nullptr;
-        std::vector<std::vector<uint8_t>>().swap(slot->frames);
+    slot->failed = false;
+    bool ok = false;
+    try {
+        ok = load(path, *slot);
+    } catch (const std::bad_alloc&) {
+    }
+    if (!ok) {
+        slot->release();
+        slot->failed = true;
         return nullptr;
     }
     return slot;
+}
+
+// the photos the look no longer names given back (another photo picked, one removed: an animated one holds up to
+// MAX_ANIM_BYTES in every app that showed it - findings #139)
+void prune_photos(const Appearance& a) {
+    std::vector<std::wstring> named;
+    if (a.on && !a.dir.empty()) {
+        if (!a.all.image.empty()) named.push_back(a.dir + L"\\" + a.all.image);
+        for (auto& [k, l] : a.windows)
+            if (!l.image.empty()) named.push_back(a.dir + L"\\" + l.image);
+    }
+    for (auto& p : g_photos)
+        if (!p.path.empty() && std::find(named.begin(), named.end(), p.path) == named.end()) {
+            p.release();
+            p.path.clear();
+            p.failed = false;
+        }
 }
 
 }  // namespace
@@ -231,7 +266,10 @@ Appearance parse_appearance(const Json* a, const std::wstring& dir) {
     return out;
 }
 
-void set_appearance(Appearance a) { g_look = std::move(a); }
+void set_appearance(Appearance a) {
+    g_look = std::move(a);
+    prune_photos(g_look);
+}
 
 void set_appearance_from(const Json* a, const std::wstring& dir) {
     // (every reply carries the settings: made again only when they changed)
@@ -240,6 +278,7 @@ void set_appearance_from(const Json* a, const std::wstring& dir) {
     if (key == g_last) return;
     g_last = key;
     g_look = parse_appearance(a, dir);
+    prune_photos(g_look);
 }
 
 const Appearance& appearance() { return g_look; }

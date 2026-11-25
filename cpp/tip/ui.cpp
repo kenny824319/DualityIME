@@ -8,6 +8,7 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <exception>
 #include <cmath>
 
 #include "appearance.h"
@@ -281,16 +282,24 @@ void Popup::paint() {
     AnimClock& clock = anim_clock();
     long long elapsed = static_cast<long long>(GetTickCount64() - shown_tick_);
     clock = AnimClock{elapsed, -1};
-    draw(mem, w, h);
-    if (clock.next_ms >= 0 && visible_)
+    // (whatever draw throws, the DCs and bitmap go back and the paint ends - findings #140: three GDI objects lost
+    // each repaint otherwise; proc catches it after)
+    std::exception_ptr failed;
+    try {
+        draw(mem, w, h);
+    } catch (...) {
+        failed = std::current_exception();
+    }
+    if (!failed && clock.next_ms >= 0 && visible_)
         SetTimer(hwnd_, TIMER_ANIM, static_cast<UINT>(std::clamp<long long>(clock.next_ms - elapsed, 20, 60000)), nullptr);
     else
         KillTimer(hwnd_, TIMER_ANIM);
-    BitBlt(dc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
+    if (!failed) BitBlt(dc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
     SelectObject(mem, old);
     DeleteObject(bmp);
     DeleteDC(mem);
     EndPaint(hwnd_, &ps);
+    if (failed) std::rethrow_exception(failed);
 }
 
 LRESULT Popup::message(UINT, WPARAM, LPARAM, bool& done) {
