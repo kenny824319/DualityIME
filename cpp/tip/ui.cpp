@@ -1,8 +1,11 @@
 #include "ui.h"
 
+#include <d2d1.h>
 #include <dwmapi.h>
+#include <dwrite.h>
 #include <windowsx.h>
 #include <shlobj.h>
+#include <wrl/client.h>
 
 #include <algorithm>
 #include <cmath>
@@ -115,6 +118,100 @@ bool Canvas::has_glyphs(const std::wstring& t, HFONT font) {
     std::vector<WORD> idx(t.size());
     GetGlyphIndicesW(dc_, t.c_str(), static_cast<int>(t.size()), idx.data(), GGI_MARK_NONEXISTING_GLYPHS);
     return std::none_of(idx.begin(), idx.end(), [](WORD i) { return i == 0xFFFF; });
+}
+
+// ---- ColorText (符號鍵盤自訂 #69: emoji in colour) ---------------------------------------------
+
+namespace {
+// one of each for the process, made at the first colour text (never in DllMain); multi-threaded: an app may draw its
+// popups on more than one thread
+ID2D1Factory* d2d_factory() {
+    static ID2D1Factory* const f = [] {
+        ID2D1Factory* p = nullptr;
+        D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, __uuidof(ID2D1Factory), nullptr, reinterpret_cast<void**>(&p));
+        return p;
+    }();
+    return f;
+}
+
+IDWriteFactory* dwrite_factory() {
+    static IDWriteFactory* const f = [] {
+        IUnknown* p = nullptr;
+        DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), &p);
+        return static_cast<IDWriteFactory*>(p);
+    }();
+    return f;
+}
+}  // namespace
+
+struct ColorText::Impl {
+    Microsoft::WRL::ComPtr<ID2D1DCRenderTarget> rt;
+    std::vector<std::pair<std::wstring, Microsoft::WRL::ComPtr<IDWriteTextFormat>>> formats;
+    double s = 1;
+    bool drawing = false;
+};
+
+ColorText::ColorText(HDC dc, int w, int h, double scale) : impl_(std::make_unique<Impl>()) {
+    impl_->s = scale;
+    ID2D1Factory* f = d2d_factory();
+    if (!f || !dwrite_factory()) return;
+    // (96 dpi: the sizes are scaled here, as Canvas does; the popup's bitmap is opaque - the photo drawn before)
+    auto props = D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_SOFTWARE,
+                                              D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE), 96.f, 96.f);
+    // (software: a hardware one loaded the graphics driver into the app - first show 96 ms, +33 MB, measured
+    // 2026-11-25 against 26 ms, +22 MB; one per UI thread, bound to each paint's DC: made at every paint, a repaint
+    // took 11.6 ms against 5.3)
+    static thread_local Microsoft::WRL::ComPtr<ID2D1DCRenderTarget> kept;
+    if (!kept && FAILED(f->CreateDCRenderTarget(&props, &kept))) return;
+    Microsoft::WRL::ComPtr<ID2D1DCRenderTarget> rt = kept;
+    RECT r{0, 0, w, h};
+    if (FAILED(rt->BindDC(dc, &r))) return;
+    rt->BeginDraw();
+    rt->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);  // (as Canvas's CLEARTYPE_QUALITY; colour glyphs: grey)
+    impl_->rt = rt;
+    impl_->drawing = true;
+}
+
+ColorText::~ColorText() {
+    if (impl_->drawing) impl_->rt->EndDraw();
+}
+
+bool ColorText::ok() const { return impl_->drawing; }
+
+void ColorText::text(const std::wstring& t, double x, double y, double w, double h, COLORREF color,
+                     const wchar_t* family, double size, bool center) {
+    if (!impl_->drawing || t.empty()) return;
+    std::wstring key = std::wstring(family) + L"/" + std::to_wstring(size) + (center ? L"/c" : L"/l");
+    IDWriteTextFormat* fmt = nullptr;
+    for (auto& [k, f] : impl_->formats)
+        if (k == key) fmt = f.Get();
+    if (!fmt) {
+        Microsoft::WRL::ComPtr<IDWriteTextFormat> f;
+        if (FAILED(dwrite_factory()->CreateTextFormat(family, nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+                                                      DWRITE_FONT_STRETCH_NORMAL, static_cast<float>(size * impl_->s),
+                                                      L"zh-TW", &f)))
+            return;
+        f->SetTextAlignment(center ? DWRITE_TEXT_ALIGNMENT_CENTER : DWRITE_TEXT_ALIGNMENT_LEADING);
+        f->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        f->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        fmt = f.Get();
+        impl_->formats.emplace_back(key, f);
+    }
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(impl_->rt->CreateSolidColorBrush(
+            D2D1::ColorF(GetRValue(color) / 255.f, GetGValue(color) / 255.f, GetBValue(color) / 255.f), &brush)))
+        return;
+    float s = static_cast<float>(impl_->s);
+    D2D1_RECT_F r = D2D1::RectF(static_cast<float>(x) * s, static_cast<float>(y) * s, static_cast<float>(x + w) * s,
+                                static_cast<float>(y + h) * s);
+    impl_->rt->DrawText(t.c_str(), static_cast<UINT32>(t.size()), fmt, r, brush.Get(),
+                        D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT | D2D1_DRAW_TEXT_OPTIONS_CLIP);
+}
+
+bool ColorText::finish() {
+    if (!impl_->drawing) return false;
+    impl_->drawing = false;
+    return SUCCEEDED(impl_->rt->EndDraw());  // (a DC target copies to the DC here: failed, nothing was drawn)
 }
 
 // ---- Popup --------------------------------------------------------------------------------
@@ -865,21 +962,53 @@ void SymbolKeyboard::draw(HDC dc, int w, int h) {
             wchar_t label[2] = {static_cast<wchar_t>(std::toupper(static_cast<unsigned char>(symbols::KEYS[it.value]))), 0};
             cv.text(label, it.x + 6, it.y + 2, it.w, 16, on ? th.accent_text : th.label, label_font,
                     DT_LEFT | DT_TOP | DT_SINGLELINE);
-            std::wstring sym = it.value < static_cast<int>(keys_.size()) ? keys_[it.value] : std::wstring();
-            HFONT f = cv.has_glyphs(sym, sym_font) ? sym_font : sym_fallback;
-            cv.text(sym, it.x, it.y + 12, it.w, it.h - 12, on ? th.accent_text : th.text, f,
-                    DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         } else if (it.kind == Item::Deco) {
             key_box(it, th.dim, th.key_border);
             cv.text(it.label, it.x + 6, it.y + 2, it.w, 20, th.label, label_font, DT_LEFT | DT_TOP | DT_SINGLELINE);
         } else if (it.kind == Item::Tab) {
-            bool on = it.value == page_;
-            if (on) cv.box(it.x, it.y, it.w, it.h, th.accent, th.accent, 8);
-            std::wstring name = it.value < static_cast<int>(names_.size()) ? names_[it.value] : std::wstring();
-            cv.text(name, it.x, it.y, it.w, it.h, on ? th.accent_text : th.text, cv.font(16, L"Microsoft JhengHei UI"),
-                    DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            if (it.value == page_) cv.box(it.x, it.y, it.w, it.h, th.accent, th.accent, 8);
         } else {
             cv.text(L"✕", it.x, it.y, it.w, it.h, th.text, cv.font(20, L"Segoe UI"), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+    }
+    // the symbols and the page names last, in colour where the font has it (an emoji key, a page named 😀 表情); else
+    // black and white as before, never nothing (符號鍵盤自訂, #69). Only when the page or the names hold an emoji:
+    // Direct2D costs the app memory (+15 MB even for plain text, measured 2026-11-25) - the built-in pages, which hold
+    // none, are drawn as ever, at no cost
+    auto sym_of = [&](const Item& it) { return it.value < static_cast<int>(keys_.size()) ? keys_[it.value] : std::wstring(); };
+    auto name_of = [&](const Item& it) { return it.value < static_cast<int>(names_.size()) ? names_[it.value] : std::wstring(); };
+    auto emoji = [](const std::vector<std::wstring>& texts) {
+        for (auto& t : texts)
+            for (size_t i = 0; i < t.size(); ++i) {
+                wchar_t c = t[i];
+                // (a surrogate pair: U+10000 and above - the emoji blocks are U+1F000 on; a variation selector 16, a
+                // joiner, a keycap's mark)
+                if ((c >= 0xD83C && c <= 0xD83E) || c == 0xFE0F || c == 0x200D || c == 0x20E3) return true;
+            }
+        return false;
+    };
+    if (emoji(keys_) || emoji(names_)) {
+        ColorText ct(dc, w, h, s);
+        if (ct.ok())
+            for (auto& it : items_) {
+                if (it.kind == Item::Key)
+                    ct.text(sym_of(it), it.x, it.y + 12, it.w, it.h - 12, it.value == cursor_ ? th.accent_text : th.text,
+                            L"Microsoft JhengHei UI", 19, true);
+                else if (it.kind == Item::Tab)
+                    ct.text(name_of(it), it.x, it.y, it.w, it.h, it.value == page_ ? th.accent_text : th.text,
+                            L"Microsoft JhengHei UI", 16, true);
+            }
+        if (ct.finish()) return;
+    }
+    for (auto& it : items_) {
+        if (it.kind == Item::Key) {
+            std::wstring sym = sym_of(it);
+            HFONT f = cv.has_glyphs(sym, sym_font) ? sym_font : sym_fallback;
+            cv.text(sym, it.x, it.y + 12, it.w, it.h - 12, it.value == cursor_ ? th.accent_text : th.text, f,
+                    DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        } else if (it.kind == Item::Tab) {
+            cv.text(name_of(it), it.x, it.y, it.w, it.h, it.value == page_ ? th.accent_text : th.text,
+                    cv.font(16, L"Microsoft JhengHei UI"), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
     }
 }

@@ -5,6 +5,7 @@
 #include <windows.h>
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -60,6 +61,23 @@ private:
     double s_;
     std::vector<HGDIOBJ> objs_;
     std::vector<std::pair<std::wstring, HFONT>> fonts_;
+};
+
+// Text in colour where the font has it (emoji: 符號鍵盤自訂 #69, the user chose colour this version), through Direct2D
+// on a GDI DC: one pass of many texts after the GDI boxes. ok() false when Direct2D is not there, finish() false when
+// its pass failed - the caller draws the same texts with GDI then (black and white, never nothing).
+class ColorText {
+public:
+    ColorText(HDC dc, int w, int h, double scale);
+    ~ColorText();
+    bool ok() const;
+    void text(const std::wstring& t, double x, double y, double w, double h, COLORREF color, const wchar_t* family,
+              double size, bool center);
+    bool finish();
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 class CandidateWindow : public Popup {

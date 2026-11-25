@@ -33,13 +33,19 @@ add_library(${TIP_NAME} SHARED
     tip/dllmain.cpp tip/text_service.cpp tip/langbar.cpp tip/ui.cpp tip/appearance.cpp tip/engine_client.cpp tip/key_record.cpp
     common/pipe.cpp tip/tip.def tip/tip.rc)
 target_include_directories(${TIP_NAME} PRIVATE common tip)
-target_link_libraries(${TIP_NAME} sz_engine ole32 oleaut32 uuid user32 gdi32 shell32 dwmapi advapi32 imm32 msimg32
+target_link_libraries(${TIP_NAME} sz_engine ole32 oleaut32 uuid user32 gdi32 shell32 dwmapi advapi32 imm32 msimg32 d2d1 dwrite
                       windowscodecs)
 
 # the shared key record the input method keeps (#73), on its own
 add_executable(sz_keytest tools/key_record_test.cpp tip/key_record.cpp)
 target_include_directories(sz_keytest PRIVATE tip)
 target_link_libraries(sz_keytest advapi32)
+
+# the input method's windows drawn in a process of their own and saved as pictures (look at a window change without
+# installing the DLL: #69, #73)
+add_executable(sz_uishot tools/ui_shot.cpp tip/ui.cpp tip/appearance.cpp)
+target_include_directories(sz_uishot PRIVATE common tip)
+target_link_libraries(sz_uishot sz_engine ole32 user32 gdi32 shell32 dwmapi advapi32 msimg32 windowscodecs d2d1 dwrite psapi)
 
 # end-to-end test against the registered input method
 add_executable(sz_tsftest tools/tsf_test.cpp)
