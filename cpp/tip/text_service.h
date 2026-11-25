@@ -99,6 +99,7 @@ private:
         std::vector<std::wstring> replacements;  // the bar above the text
         int repl_index = -1;
         int symbol_page = -1, symbol_cursor = 0;
+        std::vector<std::wstring> symbol_names, symbol_keys;  // 符號鍵盤自訂 (#69): the pages shown, the open one's keys
         bool fill_open = false;  // 快速填入 (#21): what was typed, (text, shortcut) shown, the highlighted one
         std::wstring fill_typed;
         std::vector<std::pair<std::wstring, std::wstring>> fill_items;

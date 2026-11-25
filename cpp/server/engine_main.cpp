@@ -161,6 +161,18 @@ Json state(Session& s, bool handled) {
     o["repl_index"] = Json(c.repl_index);
     o["symbol_page"] = Json(c.symbol_page ? *c.symbol_page : -1);
     o["symbol_cursor"] = Json(c.symbol_cursor);
+    // 符號鍵盤自訂 (#69): while it is up, the pages shown and the open page's 47 symbols - the DLL keeps no table
+    if (c.symbol_page) {
+        Json names = Json::array();
+        for (auto& n : c.user.symbols.names()) names.push(Json(n));
+        o["symbol_names"] = names;
+        Json keys = Json::array();
+        // (another program's composer may have read a shorter table since this one's last key: in range - findings #125)
+        int page = std::min(*c.symbol_page, c.user.symbols.count() - 1);
+        for (size_t i = 0; i < sz::symbols::KEYS.size(); ++i)
+            keys.push(Json(to_utf8(c.user.symbols.symbol(page, static_cast<int>(i)))));
+        o["symbol_keys"] = keys;
+    }
     // 快速填入 while open (#21): what was typed, the items of the shortcuts starting so, the highlighted one
     if (auto f = c.fill_shown()) {
         Json fill = Json::object();

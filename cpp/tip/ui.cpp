@@ -701,8 +701,11 @@ void SymbolKeyboard::build() {
         }
         if (right) items_.push_back(Item{x, y, PAD + width - x, KEY_H, Item::Deco, 0, right_labels[r]});
     }
-    for (int p = 0; p < static_cast<int>(symbols::page_count()); ++p)
-        items_.push_back(Item{PAD + p * 112, PAD, 100, TAB_H - 12, Item::Tab, p, nullptr});
+    // the tabs: 100 wide as ever, narrower when more are shown (at most 10, a name of 8 cells: #69), the × kept free
+    int tabs = static_cast<int>(names_.size());
+    int room = width - 34 - 8;
+    int step = tabs ? std::min(112, room / tabs) : 112, tab_w = step - 6;
+    for (int p = 0; p < tabs; ++p) items_.push_back(Item{PAD + p * step, PAD, tab_w, TAB_H - 12, Item::Tab, p, nullptr});
     items_.push_back(Item{PAD + width - 34, PAD + 2, 30, 30, Item::Close, 0, nullptr});
     width_ = PAD * 2 + width;
     height_ = y0 + 4 * (KEY_H + GAP) - GAP + PAD;
@@ -731,10 +734,14 @@ void SymbolKeyboard::save_position(bool keep) {
     write_file_atomic(keyboard_state_path(), j.dump());  // (fails quietly in sandboxed apps)
 }
 
-void SymbolKeyboard::show(int page, int cursor, const RECT& caret) {
+void SymbolKeyboard::show(int page, int cursor, const std::vector<std::wstring>& names,
+                          const std::vector<std::wstring>& keys, const RECT& caret) {
     if (!create(L"DualityIMESymbols")) return;
     bool was_visible = visible_;  // (after create: a window made again for a new owner is hidden)
-    if (items_.empty()) build();
+    bool tabs_changed = names != names_;
+    names_ = names;
+    keys_ = keys;
+    if (items_.empty() || tabs_changed) build();  // (the tabs follow the table: 符號鍵盤自訂, #69)
     page_ = page;
     cursor_ = cursor;
     if (was_visible) {
@@ -858,7 +865,7 @@ void SymbolKeyboard::draw(HDC dc, int w, int h) {
             wchar_t label[2] = {static_cast<wchar_t>(std::toupper(static_cast<unsigned char>(symbols::KEYS[it.value]))), 0};
             cv.text(label, it.x + 6, it.y + 2, it.w, 16, on ? th.accent_text : th.label, label_font,
                     DT_LEFT | DT_TOP | DT_SINGLELINE);
-            std::wstring sym = wide(symbols::symbol(page_, it.value));
+            std::wstring sym = it.value < static_cast<int>(keys_.size()) ? keys_[it.value] : std::wstring();
             HFONT f = cv.has_glyphs(sym, sym_font) ? sym_font : sym_fallback;
             cv.text(sym, it.x, it.y + 12, it.w, it.h - 12, on ? th.accent_text : th.text, f,
                     DT_CENTER | DT_VCENTER | DT_SINGLELINE);
@@ -868,7 +875,7 @@ void SymbolKeyboard::draw(HDC dc, int w, int h) {
         } else if (it.kind == Item::Tab) {
             bool on = it.value == page_;
             if (on) cv.box(it.x, it.y, it.w, it.h, th.accent, th.accent, 8);
-            std::wstring name = wide(from_utf8(symbols::page_names()[it.value]));
+            std::wstring name = it.value < static_cast<int>(names_.size()) ? names_[it.value] : std::wstring();
             cv.text(name, it.x, it.y, it.w, it.h, on ? th.accent_text : th.text, cv.font(16, L"Microsoft JhengHei UI"),
                     DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         } else {

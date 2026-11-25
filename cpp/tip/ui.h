@@ -173,7 +173,9 @@ public:
     std::function<void(char)> on_key;   // a key clicked: the key it stands for (symbols::KEYS)
     std::function<void(int)> on_page;   // a page tab clicked
     std::function<void()> on_close;
-    void show(int page, int cursor, const RECT& caret);
+    // the pages shown and the open page's 47 symbols, as the engine sends them (符號鍵盤自訂, #69: no table here)
+    void show(int page, int cursor, const std::vector<std::wstring>& names, const std::vector<std::wstring>& keys,
+              const RECT& caret);
 
 protected:
     void draw(HDC dc, int w, int h) override;
@@ -193,6 +195,7 @@ private:
     std::vector<Item> items_;
     int width_ = 0, height_ = 0;
     int page_ = 0, cursor_ = 0;
+    std::vector<std::wstring> names_, keys_;
     bool dragging_ = false;
     POINT drag_cursor_{}, drag_window_{};
 };

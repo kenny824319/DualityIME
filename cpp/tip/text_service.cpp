@@ -851,7 +851,9 @@ bool TextService::ctrl_punct_key(ITfContext* ctx, WPARAM vk, LPARAM lp) {
         if (!(ks[k] & 0x80) || k == static_cast<int>(vk) || !keys::shortcut_key(static_cast<unsigned>(k))) continue;
         keys::Seen s = keys::seen(static_cast<unsigned>(k));
         if (s == keys::Seen::Released || s == keys::Seen::Stuck) continue;
-        if (s == keys::Seen::None && !(k >= VK_LWIN && k <= VK_APPS)) held_unseen_ = static_cast<unsigned>(k);
+        // (named only if the record keeps such a key: a number pad key is never in it, so None says nothing - #126)
+        if (s == keys::Seen::None && keys::recorded(static_cast<unsigned>(k)) && !(k >= VK_LWIN && k <= VK_APPS))
+            held_unseen_ = static_cast<unsigned>(k);
         return false;
     }
     return true;
@@ -1016,6 +1018,9 @@ void TextService::read_reply(const Json& r) {
         if (auto* i = f->get("index"); i && i->is_number()) s.fill_index = static_cast<int>(i->as_number());
     }
     s.symbol_cursor = num("symbol_cursor", 0);
+    for (auto [key, list] : {std::pair{"symbol_names", &s.symbol_names}, std::pair{"symbol_keys", &s.symbol_keys}})
+        if (auto* v = r.get(key); v && v->is_array())
+            for (auto& item : v->items()) list->push_back(item.is_string() ? wide(item.as_string()) : std::wstring());
     auto* u = r.get("can_undo");
     s.can_undo = u && u->is_bool() && u->as_bool();
     state_ = std::move(s);
@@ -1696,7 +1701,7 @@ void TextService::place_ui(TfEditCookie ec, ITfContext* ctx) {
             keyboard_->on_page = [this](int p) { symbol_page(p); };
             keyboard_->on_close = [this] { close_symbols(); };
         }
-        keyboard_->show(state_.symbol_page, state_.symbol_cursor, comp_rc);
+        keyboard_->show(state_.symbol_page, state_.symbol_cursor, state_.symbol_names, state_.symbol_keys, comp_rc);
     } else if (keyboard_) {
         keyboard_->hide();
     }
@@ -1809,7 +1814,8 @@ void TextService::symbol_key(char key) {
 void TextService::symbol_page(int page) {
     ComPtr<ITfContext> ctx = focused_context(thread_mgr_.Get());
     if (!ctx) return;
-    int pages = 3;
+    int pages = static_cast<int>(state_.symbol_names.size());  // (符號鍵盤自訂, #69: as many as are shown)
+    if (pages <= 0) return;
     int steps = ((page - state_.symbol_page) % pages + pages) % pages;
     for (int k = 0; k < steps; ++k) {
         Json req = Json::object();

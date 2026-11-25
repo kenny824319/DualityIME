@@ -433,7 +433,7 @@ int wmain(int argc, wchar_t** argv) {
                     // {+INS} / {-INS}: the key down only / up only - a key Windows keeps held when its key-up
                     // never came (#73)
                     static const std::pair<const char*, WORD> holdable[] = {
-                        {"INS", VK_INSERT}, {"F13", VK_F13}, {"F24", VK_F24}};
+                        {"INS", VK_INSERT}, {"F13", VK_F13}, {"F24", VK_F24}, {"NUM0", VK_NUMPAD0}};
                     for (auto& [n, k] : holdable)
                         if (name.compare(1, std::string::npos, n) == 0) {
                             WORD vk = k;
@@ -453,8 +453,9 @@ int wmain(int argc, wchar_t** argv) {
                     if (view) UnmapViewOfFile(view);
                     if (h) CloseHandle(h);
                 }
-                else if (name == "HINT") {
-                    // the input method's little box at the caret is up ("Insert 沒有放開", #73): else the line fails
+                else if (name == "HINT" || name == "NOHINT") {
+                    // the input method's little box at the caret is up ("Insert 沒有放開", #73) - {NOHINT}: is not (no key
+                    // named for nothing, findings #126) - else the line fails
                     pump(150);
                     struct Find { bool seen = false; } find;
                     EnumWindows([](HWND w, LPARAM p) -> BOOL {
@@ -466,7 +467,8 @@ int wmain(int argc, wchar_t** argv) {
                             reinterpret_cast<Find*>(p)->seen = true;
                         return TRUE;
                     }, reinterpret_cast<LPARAM>(&find));
-                    if (!find.seen) g_note += " [no hint at the caret]";
+                    if (name == "HINT" && !find.seen) g_note += " [no hint at the caret]";
+                    if (name == "NOHINT" && find.seen) g_note += " [a hint at the caret]";
                 }
                 else if (name == "SBACK") tap(VK_BACK, true);
                 else if (name == "SSPACE") tap(VK_SPACE, true);
