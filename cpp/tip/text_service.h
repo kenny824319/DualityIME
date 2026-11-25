@@ -72,6 +72,7 @@ public:
     // for the language bar button and the windows
     void toggle_mode();
     bool english_mode() const { return english_; }
+    bool japanese_mode() const { return japanese_; }  // 日文 (#36): on the Japanese side (純日文 in this version)
     void show_menu(POINT pt);
     void pick_candidate(int index);        // clicked in the candidate list
     void pick_candidate_at(int index);     // clicked in the spread-out list (index in all of them)
@@ -105,6 +106,7 @@ private:
         std::vector<std::pair<std::wstring, std::wstring>> fill_items;
         int fill_index = 0;
         bool can_undo = false;
+        bool ja_off = false;  // 日文 (#36): the engine says 日文輸入 is off (what was typed was sent): back to Chinese
     };
     struct Settings {
         bool shift_toggle = true;
@@ -121,6 +123,13 @@ private:
         UINT script_vk = 0;              // simplified_key: the key and its modifiers (parse_hotkey)
         bool script_ctrl = false, script_alt = false, script_shift = false;
         bool symbols_stay_open = false;  // 符號鍵盤選完不關 (#49): Backspace with nothing typed is then the app's
+        // 日文 (#36): on, and its keys (parse_hotkey); off: none of them is ours
+        bool ja_enabled = false;
+        bool ja_fkeys = true;  // F6 / F7 / F8 on the Japanese side
+        struct Hotkey {
+            UINT vk = 0;
+            bool ctrl = false, alt = false, shift = false;
+        } ja_switch, ja_hira, ja_kata, ja_auto;
     };
 
     bool test_key_down(ITfContext* ctx, WPARAM vk, LPARAM lp);
@@ -133,6 +142,9 @@ private:
     bool wants_undo(WPARAM vk) const;
     bool is_width_key(WPARAM vk) const;
     bool is_script_key(WPARAM vk) const;  // 簡體輸出's key (#32), when the user turned it on
+    bool is_hotkey(const Settings::Hotkey& k, WPARAM vk) const;  // the key with exactly its modifiers
+    const char* ja_key(WPARAM vk) const;  // 日文 (#36): "switch", "hira", "kata", "auto" or nullptr
+    void switch_side(ITfContext* ctx);    // Ctrl+F2: Chinese <-> Japanese, what is typed sent first
     bool other_modifier() const;
     bool direct(ITfContext* ctx);   // 遊戲中 Shift 交給遊戲: in a game, not in a text box (nor typing there)
     bool tsf_text_box(ITfContext* ctx);  // the focus is a text box of an app that talks TSF itself
@@ -196,6 +208,7 @@ private:
     State state_;
     Settings cfg_;
     bool english_ = false;
+    bool japanese_ = false;  // 日文 (#36): the Japanese side (純日文); english_ is the Chinese side's mode, kept meanwhile
     DWORD activated_at_ = 0;  // GetTickCount() at Activate: see OnChange
     DWORD first_focus_at_ = 0;  // GetTickCount() when a document first had the focus after Activate (0: not yet)
     std::string app_;  // this program's exe name, lower case

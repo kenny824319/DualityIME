@@ -276,6 +276,7 @@ Json handle(Session& s, const Json& req) {
         return o;
     } else if (op == "reset") {
         c.reset();
+        s.ja.reset();  // (日文 #36: the Japanese side's too)
     } else if (op == "context_lost") {  // 接續前文選字 (#37): what is before the caret is not what was sent
         c.context_lost();
     } else if (op == "forget_undo") {

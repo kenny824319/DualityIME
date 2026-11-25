@@ -31,6 +31,9 @@ public:
     // says "ja_off": true with handled false: the IME goes back to Chinese.
     Json handle(const Json& req, JaData& data, const Config& config);
     bool active() const { return c_ != nullptr; }
+    void reset() {  // the IME left the field (op "reset"): what was typed goes, as the Chinese side's
+        if (c_) c_->reset();
+    }
 
 private:
     std::unique_ptr<JaComposer> c_;

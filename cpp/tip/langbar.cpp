@@ -73,7 +73,8 @@ STDMETHODIMP LangBarButton::OnClick(TfLBIClick click, POINT pt, const RECT*) {
 
 STDMETHODIMP LangBarButton::GetIcon(HICON* icon) {
     if (!icon) return E_INVALIDARG;
-    bool english = service_ && service_->english_mode();
+    // (日文 #36: the Chinese icon on the Japanese side until its own icons come - plan 3 Task 8)
+    bool english = service_ && service_->english_mode() && !service_->japanese_mode();
     // a fresh copy each time: the caller destroys it
     *icon = static_cast<HICON>(LoadImageW(g_module, MAKEINTRESOURCEW(english ? IDI_EN : IDI_ZH), IMAGE_ICON,
                                           GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0));
@@ -82,7 +83,10 @@ STDMETHODIMP LangBarButton::GetIcon(HICON* icon) {
 
 STDMETHODIMP LangBarButton::GetText(BSTR* text) {
     if (!text) return E_INVALIDARG;
-    *text = SysAllocString(service_ && service_->english_mode() ? L"英" : L"中");
+    *text = SysAllocString(!service_                  ? L"中"
+                           : service_->japanese_mode() ? L"日"   // 日文 (#36)
+                           : service_->english_mode()  ? L"英"
+                                                       : L"中");
     return *text ? S_OK : E_OUTOFMEMORY;
 }
 

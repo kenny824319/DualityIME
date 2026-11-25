@@ -393,7 +393,8 @@ int wmain(int argc, wchar_t** argv) {
                 static const std::pair<const char*, WORD> named[] = {
                     {"ENTER", VK_RETURN}, {"ESC", VK_ESCAPE}, {"BACK", VK_BACK}, {"DOWN", VK_DOWN}, {"UP", VK_UP},
                     {"LEFT", VK_LEFT}, {"RIGHT", VK_RIGHT}, {"TAB", VK_TAB}, {"SPACE", VK_SPACE}, {"HOME", VK_HOME},
-                    {"END", VK_END}, {"PGDN", VK_NEXT}, {"PGUP", VK_PRIOR}};
+                    {"END", VK_END}, {"PGDN", VK_NEXT}, {"PGUP", VK_PRIOR}, {"DEL", VK_DELETE},
+                    {"F6", VK_F6}, {"F7", VK_F7}, {"F8", VK_F8}};  // (F6-F8: 日文's kana keys, #36)
                 bool done = false;
                 for (auto& [n, vk] : named)
                     if (name == n) {
@@ -401,6 +402,11 @@ int wmain(int argc, wchar_t** argv) {
                         done = true;
                     }
                 if (done) continue;
+                if (name == "SLEFT" || name == "SRIGHT") {  // Shift + ← / →: 日文's 文節 edge (#36)
+                    WORD vk = name == "SLEFT" ? VK_LEFT : VK_RIGHT;
+                    send({{VK_LSHIFT, false}, {vk, false}, {vk, true}, {VK_LSHIFT, true}});
+                    continue;
+                }
                 if (name == "SHIFT") send({{VK_LSHIFT, false}, {VK_LSHIFT, true}});
                 else if (name.size() == 2 && name[0] == '#' && isdigit(static_cast<unsigned char>(name[1])))
                     tap(static_cast<WORD>(VK_NUMPAD0 + (name[1] - '0')));

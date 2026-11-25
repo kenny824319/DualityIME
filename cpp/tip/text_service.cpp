@@ -323,6 +323,9 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* tm, TfClientId id, DWORD) {
         if (cfg_.start_mode == "english") {
             english_ = true;
             update_mode_ui();
+        } else if (cfg_.start_mode == "ja_only" && cfg_.ja_enabled) {  // 日文 (#36): 純日文 from the start
+            japanese_ = true;
+            update_mode_ui();
         }
         activated_at_ = GetTickCount();
         // switched to while a document has the focus: that is the first focus
@@ -566,6 +569,42 @@ bool TextService::is_script_key(WPARAM vk) const {
            down(VK_MENU) == cfg_.script_alt && down(VK_SHIFT) == cfg_.script_shift && !down(VK_LWIN) && !down(VK_RWIN);
 }
 
+bool TextService::is_hotkey(const Settings::Hotkey& k, WPARAM vk) const {
+    return k.vk && vk == k.vk && down(VK_CONTROL) == k.ctrl && down(VK_MENU) == k.alt && down(VK_SHIFT) == k.shift &&
+           !down(VK_LWIN) && !down(VK_RWIN);
+}
+
+const char* TextService::ja_key(WPARAM vk) const {
+    // 日文 (#36): only with 日文輸入 on (off: every one of them is the app's); the kana locks only on the Japanese side
+    if (!cfg_.ja_enabled) return nullptr;
+    if (is_hotkey(cfg_.ja_switch, vk)) return "switch";
+    if (!japanese_) return nullptr;
+    if (is_hotkey(cfg_.ja_hira, vk)) return "hira";
+    if (is_hotkey(cfg_.ja_kata, vk)) return "kata";
+    if (is_hotkey(cfg_.ja_auto, vk)) return "auto";
+    return nullptr;
+}
+
+void TextService::switch_side(ITfContext* ctx) {
+    // 中文／日文切換 (#36): what is typed on the side left is sent first; each side keeps its own mode (英 stays 英)
+    if (state_.symbol_page >= 0 || state_.fill_open) close_symbols();
+    Json req = Json::object();
+    if (japanese_) {
+        req["op"] = Json("ja_flush");  // (the kana lock goes back to 自動 there)
+        call(ctx, req);
+        japanese_ = false;
+    } else {
+        if (!state_.composition.empty()) {
+            req["op"] = Json("flush");
+            req["esc"] = Json(false);
+            call(ctx, req);
+        }
+        japanese_ = true;
+    }
+    update_mode_ui();
+    show_mode(japanese_ ? L"日" : english_ ? L"英" : L"中");
+}
+
 bool TextService::is_width_key(WPARAM vk) const {
     // Shift+Space switches 全形／半形
     return vk == VK_SPACE && down(VK_SHIFT) && !other_modifier();
@@ -795,13 +834,16 @@ bool TextService::test_key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
         shift_alone_ = false;
     }
     if (is_script_key(vk)) return true;  // 簡體輸出's key (#32), in 中 and 英 modes
+    if (ja_key(vk)) return true;         // 日文 (#36): Ctrl+F2, and the kana locks on the Japanese side
     if (down(VK_CONTROL) || down(VK_MENU)) {
         // Ctrl + , . ; ' [ ] ...: their full-width marks, if that setting is on (not in 英 mode, nor
         // where nothing can be typed); every other combination is the app's shortcut (Ctrl+C, Alt+Tab...)
         bool mark = ctrl_punct_key(ctx, vk, lp);
         if (!mark && !held_unseen_) return false;  // (Ctrl+C and the like: nothing more looked at, as before)
     if (!mark) notice_key_ = vk;
-        bool here = !english_ && !(state_.composition.empty() && state_.symbol_page < 0 && no_text_field(ctx));
+        // (not on the Japanese side either: its marks come from the romaji table)
+        bool here = !english_ && !japanese_ &&
+                    !(state_.composition.empty() && state_.symbol_page < 0 && no_text_field(ctx));
         // (a key no input method saw go down kept it the program's: named at the caret - #73)
         if (!mark && here) stuck_key_hint(held_unseen_);
         return mark && here;
@@ -810,6 +852,14 @@ bool TextService::test_key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
     if (state_.composition.empty() && state_.symbol_page < 0 && !state_.fill_open && no_text_field(ctx)) return false;
     if (is_width_key(vk)) return true;
     bool composing = !state_.composition.empty();
+    if (japanese_) {
+        // 日文 (#36): every key while Japanese is being typed (F6 / F7 / F8 only with their setting: off, they stay
+        // the app's - a key eaten here never reaches an app typing through the IMM32 layer); with nothing typed the
+        // printable keys (a space too: a full-width one)
+        if (composing) return vk != VK_SHIFT && !(vk >= VK_F6 && vk <= VK_F8 && !cfg_.ja_fkeys);
+        if (is_numpad(vk)) return false;
+        return printable(char_of(vk, lp));
+    }
     if (english_) {
         // text typed before switching still has to go out: the next key does it;
         // in 全形 mode every character is ours to type in full width
@@ -891,6 +941,20 @@ bool TextService::key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
         show_mode(cfg_.simplified ? L"簡" : L"繁");
         return true;
     }
+    if (const char* jk = ja_key(vk)) {  // 日文 (#36)
+        if (lp & 0x40000000) return true;  // (held down: once)
+        std::string which = jk;
+        if (which == "switch") {
+            switch_side(ctx);
+            return true;
+        }
+        Json req = Json::object();
+        req["op"] = Json("ja_kana");
+        req["lock"] = Json(which);
+        call(ctx, req);
+        show_mode(which == "hira" ? L"あ" : which == "kata" ? L"ア" : L"自動");
+        return true;
+    }
     if (ctrl_punct_key(ctx, vk, lp)) {
         // (it sends a mark at the caret: 接續前文選字's context checked first, or the mark would pass the next check, #37)
         if (state_.composition.empty()) check_context(ctx);
@@ -917,6 +981,33 @@ bool TextService::key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
         return true;
     }
     wchar_t ch = char_of(vk, lp);
+    if (japanese_) {  // 日文 (#36): to the engine's Japanese composer
+        req["op"] = Json("key");
+        req["ja"] = Json(true);
+        bool shift = down(VK_SHIFT);
+        const char* special = special_of(vk);
+        if (vk == VK_LEFT && shift)
+            special = "SLEFT";
+        else if (vk == VK_RIGHT && shift)
+            special = "SRIGHT";
+        else if (vk == VK_F6 || vk == VK_F7 || vk == VK_F8)
+            special = vk == VK_F6 ? "F6" : vk == VK_F7 ? "F7" : "F8";
+        else if (vk == VK_TAB && shift)
+            special = "STAB";
+        if (special)
+            req["special"] = Json(std::string(special));
+        else if (printable(ch))
+            req["ch"] = Json(narrow(std::wstring(1, ch)));
+        else
+            return !state_.composition.empty();  // swallow other keys mid-composition
+        bool handled = call(ctx, req);
+        if (state_.ja_off) {  // (日文輸入 turned off in the settings: what was typed went out; back to Chinese)
+            japanese_ = false;
+            update_mode_ui();
+            show_mode(english_ ? L"英" : L"中");
+        }
+        return handled;
+    }
     if (english_) {
         // first key after switching to English with text still being typed:
         // send that text, plus the character of this key
@@ -955,7 +1046,9 @@ void TextService::key_up(WPARAM vk) {
     // switch right here and let the Shift key-up go on to the app
     if (vk == VK_SHIFT && shift_alone_ && now - shift_down_at_ < SHIFT_TAP_MS && !other_modifier()) {
         shift_alone_ = false;
-        toggle_mode();  // (in a game only in a text box: elsewhere there it is the game's key, see direct)
+        // (in a game only in a text box: elsewhere there it is the game's key, see direct; on the Japanese side Shift
+        // switches nothing until 中日混打 comes - #36 plan 3)
+        if (!japanese_) toggle_mode();
     }
     shift_alone_ = false;
     if (vk == VK_CONTROL && ctrl_alone_ && cfg_.lookup) {
@@ -1028,6 +1121,8 @@ void TextService::read_reply(const Json& r) {
             for (auto& item : v->items()) list->push_back(item.is_string() ? wide(item.as_string()) : std::wstring());
     auto* u = r.get("can_undo");
     s.can_undo = u && u->is_bool() && u->as_bool();
+    auto* off = r.get("ja_off");  // 日文 (#36)
+    s.ja_off = off && off->is_bool() && off->as_bool();
     state_ = std::move(s);
     if (auto* c = r.get("cfg"); c && c->is_object()) {
         auto flag = [&](const char* k, bool def) {
@@ -1057,6 +1152,14 @@ void TextService::read_reply(const Json& r) {
                           cfg_.script_shift))
             cfg_.script_vk = 0;  // (not a key: no key at all)
         cfg_.symbols_stay_open = flag("symbols_stay_open", false);
+        // 日文 (#36): on, and its keys (a key that does not parse: none)
+        cfg_.ja_enabled = flag("ja_enabled", false);
+        cfg_.ja_fkeys = flag("ja_fkeys", true);
+        for (auto [key, def, hk] : {std::tuple{"ja_switch_key", "Ctrl+F2", &cfg_.ja_switch},
+                                    std::tuple{"ja_hira_key", "Ctrl+F6", &cfg_.ja_hira},
+                                    std::tuple{"ja_kata_key", "Ctrl+F7", &cfg_.ja_kata},
+                                    std::tuple{"ja_auto_key", "Ctrl+F8", &cfg_.ja_auto}})
+            if (!parse_hotkey(text(key, def), hk->vk, hk->ctrl, hk->alt, hk->shift)) hk->vk = 0;
         set_appearance_from(c->get("appearance"), wide(text("appearance_dir", "")));
     }
 }
@@ -1752,6 +1855,7 @@ void TextService::pick_candidate(int index) {
     Json req = Json::object();
     req["op"] = Json("key");
     req["ch"] = Json(narrow(std::wstring(1, state_.cand_labels[index])));
+    if (japanese_) req["ja"] = Json(true);  // (日文 #36: the Japanese composer's list)
     call(ctx.Get(), req);
 }
 
@@ -1781,6 +1885,7 @@ void TextService::candidates_op(const char* op) {
     if (std::string(op) == "expand") {
         req["op"] = Json("key");
         req["special"] = Json("RIGHT");
+        if (japanese_) req["ja"] = Json(true);  // (日文 #36: its list does not spread out; → is the next one)
     } else {
         req["op"] = Json("fold");
     }
@@ -1914,7 +2019,8 @@ void TextService::toggle_mode() {
 
 void TextService::update_mode_ui() {
     DWORD conv = get_compartment(GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION);
-    DWORD want = english_ ? (conv & ~static_cast<DWORD>(TF_CONVERSIONMODE_NATIVE)) : (conv | TF_CONVERSIONMODE_NATIVE);
+    bool english = english_ && !japanese_;  // (日文 #36: the taskbar shows the native mode on the Japanese side)
+    DWORD want = english ? (conv & ~static_cast<DWORD>(TF_CONVERSIONMODE_NATIVE)) : (conv | TF_CONVERSIONMODE_NATIVE);
     if (want != conv) set_compartment(GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION, want);
     if (button_) button_->update();
 }
@@ -1935,7 +2041,11 @@ STDMETHODIMP TextService::OnChange(REFGUID guid) {
         if (guid == GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION) {
             bool english = !(get_compartment(guid) & TF_CONVERSIONMODE_NATIVE);
             debug(std::string("conversion: ") + (english ? "english" : "native") + when);
-            if (fresh && english != english_) {
+            if (japanese_) {
+                // 日文 (#36): the taskbar's 中／英 on the Japanese side changes nothing there (Ctrl+F2 leaves it):
+                // the native mode is shown again
+                if (english) update_mode_ui();
+            } else if (fresh && english != english_) {
                 update_mode_ui();
             } else if (english != english_) {
                 english_ = english;
