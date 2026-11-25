@@ -7072,6 +7072,50 @@ class RefineTierTest(unittest.TestCase):
         self.assertNotIn("别", c.composition)
 
 
+class ZaiPairTest(unittest.TestCase):
+    """「在」和「再」 (#24): at a single-character place written 在 or 再, each tier writes 再 when d + w·u > θ (d: the
+    path's own score with 再 minus with 在, u: the model's log10 of the whole text with 再 minus with 在; REFINE_ZAI,
+    picked on half of docs/superpowers/items/24/zai_features.json); with 長句選字加強 off, as before."""
+    AGAIN = "ㄗㄞˋ ㄑㄩˋ ㄎㄢˋ ㄉㄧㄢˋ ㄧㄥˇ"  # (the user 2026-11-22: 在去看電影 in every tier, no text before it)
+    setUp, tearDown, composer, typed = (RefineTierTest.setUp, RefineTierTest.tearDown, RefineTierTest.composer,
+                                        RefineTierTest.typed)
+
+    def test_what_the_user_reported(self):
+        for tier in ("light", "plus", "max"):
+            with self.subTest(tier):
+                self.assertEqual(self.typed(tier, self.AGAIN), "再去看電影")
+                # (the user 2026-11-25: 能在聰明 on their computer; 再 here in every tier, and in 3.3.0 - not with 長句選字加強
+                # off, which #24 leaves as it was)
+                self.assertEqual(self.typed(tier, "ㄒㄧ ㄨㄤˋ ㄎㄜˇ ㄧˇ ㄖㄤˋ ㄉㄚˇ ㄗˋ ㄋㄥˊ ㄗㄞˋ ㄘㄨㄥ ㄇㄧㄥˊ ㄧ ㄉㄧㄢˇ"),
+                                 "希望可以讓打字能再聰明一點")
+                # (the four alone: 3.3.0 typed 能在聰明 in max with no memory, measured 2026-11-25)
+                self.assertEqual(self.typed(tier, "ㄋㄥˊ ㄗㄞˋ ㄘㄨㄥ ㄇㄧㄥˊ", autocorrect=True), "能再聰明")
+
+    def test_not_without_long_sentence(self):
+        self.assertEqual(self.typed("plus", self.AGAIN, long_sentence=False), "在去看電影")
+
+    def test_zai_written_right_stays(self):
+        for tier in ("light", "plus", "max"):
+            for raw, want in (("ㄊㄚ ㄗㄞˋ ㄒㄩㄝˊ ㄒㄧㄠˋ ㄉㄨˊ ㄕㄨ", "他在學校讀書"),
+                              ("ㄨㄛˇ ㄗㄞˋ ㄐㄧㄚ ㄎㄢˋ ㄕㄨ", "我在家看書"),
+                              # (at the start the first character's own θ: 在...之前 stays in light and plus; max writes 再
+                              # there - the user chose that version, C, 2026-11-25, of three evaluated)
+                              ("ㄗㄞˋ ㄎㄞ ㄕˇ ㄐㄧㄤˇ ㄓ ㄑㄧㄢˊ", "在開始講之前" if tier != "max" else "再開始講之前")):
+                with self.subTest(tier=tier, want=want):
+                    self.assertEqual(self.typed(tier, raw), want)
+
+    def test_a_pick_stays(self):
+        c = self.composer("plus")
+        for ch in keys(self.AGAIN):
+            c.key(ch)
+        c.key(special="HOME")
+        c.key(special="DOWN")
+        for _ in range(c.candidates.index("在")):
+            c.key(special="DOWN")
+        c.key(special="ENTER")
+        self.assertEqual(c.composition[0], "在")
+
+
 class AutocorrectMemoryTest(unittest.TestCase):
     """校正記憶: what the user does with 注音自動校正, kept in autocorrect.json."""
 

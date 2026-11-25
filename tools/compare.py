@@ -68,6 +68,10 @@ CASES = [
     # word right after Chinese where the reading splits it (acc + ㄍㄠ: memory looked up only "el")
     "accel{TAB}{ENTER}", "ji3accel{TAB}{ENTER}", "acc{TAB}{ENTER}", "Accelerat{TAB}{ENTER}",
     "{CAPS}accel{CAPS}{TAB}{ENTER}", "ji3accelgor{ENTER}ji3accelgor{ENTER}ji3accel{TAB}{ENTER}{RESET}",
+    # 在 and 再 (#24, twenty-seventh to thirtieth: --cases 30 runs them; with 長句選字加強 each tier's rule): 再去看電影 with
+    # no text before it, 在 written right staying, 下輩子不一定能再遇見 (refine's 再 at the end), and a pick of 在 kept
+    "{CL}y94fm4d042u04u/3{ENTER}", "{CL}w8 y94vm,6vul42j6gj {ENTER}ji3y94ru8 d04gj {ENTER}",
+    "{CL}vu841o4y71j4u 2u/4s/6y94m4ru04{ENTER}", "{CL}y94fm4d042u04u/3{HOME}{DOWN}{DOWN}{ENTER}{ENTER}{RESET}",
     # 接續前文選字 (#37): 我們先去吃飯 sent, then ㄗㄞˋ去看電影 read after it; after {CL} (the caret moved) and after
     # English at the buffer's start, without it; three sentences in a row; undo puts the context back
     "ji3ap7vu0 fm4t z04{ENTER}y94fm4d042u04u/3{ENTER}ji3ap7vu0 fm4t z04{ENTER}{CL}y94fm4d042u04u/3{ENTER}",

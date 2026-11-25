@@ -212,6 +212,14 @@ static bool refine_of(const std::string& tier, double& w, double& m) {
 constexpr size_t REFINE_CHARS = 4;
 constexpr double REFINE_D_MAX = 3.0;
 constexpr double REFINE_MIN_WEIGHT = -8.0;
+// 在 or 再 at a single-character place (#24, engine/composer.py REFINE_ZAI): w, θ and the first character's θ of the
+// tier, 再 when d + w·u > θ
+static bool zai_rule_of(const std::string& tier, double& w, double& theta, double& theta0) {
+    if (tier == "light") { w = 2.0; theta = -2.4; theta0 = -1.3; return true; }
+    if (tier == "plus") { w = 3.0; theta = -3.8; theta0 = -2.3; return true; }
+    if (tier == "max") { w = 1.5; theta = -2.8; theta0 = -2.3; return true; }
+    return false;
+}
 
 // punctuation keys that are zhuyin -> punctuation (, . ;)
 std::map<char, ustr> zhuyin_punct(const SyllableTable& table) {
@@ -2629,6 +2637,53 @@ static std::vector<Segment> refine(std::vector<Segment> path, const std::vector<
             auto& [i, ch, dd] = tries[q];
             double v = dd + w * (static_cast<double>(lp[q + 1] - lp[0]) / (1024 * LN10));
             if (v > m && (!best.count(i) || v > best[i].first)) best[i] = {v, ch};
+        }
+    }
+    // 在 and 再 (#24): at a single-character place written either (and left so above), the tier's own rule decides
+    // between them - 再 when d + w·u > θ, d and u of 再 against 在 (zai_rule_of; engine/composer.py _refine)
+    double zw = 0, theta = 0, theta0 = 0;
+    if (zai_rule_of(lm.model().tier, zw, theta, theta0)) {
+        const char32_t ZAI = U'在', AGAIN = U'再';
+        std::vector<std::tuple<int, char32_t, double>> pairs;  // (place, the path's character, d of 再 against 在)
+        std::vector<ustr> ztexts;                              // (each place's text with 再, then with 在)
+        for (size_t j = 0; j < path.size(); ++j) {
+            const int i = path[j].start;
+            if (path[j].length != 1) continue;
+            const char32_t p = path[j].phrase[0];
+            if (p != ZAI && p != AGAIN) continue;
+            if (auto b = best.find(i); b != best.end() && b->second.second != ZAI && b->second.second != AGAIN) continue;
+            bool picked = false;
+            for (auto& [span, _] : overrides)
+                if (span.first <= i && i < span.first + span.second) picked = true;
+            if (picked) continue;
+            std::optional<double> wz, wa;
+            for (auto& [ph, s] : phrase_candidates({readings[i]}, lexicon, nullptr, false)) {
+                if (ph.size() == 1 && ph[0] == AGAIN) wz = s;  // (the last, as a Python dict of them)
+                if (ph.size() == 1 && ph[0] == ZAI) wa = s;
+            }
+            if (!wz || !wa) continue;
+            auto hz = path, ha = path;
+            hz[j].phrase = ustr(1, AGAIN);
+            ha[j].phrase = ustr(1, ZAI);
+            auto own_z = own(hz, i, corpus_unigram(bigram, lexicon, hz[j].phrase, *wz));
+            auto own_a = own(ha, i, corpus_unigram(bigram, lexicon, ha[j].phrase, *wa));
+            if (!own_z || !own_a) continue;
+            pairs.push_back({i, p, *own_z - *own_a});
+            ustr tz = text, ta = text;
+            tz[i] = AGAIN;
+            ta[i] = ZAI;
+            ztexts.push_back(std::move(tz));
+            ztexts.push_back(std::move(ta));
+        }
+        if (!pairs.empty()) {
+            std::vector<int64_t> lp = lm.units_logp_many(ztexts);
+            for (size_t q = 0; q < pairs.size(); ++q) {
+                auto& [i, p, d] = pairs[q];
+                double u = static_cast<double>(lp[2 * q] - lp[2 * q + 1]) / (1024 * LN10);
+                char32_t want = d + zw * u > (i == 0 ? theta0 : theta) ? AGAIN : ZAI;
+                if (want != p) best[i] = {std::numeric_limits<double>::infinity(), want};
+                else best.erase(i);
+            }
         }
     }
     for (auto& seg : path)

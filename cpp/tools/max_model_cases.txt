@@ -17,3 +17,9 @@ ji3up e9 ul4fm4{ENTER} => 我應該要去
 # (#59: the same as 3.3.0, faster)
 rup wu0 vu84j3ji3ap6y94cjo4u4g4wl3xjp4vu84u ru42k7t03qup3ejo cj84284ru8 2. wu6tj xk7cp32ji u.3m/42k7ru04u4{ENTER} => 今天下午我們在會議室討論下一季的產品規劃大家都提出了很多有用的建議
 ji3ap6rm,62u/4y94vu84ek4m,42k72u4u ek7vu/ fu6xu.4rm3104u t;3ej0 m6t/6g4rul wj/ m3cj06ru/41l3cj42k7ej/ d9 ru;3yji4{ENTER} => 我們決定在下個月的第一個星期六舉辦一場關於城市交通與環境保護的公開講座
+# 在 and 再 (#24): 再去看電影 (the user 2026-11-22: 在 in every tier), 能再聰明 and the sentence around it (the user 2026-11-25:
+# 能在聰明 in 3.3.0), and 在 written right staying
+y94fm4d042u04u/3{ENTER} => 再去看電影
+s/6y94hj/ au/6{ENTER} => 能再聰明
+vu j;4dk3u3b;4283y4s/6y94hj/ au/6u 2u03{ENTER} => 希望可以讓打字能再聰明一點
+w8 y94vm,6vul42j6gj {ENTER} => 他在學校讀書

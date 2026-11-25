@@ -1609,6 +1609,12 @@ NBEST_N = 10       # ...and distinct texts the model scores
 # WORD_BONUS), u the model's log10 of the whole text with it minus without (units_logp, the whole vocabulary); w, m those
 # of the model's tier (docs: picked on the evaluation's pick sets, checked on others, one right -> wrong weighing 2.5)
 REFINE = {"light": (2.0, 4.0), "plus": (2.5, 4.0), "max": (5.0, 4.0)}
+# 在 or 再 at a single-character place (#24): (w, θ, θ at the first character) of each tier, 再 when d + w·u > θ - w and
+# θ picked on half of the places of docs/superpowers/items/24/zai_features.json (zai_pick.py), 再 -> 在 about halved on
+# the other half (the user 2026-11-24: a few more 在 -> 再 allowed, each listed for them); the first character's own,
+# stricter θ (zai_pick_start.py: the evaluation's new 在 -> 再 were mostly 在...之前／後 at the start; the user
+# 2026-11-25; midway between the strict trial and the rest's θ, the user's choice after both were evaluated)
+REFINE_ZAI = {"light": (2.0, -2.4, -1.3), "plus": (3.0, -3.8, -2.3), "max": (1.5, -2.8, -2.3)}
 REFINE_CHARS = 4
 REFINE_D_MAX = 3.0        # (d this far below or more: not weighed)
 REFINE_MIN_WEIGHT = -8.0  # (a character the dictionary weighs no more than this, never seen in its corpus: not tried -
@@ -1764,6 +1770,26 @@ def _refine(path, readings, lexicon, overrides, bigram, prev_word, options, lm):
             v = d + w * ((lm.units_logp(text[:i] + ch + text[i + 1:]) - base_lm) / (1024 * LN10))
             if v > m and (i not in best or v > best[i][0]):
                 best[i] = (v, ch)
+    # 在 and 再 (#24): at a single-character place written either (and left so above), the tier's own rule decides between
+    # them - 再 when d + w·u > θ, d and u of 再 against 在 (REFINE_ZAI)
+    zw, theta, theta0 = REFINE_ZAI.get(getattr(getattr(lm, "lm", None), "tier", "light"), (None, None, None))
+    for j, (i, l, p) in enumerate(path if zw is not None else ()):
+        if l != 1 or p not in ("在", "再") or best.get(i, (0, p))[1] not in ("在", "再") or \
+                any(a <= i < a + b for a, b in overrides):
+            continue
+        lex = dict(phrase_candidates([readings[i]], lexicon))
+        if "在" not in lex or "再" not in lex:
+            continue
+        own_z = own(path[:j] + [(i, 1, "再")] + path[j + 1:], i, corpus_unigram(bigram, lexicon, "再", lex["再"]))
+        own_a = own(path[:j] + [(i, 1, "在")] + path[j + 1:], i, corpus_unigram(bigram, lexicon, "在", lex["在"]))
+        if own_z is None or own_a is None:
+            continue
+        u = (lm.units_logp(text[:i] + "再" + text[i + 1:]) - lm.units_logp(text[:i] + "在" + text[i + 1:])) / (1024 * LN10)
+        want = "再" if own_z - own_a + zw * u > (theta0 if i == 0 else theta) else "在"
+        if want != p:
+            best[i] = (float("inf"), want)
+        else:
+            best.pop(i, None)
     return [(i, l, best[i][1]) if i in best else (i, l, p) for i, l, p in path] if best else path
 
 
