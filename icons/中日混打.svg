@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 768 768" width="768" height="768">
+  <!-- 中日混打 icon (中あ), traced from docs/superpowers/items/36/icons/中日混打-codex.png. tools/make_icons.py draws
+       these shapes in order (rect and polygon only), same colours and size as 全英輸入.svg -->
+  <rect x="0" y="0" width="768" height="768" fill="#f8f7f6"/>
+  <polygon fill="#3a3a39" points="76,252 76,415 200,415 200,555 251,500 251,415 325,414 399,295 445,295 433,351 394,361 254,555 339,555 426,499 428,555 616,555 695,434 600,333 486,333 494,295 661,295 661,252 505,252 513,214 492,214 465,214 454,252 252,252 251,157 199,157 198,252"/>
+  <polygon fill="#f8f7f6" points="631,440 584,513 474,512 476,469 595,398"/>
+  <polygon fill="#f8f7f6" points="428,388 427,453 337,508"/>
+  <polygon fill="#f8f7f6" points="473,424 477,384 480,374 551,375 476,424"/>
+  <polygon fill="#f8f7f6" points="251,371 252,295 347,295 298,372"/>
+  <polygon fill="#f8f7f6" points="126,295 199,295 198,372 125,372"/>
+</svg>
