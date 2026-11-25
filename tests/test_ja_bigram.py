@@ -1,6 +1,8 @@
 """#36 plan 5: the Japanese word bigram - tools/build_ja_bigram.py (counting surface pairs, the bonus, data/ja_bigram.bin)
 and engine/ja_bigram.py (reading it back; refused for another dictionary)."""
 import contextlib
+import random
+import zlib
 import io
 import os
 import struct
@@ -14,7 +16,10 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 import build_ja_bigram  # noqa: E402
 from engine.ja_bigram import JaBigram  # noqa: E402
+from engine.ja_composer import Pin  # noqa: E402
+from engine.ja_convert import FALLBACK_COST, Node, convert  # noqa: E402
 from engine.ja_dict import JaDict  # noqa: E402
+from engine.ja_romaji import RomajiTable  # noqa: E402
 
 CORPUS = ["川に橋がある。"] * 5 + ["猫が好きです。", "犬も好きです。", "鳥が飛ぶ。", "雨が降る。", "山に登る。",
                                   "海で泳ぐ。", "本を読む。", "水を飲む。", "花が咲く。", "空が青い。"] * 3
@@ -101,6 +106,122 @@ class FileTest(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 build_ja_bigram.main(["--counts", cache, "--w", "100", "--min-count", "2", "--out", out])
             self.assertEqual(open(out, "rb").read(), first)
+
+
+class Stub:
+    """A bigram whose word number is a crc of the surface (mod 200) and whose bonuses are given; sid of a fallback or
+    a pin (entry -1) is never asked for."""
+
+    def __init__(self, d, pairs=None, surfaces=None):
+        self.d, self.pairs = d, dict(pairs or {})
+        for (x, y), v in (surfaces or {}).items():
+            self.pairs[(self.of(x), self.of(y))] = v
+
+    @staticmethod
+    def of(surface):
+        return zlib.crc32(surface.encode("utf-8")) % 200
+
+    def sid(self, entry):
+        assert entry >= 0, "sid of a fallback or a pin"
+        return self.of(self.d.entry(entry).surface)
+
+    def bonus(self, a, b):
+        return self.pairs.get((a, b), 0)
+
+
+def full_scan(kana, d, bigram, prev_sid=-1):
+    """The cheapest path by scanning every predecessor in node order with strict < (no right-id groups)."""
+    n, order = len(kana), 0
+    ends = [[] for _ in range(n + 1)]
+    ends[0].append((0, None, None, prev_sid, -1))  # (total, node, prev cell, sid, order)
+    for begin in range(n):
+        if not ends[begin]:
+            continue
+        nodes = []
+        for k in range(1, min(d.max_reading_len, n - begin) + 1):
+            s, e = d.lookup_ix(kana[begin:begin + k])
+            for j in range(s, e):
+                x = d.entry(j)
+                nodes.append((Node(begin, begin + k, kana[begin:begin + k], x.surface, x.lid, x.rid, x.cost, j),
+                              bigram.sid(j)))
+        ch = kana[begin]
+        nodes.append((Node(begin, begin + 1, ch, ch, d.unknown_id, d.unknown_id, FALLBACK_COST), -1))
+        for node, sid in nodes:
+            best = None
+            for p in ends[begin]:
+                t = p[0] + d.cost(p[1].rid if p[1] else 0, node.lid) - (bigram.bonus(p[3], sid) if sid >= 0 else 0)
+                if best is None or t < best[0]:
+                    best = (t, p)
+            ends[node.end].append((best[0] + node.cost, node, best[1], sid, order))
+            order += 1
+    best = None
+    for p in ends[n]:
+        t = p[0] + d.cost(p[1].rid, 0)
+        if best is None or t < best[0]:
+            best = (t, p)
+    path, c = [], best[1]
+    while c[1] is not None:
+        path.append(c[1])
+        c = c[2]
+    return path[::-1], best[0]
+
+
+class ConvertTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.d = JaDict.load()
+
+    def words(self, kana, **kw):
+        return [n.surface for n in convert(kana, self.d, **kw)[0]]
+
+    def test_bonus_flips_choice(self):
+        for word in ("橋", "箸"):
+            stub = Stub(self.d, surfaces={("に", word): 5000})
+            self.assertEqual(self.words("かわにはし", bigram=stub)[-1], word)
+
+    def test_matches_full_scan(self):
+        rnd = random.Random(36)
+        kana = "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほ"
+        pairs = {(rnd.randrange(200), rnd.randrange(200)): rnd.randint(1, 3000) for _ in range(2000)}
+        stub = Stub(self.d, pairs)
+        for _ in range(300):
+            k = "".join(rnd.choice(kana) for _ in range(rnd.randint(1, 12)))
+            prev = rnd.choice([-1, rnd.randrange(200)])
+            path, cost = convert(k, self.d, bigram=stub, prev_sid=prev)
+            want, want_cost = full_scan(k, self.d, stub, prev)
+            self.assertEqual(([n.surface for n in path], cost), ([n.surface for n in want], want_cost), k)
+
+    def test_without_bigram_unchanged(self):
+        # (a bigram with no pairs converts as none: the new path changes nothing by itself)
+        rows = [line.split("\t")[0] for line in open(os.path.join(ROOT, "tools", "ja_sentences_sample.tsv"),
+                                                       encoding="utf-8").read().splitlines()
+                if line and not line.startswith("#")]
+        table = RomajiTable.load()
+        empty = Stub(self.d)
+        for r in rows:
+            k = table.finish(r)
+            self.assertEqual(convert(k, self.d, bigram=empty), convert(k, self.d), r)
+
+    def test_prev_sid(self):
+        for word in ("橋", "箸"):
+            stub = Stub(self.d, surfaces={("を", word): 5000})
+            self.assertEqual(self.words("はし", bigram=stub, prev_sid=Stub.of("を")), [word])
+
+    def test_pin_with_bigram(self):
+        # (a pinned 文節 still gets the pairs of its word: its sid from its reading's entry of the same surface)
+        plain = self.words("はしわたる", pins=[Pin(0, 2, "橋", *self.pin_ids("はし", "橋"))])
+        alt = next(e.surface for e in self.d.lookup("わたる") if e.surface != plain[-1])
+        stub = Stub(self.d, surfaces={("橋", alt): 5000})
+        got = self.words("はしわたる", pins=[Pin(0, 2, "橋", *self.pin_ids("はし", "橋"))], bigram=stub)
+        self.assertEqual(got, ["橋", alt])
+
+    def pin_ids(self, reading, surface):
+        e = next(e for e in self.d.lookup(reading) if e.surface == surface)
+        return e.lid, e.rid
+
+    def test_fallback_no_bonus(self):
+        # (the stub fails if asked for the sid of a fallback node: every position has one)
+        self.assertTrue(self.words("かわにはしゎ", bigram=Stub(self.d, surfaces={("に", "橋"): 10})))
 
 
 if __name__ == "__main__":
