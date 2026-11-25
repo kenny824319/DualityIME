@@ -42,7 +42,8 @@ STEPS: list[tuple[str, list[str], Path, str | None]] = [
     # (test_backup_covers: every data file is exported or listed with its reason - the user 2026-11-25)
     ("unittest", [PYTHON, "-m", "unittest", "tests.test_engine", "tests.test_gpu", "tests.test_longrun",
                   "tests.test_findings", "tests.test_settings_preview", "tests.test_compare_args",
-                  "tests.test_installer_lists", "tests.test_backup_covers"], ROOT,
+                  "tests.test_installer_lists", "tests.test_backup_covers", "tests.test_build_ja_dict",
+                  "tests.test_ja"], ROOT,
      "tests/test_engine.py"),
     # The C++ engine (cpp\build.cmd: Visual Studio Build Tools with C++), then both engines
     # key by key: same output, same user.json and keys.json.

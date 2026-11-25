@@ -23,3 +23,4 @@
 ^(engine/(lexicon|composer)\.py|cpp/engine/(lexicon\.h|composer\.cpp)|installer/(build|install)\.ps1)$	\benglish_complete\.txt\b|\bLICENSE-english-complete\.txt\b  # 英文補字字表與授權（#40，data/，tools/build_english_complete.py 產生），引擎只讀不寫
 ^(engine/lexicon\.py|cpp/engine/lexicon\.cpp|installer/src/Settings\.cs)$	\bforgot\.json\b  # 記憶清單刪掉的項目（#65），設定工具寫、引擎讀
 ^(engine/(lexicon|symbols)\.py|cpp/engine/lexicon\.cpp|installer/src/Settings\.cs)$	\bsymbols\.json\b  # 自訂符號鍵盤的表（#69），設定工具寫、引擎只讀
+^(engine/ja_dict\.py|cpp/engine/ja_dict\.cpp)$	\bja_(dict|conn)\.bin\b  # 日文辭典與詞類連接成本（#36，data/，tools/build_ja_dict.py 從 Mozc 產生），引擎只讀不寫
