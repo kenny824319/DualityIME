@@ -2,7 +2,8 @@
 // without the pipe, for tests/test_ja_session.py.
 //   sz_jasession <data dir> < request lines
 // Each UTF-8 line is one JSON request as the IME sends it ({"op": "key", "ch": "k", "ja": true}, {"op": "ja_kana",
-// "lock": "kata"}, {"op": "ja_flush"}), or {"set": {"ja_enabled": false, ...}} to change a setting in memory.
+// "lock": "kata"}, {"op": "ja_flush"}), {"set": {"ja_enabled": false, ...}} to change a setting in memory, or
+// {"mixed": <a Chinese request>} for its 中日混打 flag (JaSession::mixed: {"mixed": {"on": ..., "ja_off": ...}}).
 // Each request gives one line: {"reply": <the reply>, "loaded": <the Japanese data read yet>}.
 // Settings start at their defaults (日文輸入 off).
 #include <windows.h>
@@ -37,6 +38,12 @@ int wmain(int argc, wchar_t** argv) {
         } else if (const sz::Json* set = req.get("set")) {
             for (auto& [k, v] : set->members()) config.set(k, v);
             out["set"] = sz::Json(true);
+        } else if (const sz::Json* m = req.get("mixed")) {  // ({"mixed": <a Chinese request>}: its 中日混打 flag)
+            auto r = sz::JaSession::mixed(*m, data, config);
+            sz::Json o = sz::Json::object();
+            o["on"] = sz::Json(r.on);
+            o["ja_off"] = sz::Json(r.ja_off);
+            out["mixed"] = o;
         } else if (!sz::JaSession::is_japanese(req)) {
             out["not_japanese"] = sz::Json(true);
         } else {

@@ -2935,15 +2935,45 @@ void Composer::ja_piece(const Token& t, ustr& kana, ustr& pending, ustr& spaces)
     // (kana, letters still pending, spaces after); pending only while it is the end of the text and not being sent
     size_t core_len = t.raw.find_last_not_of(' ');
     core_len = core_len == std::string::npos ? 0 : core_len + 1;
-    ustr core = from_utf8(t.raw.substr(0, core_len));
     spaces = from_utf8(t.raw.substr(core_len));
-    if (t.start + static_cast<int>(t.raw.size()) == static_cast<int>(raw.size()) && !ja_finishing_) {
-        auto r = ja_->table.to_kana(core);
-        kana = r.first;
-        pending = r.second;
-    } else {
-        kana = ja_->table.finish(core);
-        pending.clear();
+    bool at_end = t.start + static_cast<int>(t.raw.size()) == static_cast<int>(raw.size()) && !ja_finishing_;
+    ja_kana(t.raw.substr(0, core_len), at_end, kana, pending);
+}
+
+void Composer::ja_kana(const std::string& core, bool pending_ok, ustr& kana, ustr& pending) const {
+    // the kana of a romaji token's keys: its lowercase runs through the romaji table, its digits (with . , : / -
+    // between digits: 3.5, 2026-11-26) and a word begun with a capital (Tokyo) kept as typed inside the kana - the
+    // conversion goes over all of it (私は20歳, 3時に; findings #162, #169, #172); pending only when the keys end in
+    // romaji and pending_ok (engine/composer.py _ja_kana)
+    kana.clear();
+    pending.clear();
+    auto digit = [](char c) { return c >= '0' && c <= '9'; };
+    auto upper = [](char c) { return c >= 'A' && c <= 'Z'; };
+    size_t i = 0, n = core.size();
+    while (i < n) {
+        size_t j = i + 1;
+        if (upper(core[i])) {
+            while (j < n && is_alpha(core[j])) ++j;
+            kana += from_utf8(core.substr(i, j - i));
+        } else if (digit(core[i])) {
+            while (j < n && digit(core[j])) ++j;
+            while (j + 1 < n && std::string(".,:/-").find(core[j]) != std::string::npos && digit(core[j + 1])) {
+                j += 2;
+                while (j < n && digit(core[j])) ++j;
+            }
+            kana += from_utf8(core.substr(i, j - i));
+        } else {
+            while (j < n && !upper(core[j]) && !digit(core[j])) ++j;
+            ustr run = from_utf8(core.substr(i, j - i));
+            if (j == n && pending_ok) {
+                auto r = ja_->table.to_kana(run);
+                kana += r.first;
+                pending = r.second;
+                return;
+            }
+            kana += ja_->table.finish(run);
+        }
+        i = j;
     }
 }
 
@@ -2983,14 +3013,50 @@ ustr Composer::ja_text(const Token& t) const {
     return out + pending + spaces;
 }
 
+bool Composer::is_romaji(const Token& t) const {
+    // a token shown as Japanese: one with a lowercase letter (findings #162); the rest - 3.5, 2026-11-26, ABC - shows
+    // as 中英混打 shows it. Inside it digits and a word begun with a capital stay as typed (ja_kana, #169, #172)
+    if (!ja_ || t.kind != Kind::En) return false;
+    for (char c : t.raw)
+        if (c >= 'a' && c <= 'z') return true;
+    return false;
+}
+
+int Composer::ja_offset(const Token& t, int k) const {
+    // characters shown for the first k keys of a romaji token (the caret inside it, findings #164): the conversion's
+    // words whose kana the keys before the caret have made - letters not kana yet count for nothing, findings #173 - a
+    // word the caret is inside up to its start
+    size_t core_len = t.raw.find_last_not_of(' ');
+    int core = core_len == std::string::npos ? 0 : static_cast<int>(core_len) + 1;
+    ustr kana, pending, spaces;
+    std::vector<JaNode> path;
+    if (ja_lock_ != "auto") ja_piece(t, kana, pending, spaces);
+    else path = ja_path(t, kana, pending, spaces);
+    int done = core - static_cast<int>(pending.size());  // (keys made kana; the pending ones after them as typed)
+    ustr formed, rest;
+    ja_kana(t.raw.substr(0, static_cast<size_t>(std::max(0, std::min(k, done)))), true, formed, rest);
+    int at_kana = static_cast<int>(formed.size());
+    int shown = 0, at = 0;
+    if (ja_lock_ != "auto") {
+        shown = static_cast<int>(kana.size());
+        at = std::min(at_kana, shown);
+    } else {
+        bool past = false;
+        for (auto& n : path) {
+            shown += static_cast<int>(n.surface.size());
+            if (n.end > at_kana) past = true;
+            if (!past) at += static_cast<int>(n.surface.size());
+        }
+    }
+    if (k <= done) return at;
+    return shown + std::min(k, core) - done + std::max(0, k - core);  // (in the pending letters, then the spaces)
+}
+
 const Token* Composer::ja_token() const {
     // the romaji token the caret is in or before (the last one at the end), or none
     if (!ja_ || tokens.empty()) return nullptr;
     const Token* t = caret_ ? caret_token() : &tokens.back();
-    if (!t || t->kind != Kind::En) return nullptr;
-    for (char c : t->raw)
-        if (is_alpha(c)) return t;
-    return nullptr;
+    return t && is_romaji(*t) ? t : nullptr;
 }
 
 void Composer::ja_candidates(std::vector<ustr>& labels, std::vector<Action>& actions) const {
@@ -3008,7 +3074,11 @@ void Composer::ja_candidates(std::vector<ustr>& labels, std::vector<Action>& act
     JaSegment seg = segs.back();
     if (caret_) {  // (the caret's kana offset in the token: the kana of the keys before it)
         int keys = std::max(0, *caret_ - t->start);
-        int at = static_cast<int>(ja_->table.finish(from_utf8(t->raw.substr(0, static_cast<size_t>(keys)))).size());
+        size_t core_len = t->raw.find_last_not_of(' ');  // (as ja_offset: the kana its keys have made)
+        core_len = core_len == std::string::npos ? 0 : core_len + 1;
+        ustr formed, rest;
+        ja_kana(t->raw.substr(0, std::min(core_len, static_cast<size_t>(keys))), true, formed, rest);
+        int at = static_cast<int>(formed.size());
         for (auto& s : segs)
             if (s.begin <= at && at < s.end) {
                 seg = s;
@@ -3436,7 +3506,7 @@ void Composer::render() {
             text += zhuyin_preview ? t.value : as_typed(t.start, t.raw);
         } else if (t.kind == Kind::Lit) {
             text += lit_text(t.value, t.raw);
-        } else if (ja_) {  // 中日混打 (#36): a romaji piece shown as Japanese
+        } else if (is_romaji(t)) {  // 中日混打 (#36): a romaji piece shown as Japanese
             ustr shown = ja_text(t);
             text += shown;
             wide_[t.start] = static_cast<int>(shown.size());
@@ -3658,7 +3728,7 @@ int Composer::width(const Token& t) const {
     }
     if (t.kind == Kind::Partial && config.text("preview") != "zhuyin") return static_cast<int>(t.raw.size());
     if (t.kind == Kind::Lit) return static_cast<int>(lit_text(t.value, t.raw).size());  // (_ is —— or _)
-    if (ja_ && t.kind == Kind::En) {  // (中日混打: as Japanese, render)
+    if (is_romaji(t)) {  // (中日混打: as Japanese, render)
         auto it = wide_.find(t.start);
         return it == wide_.end() ? static_cast<int>(t.value.size()) : it->second;
     }
@@ -3684,7 +3754,10 @@ int Composer::tok_offset(int start) const {
     for (auto& t : tokens) {
         if (t.start >= start) return pos;
         int w = width(t);
-        if (start < t.start + static_cast<int>(t.raw.size())) return pos + std::min(start - t.start, w);
+        if (start < t.start + static_cast<int>(t.raw.size())) {
+            if (is_romaji(t)) return pos + ja_offset(t, start - t.start);  // (中日混打: findings #164)
+            return pos + std::min(start - t.start, w);
+        }
         pos += w;
     }
     return pos;
@@ -4409,7 +4482,8 @@ void Composer::pin(int start, const std::vector<ustr>& rds, const std::vector<us
 
 bool Composer::open_candidates() {
     if (!open_list()) return false;
-    if (user.simplified) simplified_list();
+    if (user.simplified && !(!cand_actions_.empty() && cand_actions_[0].type == "ja"))
+        simplified_list();  // (not a Japanese 文節's list: its words are Japanese - findings #166)
     return true;
 }
 
@@ -7378,6 +7452,10 @@ void Composer::commit_head() {
         for (auto& [x, v] : pending_)
             if (x >= tok_start) pending[x - tok_start] = v;
         pending_ = std::move(pending);
+        std::map<int, std::pair<ustr, std::vector<JaPin>>> ja_pins;  // (中日混打's picks move too - findings #165)
+        for (auto& [x, v] : ja_pins_)
+            if (x >= tok_start) ja_pins[x - tok_start] = v;
+        ja_pins_ = std::move(ja_pins);
     }
     for (auto& seg : segments_)
         if (seg.start + seg.length == b) {

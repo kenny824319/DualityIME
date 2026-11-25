@@ -264,6 +264,10 @@ private:
     std::vector<JaPin> ja_pins_of(const Token& t, const ustr& kana) const;
     std::vector<JaNode> ja_path(const Token& t, ustr& kana, ustr& pending, ustr& spaces) const;
     ustr ja_text(const Token& t) const;
+    bool is_romaji(const Token& t) const;      // shown as Japanese: it has a lowercase letter (#162)
+    // its keys' kana: digits and a capital's word kept as typed inside it (#169, #172); pending only when pending_ok
+    void ja_kana(const std::string& core, bool pending_ok, ustr& kana, ustr& pending) const;
+    int ja_offset(const Token& t, int k) const;  // characters shown for its first k keys (the caret, #164)
     const Token* ja_token() const;
     void ja_candidates(std::vector<ustr>& labels, std::vector<Action>& actions) const;
     void pick_ja(const Action& a);

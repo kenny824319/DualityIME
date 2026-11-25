@@ -60,10 +60,16 @@ CASES = [
     "su3<{LEFT}{DOWN}{ENTER}", "su3`f{LEFT}{DOWN}{ENTER}",
     # (the fifteenth goes on after its {RESET} with 中日混打's keys, #36 - so --cases 15 types them; English in the other
     # settings): a Japanese sentence, Chinese then Japanese, a mark after Japanese, a Japanese 文節 picked from ↓ then
-    # more typed, Backspace in it, a pending n sent
+    # more typed, Backspace in it, a pending n sent; numbers and capitals as typed (findings #162, #169), also inside
+    # Japanese (#172), the caret inside a Japanese piece and mid-syllable (#164, #173), a pick kept when a long sentence
+    # sends its start (#165)
     "su3{^,}{LEFT}{DOWN}2{END}cl3{BACK}{ENTER}{RESET}"
     "kyouhaiitenki{ENTER}ji3rup wu0 fm4konbini{ENTER}kyou,{ENTER}hasi{DOWN}{DOWN}{ENTER}wo{ENTER}"
-    "kyouk{BACK}{ENTER}kon{ENTER}{RESET}",
+    "kyouk{BACK}{ENTER}kon{ENTER}ji33.5{ENTER}su32026-11-26{ENTER}Tokyo{ENTER}watasiha20sai{ENTER}3jini{ENTER}"
+    "a1,000{ENTER}kyouTokyo{ENTER}kyouhaiitenki{LEFT}x{ENTER}kyoukonn{LEFT}{LEFT}{DOWN}{ENTER}{ENTER}"
+    "kyouhaiitenki{HOME}{RIGHT}{RIGHT}{RIGHT}{RIGHT}x{ENTER}kyouhaiitenkin{LEFT}{LEFT}{ENTER}"
+    "ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3"
+    "hasi{DOWN}{DOWN}{ENTER}su3cl3su3cl3{ENTER}{RESET}",
     # 符號鍵盤自訂 (#69, sixteenth to twentieth: --cases 20 runs them; the setting with custom_symbols types from
     # SYMBOLS, the others from the built-in pages): a key, a page of one's own first, `` its ` key, Tab through the pages
     # shown (數學 hidden), an empty key typing nothing, an emoji key whole, Enter at the arrows' cursor

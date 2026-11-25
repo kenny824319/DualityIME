@@ -2229,15 +2229,72 @@ class Composer:
 
     # ---- 中日混打 (#36): an "en" token is a romaji piece, shown as plan 2's conversion of its kana ----
 
+    def _is_romaji(self, t):
+        """A token shown as Japanese: one with a lowercase letter (findings #162); the rest - 3.5, 2026-11-26, ABC - shows
+        as 中英混打 shows it. Inside it digits and a word begun with a capital stay as typed (_ja_kana, #169, #172)."""
+        return self.ja is not None and t.kind == "en" and any("a" <= ch <= "z" for ch in t.raw)
+
+    def _ja_kana(self, core, pending_ok):
+        """(kana, letters still pending) of a romaji token's keys: its lowercase runs through the romaji table, its digits
+        (with . , : / - between digits: 3.5, 2026-11-26) and a word begun with a capital (Tokyo) kept as typed inside the
+        kana - the conversion goes over all of it (私は20歳, 3時に; findings #162, #169, #172); pending only when the
+        keys end in romaji and pending_ok (the end of the text, not being sent)."""
+        table, out, i, n = self.ja.table, [], 0, len(core)
+        while i < n:
+            ch, j = core[i], i + 1
+            if "A" <= ch <= "Z":
+                while j < n and core[j].isascii() and core[j].isalpha():
+                    j += 1
+                out.append(core[i:j])
+            elif "0" <= ch <= "9":
+                while j < n and "0" <= core[j] <= "9":
+                    j += 1
+                while j + 1 < n and core[j] in ".,:/-" and "0" <= core[j + 1] <= "9":
+                    j += 2
+                    while j < n and "0" <= core[j] <= "9":
+                        j += 1
+                out.append(core[i:j])
+            else:
+                while j < n and not ("A" <= core[j] <= "Z" or "0" <= core[j] <= "9"):
+                    j += 1
+                if j == n and pending_ok:
+                    kana, pending = table.to_kana(core[i:j])
+                    out.append(kana)
+                    return "".join(out), pending
+                out.append(table.finish(core[i:j]))
+            i = j
+        return "".join(out), ""
+
+    def _ja_offset(self, t, k):
+        """Characters shown for the first k keys of a romaji token (the caret inside it, findings #164): the
+        conversion's words whose kana the keys before the caret have made - letters not kana yet count for nothing,
+        findings #173 - a word the caret is inside up to its start."""
+        core = t.raw.rstrip(" ")
+        kana, pending, spaces = self._ja_piece(t)
+        done = len(core) - len(pending)  # (keys made kana; the pending ones after them shown as typed)
+        at_kana = len(self._ja_kana(core[:min(k, done)], True)[0])
+        if self.ja_lock != "auto":
+            shown = len(kana)
+            at = min(at_kana, shown)
+        else:
+            path = self._ja_path(t)[3]
+            shown = sum(len(n.surface) for n in path)
+            at = 0
+            for n in path:
+                if n.end > at_kana:
+                    break
+                at += len(n.surface)
+        if k <= done:
+            return at
+        return shown + min(k, len(core)) - done + max(0, k - len(core))  # (in the pending letters, then the spaces)
+
     def _ja_piece(self, t):
         """(kana, letters still pending, spaces after) of a romaji token; pending only while it is the end of the text
         and not being sent (_ja_finishing)."""
         core = t.raw.rstrip(" ")
         spaces = t.raw[len(core):]
-        if t.start + len(t.raw) == len(self.raw) and not getattr(self, "_ja_finishing", False):
-            kana, pending = self.ja.table.to_kana(core)
-        else:
-            kana, pending = self.ja.table.finish(core), ""
+        at_end = t.start + len(t.raw) == len(self.raw) and not getattr(self, "_ja_finishing", False)
+        kana, pending = self._ja_kana(core, at_end)
         return kana, pending, spaces
 
     def _ja_pins_of(self, t, kana):
@@ -2264,7 +2321,7 @@ class Composer:
         if self.ja is None or not self.tokens:
             return None
         t = self._caret_token() if self.caret is not None else self.tokens[-1]
-        return t if t is not None and t.kind == "en" and any(ch.isalpha() for ch in t.raw) else None
+        return t if t is not None and self._is_romaji(t) else None
 
     def _ja_candidates(self):
         """↓ on a romaji token: the candidates of its 文節 at the caret (the last at the end), as 純日文's
@@ -2283,7 +2340,7 @@ class Composer:
         if self.caret is None:
             seg = segs[-1]
         else:  # (the caret's kana offset in the token: the kana of the keys before it)
-            at = len(self.ja.table.finish(t.raw[:max(0, self.caret - t.start)]))
+            at = len(self._ja_kana(t.raw.rstrip(" ")[:max(0, self.caret - t.start)], True)[0])  # (as _ja_offset)
             seg = next((s for s in segs if s.begin <= at < s.end), segs[-1])
         pairs = jc.candidates_for(Segment(seg.begin, seg.end, seg.surface))
         return [text for text, _ in pairs], [("ja", t.start, kana, pin) for _, pin in pairs]
@@ -2677,7 +2734,7 @@ class Composer:
                 text.append(self._lit_text(t.value, t.raw))
             elif t.kind == "fix":
                 text.append(t.value)
-            elif self.ja is not None:  # 中日混打 (#36): a romaji piece shown as Japanese
+            elif self._is_romaji(t):  # 中日混打 (#36): a romaji piece shown as Japanese
                 text.append(self._ja_text(t))
                 self._wide[t.start] = len(text[-1])
             else:
@@ -2755,7 +2812,7 @@ class Composer:
             return len(t.raw)
         if t.kind == "lit":
             return len(self._lit_text(t.value, t.raw))  # (_ is —— in full width, _ in half)
-        if self.ja is not None and t.kind == "en":  # (中日混打: as Japanese, _render)
+        if self._is_romaji(t):  # (中日混打: as Japanese, _render)
             return getattr(self, "_wide", {}).get(t.start, len(t.value))
         return len(t.value)
 
@@ -2783,6 +2840,8 @@ class Composer:
             if t.start >= start:
                 return pos
             if start < t.start + len(t.raw):
+                if self._is_romaji(t):  # (中日混打: after the words the keys before it make - findings #164)
+                    return pos + self._ja_offset(t, start - t.start)
                 return pos + min(start - t.start, self._width(t))
             pos += self._width(t)
         return pos
@@ -3273,8 +3332,8 @@ class Composer:
     def _open_candidates(self):
         if not self._open_list():
             return False
-        if self.user.simplified:
-            self._simplified_list()
+        if self.user.simplified and not (self._cand_actions and self._cand_actions[0][0] == "ja"):
+            self._simplified_list()  # (not a Japanese 文節's list: its words are Japanese - findings #166)
         return True
 
     def _simplified_list(self):
@@ -5340,6 +5399,7 @@ class Composer:
         self.fixed = {a - tok.start: (b - tok.start, t) for a, (b, t) in self.fixed.items() if a >= tok.start}
         self.taken = {a - tok.start: (b - tok.start, r) for a, (b, r) in self.taken.items() if a >= tok.start}
         self.pending = {x - tok.start: v for x, v in self.pending.items() if x >= tok.start}
+        self._ja_pins = {x - tok.start: v for x, v in self._ja_pins.items() if x >= tok.start}  # (findings #165)
         self.context_word = next(p for s, l, p in self.segments if s + l == b)
         self._sent((p for s, l, p in self.segments if s + l <= b), self._token_units(tok.start))  # (#37)
         self.after_english = False

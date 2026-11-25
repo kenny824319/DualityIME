@@ -32,6 +32,13 @@ public:
     // plus "ja": true and "kana_lock". With 日文輸入 off (or the data missing) what was typed is sent and the reply
     // says "ja_off": true with handled false: the IME goes back to Chinese.
     Json handle(const Json& req, JaData& data, const Config& config);
+    // 中日混打's flag on a request to the Chinese composer ("ja_mixed", every one the IME sends): on - its letters read
+    // as romaji - only with 日文輸入 on and the data there; ja_off when asked for but not possible (the IME goes back to
+    // Chinese, as 純日文 does - findings #171)
+    struct Mixed {
+        bool on = false, ja_off = false;
+    };
+    static Mixed mixed(const Json& req, JaData& data, const Config& config);
     bool active() const { return c_ != nullptr; }
     void reset() {  // the IME left the field (op "reset"): what was typed goes, as the Chinese side's
         if (c_) c_->reset();

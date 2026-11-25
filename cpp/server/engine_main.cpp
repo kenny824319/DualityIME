@@ -124,6 +124,7 @@ struct Session {
     JaSession ja;  // 日文 (#36): the Japanese side, its composer made on the first Japanese key
     unsigned config_gen = 0;
     unsigned cfg_sent = ~0u;  // the cfg_gen whose cfg this connection got (sent again only when it changes)
+    bool ja_off = false;      // 中日混打 asked for but not possible (no data): the reply says so (findings #171)
 };
 
 Json state(Session& s, bool handled) {
@@ -231,17 +232,22 @@ Json handle(Session& s, const Json& req) {
         // (the kana lock holds on 中日混打's Japanese too, the Chinese composer's; switching away sets it back)
         const Json* opj = req.get("op");
         std::string jop = opj && opj->is_string() ? opj->as_string() : "";
+        const Json* keep = req.get("keep_lock");
         if (jop == "ja_kana") {
             const Json* lock = req.get("lock");
             c.set_ja_lock(lock && lock->is_string() ? lock->as_string() : "auto");
-        } else if (jop == "ja_flush") {
-            c.set_ja_lock("auto");
+        } else if (jop == "ja_flush" && !(keep && keep->is_bool() && keep->as_bool())) {
+            c.set_ja_lock("auto");  // (switching to Chinese; Shift between 中日混打 and 純日文 keeps it)
         }
         Json o = s.ja.handle(req, g->ja, *g->config);
         const Json* jm = req.get("ja_mixed");
         if (jop == "ja_kana" && jm && jm->is_bool() && jm->as_bool()) {
-            // (asked in 中日混打: what is typed is the Chinese composer's - its state, not 純日文's empty one)
+            // (asked in 中日混打: what is typed is the Chinese composer's - its state, not 純日文's empty one; the mode
+            // set first: a lock right after Ctrl+F2, nothing typed yet, still says kana_lock - findings #170)
+            auto m = JaSession::mixed(req, g->ja, *g->config);
+            c.set_japanese(m.on ? g->ja.mixed.get() : nullptr);
             o = state(s, true);
+            if (m.ja_off) o["ja_off"] = Json(true);
             c.commit.clear();
             return o;
         }
@@ -254,8 +260,9 @@ Json handle(Session& s, const Json& req) {
     // 中日混打 (#36): the IME says on every request to the Chinese composer whether it is in that mode ("ja_mixed"); the
     // composer reads its letters as romaji then (only with 日文輸入 on and the Japanese data there)
     if (const Json* jm = req.get("ja_mixed"); jm && jm->is_bool()) {
-        bool on = jm->as_bool() && g->config->flag("ja_enabled") && g->ja.ready();
-        c.set_japanese(on ? g->ja.mixed.get() : nullptr);
+        auto m = JaSession::mixed(req, g->ja, *g->config);
+        c.set_japanese(m.on ? g->ja.mixed.get() : nullptr);
+        s.ja_off = m.ja_off;  // (the reply says so: the IME goes back to Chinese - findings #171)
     }
     const Json* opv = req.get("op");
     std::string op = opv && opv->is_string() ? opv->as_string() : "";
@@ -362,7 +369,9 @@ void serve(HANDLE pipe) {
         Json req = Json::parse(msg, &ok);
         Json reply;
         try {
+            s.ja_off = false;
             reply = ok ? handle(s, req) : Json::object();
+            if (s.ja_off && reply.is_object()) reply["ja_off"] = Json(true);  // (中日混打 not possible, #171)
         } catch (...) {  // never take the engine down for one bad request
             reply = Json::object();
             reply["error"] = Json("internal");

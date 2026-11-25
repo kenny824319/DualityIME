@@ -54,6 +54,40 @@ class JaSessionTest(unittest.TestCase):
         out = run([ON, {"op": "ja_kana", "lock": "kata"}, {"op": "ja_flush"}] + keys("kyou"))
         self.assertEqual(out[-1]["reply"]["kana_lock"], "auto")  # (switching to Chinese: back to 自動)
 
+    def test_flush_with_list_open_sends_the_text(self):
+        # (findings #163: Shift from 純日文 to 中日混打 with the list open - what is typed goes out, not lost)
+        down = {"op": "key", "special": "DOWN", "ja": True}
+        out = run([ON] + keys("hasi") + [down, down, {"op": "ja_flush", "keep_lock": True}])
+        shown, r = out[-2]["reply"], out[-1]["reply"]
+        self.assertTrue(shown["candidates"])
+        # (what the screen shows goes out - the text, which moving through the list does not change, as in Chinese)
+        self.assertEqual((r["commit"], r["composition"], r["candidates"]), (shown["composition"], "", []))
+        self.assertTrue(r["commit"])
+
+    def test_flush_keeping_the_lock(self):
+        # (Shift between 中日混打 and 純日文: the kana lock stays - only switching to Chinese sets it back)
+        out = run([ON, {"op": "ja_kana", "lock": "kata"}, {"op": "ja_flush", "keep_lock": True}] + keys("kyou"))
+        self.assertEqual((out[-1]["reply"]["composition"], out[-1]["reply"]["kana_lock"]), ("キョウ", "kata"))
+
+    def test_mixed_flag(self):
+        # (中日混打's flag on a Chinese request: on only with 日文輸入 on and the data there; asked for but not
+        # possible says ja_off, so the IME goes back to Chinese - findings #171)
+        def flag(requests):
+            return [o["mixed"] for o in run(requests) if "mixed" in o]
+        self.assertEqual(flag([{"mixed": {"op": "key", "ch": "a"}}]), [{"on": False, "ja_off": False}])
+        self.assertEqual(flag([{"mixed": {"op": "key", "ch": "a", "ja_mixed": True}}]), [{"on": False, "ja_off": True}])
+        self.assertEqual(flag([ON, {"mixed": {"op": "key", "ch": "a", "ja_mixed": True}}]),
+                         [{"on": True, "ja_off": False}])
+        self.assertEqual(flag([ON, {"mixed": {"op": "key", "ch": "a", "ja_mixed": False}}]),
+                         [{"on": False, "ja_off": False}])
+
+    def test_mixed_flag_without_data(self):
+        out = subprocess.run([EXE, os.path.join(ROOT, "no-such-folder")], capture_output=True, check=True,
+                             input=(json.dumps(ON) + "\n" + json.dumps(
+                                 {"mixed": {"op": "key", "ch": "a", "ja_mixed": True}}) + "\n").encode()).stdout
+        last = json.loads(out.decode("utf-8").splitlines()[-1])
+        self.assertEqual(last["mixed"], {"on": False, "ja_off": True})
+
     def test_disabled_goes_back(self):
         out = run([ON] + keys("kyou") + [{"set": {"ja_enabled": False}}, {"op": "key", "ch": "a", "ja": True}])
         r = out[-1]["reply"]

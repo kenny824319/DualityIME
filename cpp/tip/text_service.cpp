@@ -625,10 +625,9 @@ void TextService::toggle_ja_mode() {
         if (ja_mixed_) {  // (the Chinese composer's text)
             req["op"] = Json("flush");
             req["esc"] = Json(false);
-        } else {  // (the Japanese composer's: Enter sends it)
-            req["op"] = Json("key");
-            req["special"] = Json("ENTER");
-            req["ja"] = Json(true);
+        } else {  // (the Japanese composer's: sent as the screen shows it, the list closed first - findings #163)
+            req["op"] = Json("ja_flush");
+            req["keep_lock"] = Json(true);  // (the kana lock holds in both modes)
         }
         call(ctx.Get(), req);
     }
@@ -1229,6 +1228,12 @@ bool TextService::call(ITfContext* ctx, Json request) {
         return false;
     }
     read_reply(reply);
+    if (state_.ja_off && japanese_ && ja_mixed_ && !request.get("ja")) {
+        // (中日混打 not possible - no Japanese data: the key was typed as Chinese's; the mode follows - findings #171)
+        japanese_ = false;
+        update_mode_ui();
+        show_mode(english_ ? L"英" : L"中");
+    }
     auto* commit = reply.get("commit");
     sync(ctx, commit && commit->is_string() ? wide(commit->as_string()) : std::wstring());
     auto* handled = reply.get("handled");

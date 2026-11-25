@@ -72,12 +72,20 @@ class TokenizeTest(Base):
         self.assertEqual([t.kind for t in toks], ["en"], self.kinds("tanakasan"))
 
     def test_off_is_unchanged(self):
-        # without ja the tokens are those of 中英混打
-        for raw in ("kyouhaiitenki", keys("ㄋㄧˇ ㄏㄠˇ") + "python", "su3cl3", "google5l3", "abc@example.com"):
-            c = self.c
-            a = [(t.kind, t.raw, t.value) for t in self.tokens(raw, ja=False)]
-            b = [(t.kind, t.raw, t.value) for t in composer.tokenize(raw, c.table, c.user, c.english, lexicon=c.lexicon)]
-            self.assertEqual(a, b, raw)
+        # (#168) the composer turned on and off again types as one never turned on: what 中英混打 shows
+        c = self.c
+        for raw in ("python", keys("ㄋㄧˇ ㄏㄠˇ") + "python", "su3cl3", "abc@example.com"):
+            c.reset()
+            for ch in raw:
+                c.key(ch)
+            before = c.composition
+            c.set_japanese(self.ja)
+            changed = c.composition
+            c.set_japanese(None)
+            self.assertEqual(c.composition, before, raw)
+            if raw.isalpha():
+                self.assertNotEqual(changed, before, raw)  # (and on, the letters were Japanese)
+            c.key(special="ESC")
 
 
 class ComposerTest(Base):
@@ -154,6 +162,86 @@ class ComposerTest(Base):
         self.assertEqual(c.composition, "我キョウ")
         c.set_ja_lock("auto")
         self.assertEqual(c.composition, "我今日")
+
+    def test_numbers_as_typed(self):
+        # (findings #162: digits and their marks are no romaji - 3.5 stays 3.5, a date keeps its -)
+        self.assertEqual(self.type(keys("ㄨㄛˇ") + "3.5", enter=True), "我3.5")
+        self.assertEqual(self.type(keys("ㄋㄧˇ") + "2026-11-26", enter=True), "你2026-11-26")
+
+    def test_capitals_as_typed(self):
+        # (findings #169: a capital typed with Shift is no romaji: Tokyo stays Tokyo, not T起きょ)
+        self.assertEqual(self.type("Tokyo", enter=True), "Tokyo")
+
+    def test_digits_inside_japanese(self):
+        # (findings #172: only the digits stay as typed - the Japanese around them converts as one: 私は20歳, 3時に)
+        self.assertEqual(self.type("watasiha20sai", enter=True), self.ja_text("わたしは20さい"))
+        self.assertIn("20", self.c.commit)
+        self.assertEqual(self.type("3jini", enter=True), self.ja_text("3じに"))
+        self.assertNotIn("jini", self.c.commit)
+        # (the marks between digits stay too: 1,000 not 1、000 - findings #174)
+        self.assertIn("1,000", self.type("a1,000", enter=True))
+
+    def test_capital_word_inside_japanese(self):
+        # (#172: a word begun with a capital stays as typed, the lowercase before it is Japanese)
+        sent = self.type("kyouTokyo", enter=True)
+        self.assertTrue(sent.endswith("Tokyo"), sent)
+        self.assertNotIn("kyou", sent)
+
+    def test_caret_mid_syllable(self):
+        # (findings #173: the caret between the keys of a syllable sits before it - the letters not kana yet count
+        # for nothing: one ← from the end moves the caret off the end)
+        c = self.c
+        self.type("kyouhaiitenki")  # 今日|は|いい天気: the caret before i of ki is inside いい天気 - at its start
+        c.key(special="LEFT")
+        self.assertEqual(c.cursor, 3)
+        c.set_ja_lock("hira")  # きょうはいいてんき: the keys before the caret make きょうはいいてん (k pending)
+        self.assertEqual(c.cursor, 8)
+
+    def test_caret_inside_japanese(self):
+        # (findings #164: the caret inside a Japanese piece sits after the characters its keys before it make)
+        c = self.c
+        self.type("kyouhaiitenki")  # 今日はいい天気: きょう|は|いい|天気
+        c.key(special="HOME")
+        self.assertEqual(c.cursor, 0)
+        for _ in range(4):  # (past k y o u: きょう - the word 今日)
+            c.key(special="RIGHT")
+        self.assertEqual(c.cursor, 2)
+        c.key(special="END")
+        self.assertEqual(c.cursor, 7)
+
+    def test_capitals_not_learned(self):
+        # (#168: a word shown as typed in 中日混打 - capitals - is not remembered either: no English typed in this mode)
+        c = self.c
+        words = dict(getattr(c.user, "words", {}))
+        self.type(keys("ㄨㄛˇ") + "Python", enter=True)
+        self.assertEqual(dict(getattr(c.user, "words", {})), words)
+
+    def pick(self, word):
+        c = self.c
+        c.key(special="DOWN")
+        c.cand_index = c.candidates.index(word)
+        c.key(special="ENTER")
+
+    def test_pick_kept_when_head_sent(self):
+        # (findings #165: a long sentence sends its start by itself - the Japanese picked after it stays picked)
+        c = self.c
+        self.type(keys("ㄨㄛˇ") * 30 + "hasi")
+        self.pick("橋")
+        self.type(keys("ㄋㄧˇ ㄏㄠˇ ㄋㄧˇ ㄏㄠˇ"))
+        self.assertTrue(c.commit, "the start was sent")
+        self.assertIn("橋", c.composition)
+
+    def test_japanese_list_not_simplified(self):
+        # (findings #166: 簡體輸出 changes the Chinese list, not the Japanese one - 橋, not 桥)
+        c = self.c
+        c.user.simplified = True
+        try:
+            self.type("hasi")
+            c.key(special="DOWN")
+            self.assertIn("橋", c.candidates)
+            self.assertNotIn("桥", c.candidates)
+        finally:
+            c.user.simplified = False
 
     def test_off_shows_letters(self):
         self.c.set_japanese(None)

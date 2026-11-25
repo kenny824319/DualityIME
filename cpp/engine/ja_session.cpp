@@ -61,6 +61,15 @@ static Json reply(const JaComposer* c, const Config& config, bool handled, const
     return o;
 }
 
+JaSession::Mixed JaSession::mixed(const Json& req, JaData& data, const Config& config) {
+    Mixed m;
+    const Json* jm = req.get("ja_mixed");
+    if (!jm || !jm->is_bool() || !jm->as_bool()) return m;
+    m.on = config.flag("ja_enabled") && data.ready() && data.mixed;  // (the data read only when asked for)
+    m.ja_off = !m.on;
+    return m;
+}
+
 Json JaSession::handle(const Json& req, JaData& data, const Config& config) {
     const Json* opv = req.get("op");
     std::string op = opv && opv->is_string() ? opv->as_string() : "";
@@ -91,8 +100,9 @@ Json JaSession::handle(const Json& req, JaData& data, const Config& config) {
         const Json* lock = req.get("lock");
         c.set_kana_lock(lock && lock->is_string() ? lock->as_string() : "auto");
     } else if (op == "ja_flush") {  // (switching to Chinese: what is typed is sent, the kana lock back to 自動)
-        commit = c.flush();
-        c.set_kana_lock("auto");
+        commit = c.flush();  // (the list closed first: what the screen shows goes - findings #163)
+        const Json* keep = req.get("keep_lock");  // (Shift to 中日混打: the lock stays, both modes' Japanese hold it)
+        if (!(keep && keep->is_bool() && keep->as_bool())) c.set_kana_lock("auto");
     }
     c.commit.clear();  // sent once
     return reply(&c, config, handled, commit);
