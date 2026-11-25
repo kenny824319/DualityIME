@@ -216,3 +216,4 @@
 - 長句選字加強的語言模型（`data/lm.bin`）：本專案自己用上面兩份語料訓練，並以 [Qwen3-1.7B](https://huggingface.co/Qwen/Qwen3-1.7B)（Apache-2.0）為老師蒸餾
 - 英文字表：[google-10000-english](https://github.com/first20hours/google-10000-english)（僅供個人、教育用途），另外補上一般字表沒有的電腦用語（cmd、git、json…）
 - 英文補字字表（`data/english_complete.txt`）：[ESDB](https://github.com/en-wl/wordlist) 的字，依 [Google Books Ngram](https://github.com/hackerb9/gwordlist)（CC BY 3.0）與 [FrequencyWords](https://github.com/hermitdave/FrequencyWords)（OpenSubtitles，CC BY-SA 4.0）的字頻排序，並參考 [LDNOOBW](https://github.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words)（CC BY 4.0）去掉不雅字；這份字表以 CC BY-SA 4.0 授權（見 `data/LICENSE-english-complete.txt`）
+- 日文辭典、詞類連接成本、文節規則與羅馬字表（`data/ja_*`）：[Mozc](https://github.com/google/mozc)（辭典為 NAIST／ICOT 條款與沖繩辭書，其餘 BSD-3，見 `data/LICENSE-Mozc.txt`）

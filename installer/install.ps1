@@ -115,6 +115,8 @@ try {
                "data\lexicon.txt", "data\names.txt", "data\bigram.bin", "data\lm.bin", "data\english.txt", "data\english_tech.txt", "data\after_english.txt", "data\LICENSE-McBopomofo.txt",
                # English completion (#40): its words and their licence
                "data\english_complete.txt", "data\LICENSE-english-complete.txt",
+               # 日文 (#36): Mozc's dictionary, connection costs, 文節 rules, romaji table and licence
+               "data\ja_dict.bin", "data\ja_conn.bin", "data\ja_seg.bin", "data\ja_romaji.tsv", "data\LICENSE-Mozc.txt",
                # 簡體輸出 (#32): OpenCC's tables and their licence
                "data\opencc\TSPhrases.txt", "data\opencc\TSCharacters.txt", "data\opencc\TWVariantsRev.txt",
                "data\opencc\TWVariantsRevPhrases.txt", "data\opencc\TWPhrasesRev.txt", "data\opencc\TWPhrases.txt",
