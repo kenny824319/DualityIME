@@ -2,7 +2,8 @@
 // switches this program (only) to 兩儀輸入法, types key scripts with SendInput and
 // checks the text that comes out.
 //   sz_tsftest <script file> [--tsf] [--tip {clsid} {profile}] [--lang 0411] [--open]
-// (--open: the input method turned on first - a Japanese one starts off: #36, tools/ja_google_eval.ps1)
+// (--open: the input method turned on first - a Japanese one starts off: #36, tools/ja_google_eval.ps1; --shot <folder>:
+// each line's window saved as line<N>.bmp, the box zoomed three times)
 // Script lines:  keys => expected text
 // keys: characters as typed, {ENTER} {ESC} {BACK} {DOWN} {UP} {LEFT} {RIGHT} {TAB} {PGDN} {PGUP}
 // {#5} (a numpad key) {SPACE} {SHIFT} (a Shift tap) {SBACK} (Shift+Backspace) {SSPACE} (Shift+Space)
@@ -306,7 +307,12 @@ int wmain(int argc, wchar_t** argv) {
     // --open: the input method turned on (a Japanese one starts off, typing letters as they are: #36's evaluation types
     // through Google 日本語入力, tools/ja_google_eval.ps1) - the thread's keyboard open/close compartment set to 1
     bool open_ime = false;
-    for (int i = 2; i < argc; ++i) open_ime = open_ime || std::wstring(argv[i]) == L"--open";
+    std::wstring shot_dir;
+    for (int i = 2; i < argc; ++i) {
+        open_ime = open_ime || std::wstring(argv[i]) == L"--open";
+        if (std::wstring(argv[i]) == L"--shot" && i + 1 < argc) shot_dir = argv[i + 1];
+    }
+    if (!shot_dir.empty()) SendMessageW(g_edit, EM_SETZOOM, 3, 1);  // (three times larger: the strokes show)
     auto set_open = [&]() {
         ComPtr<ITfCompartmentMgr> tcm;
         ComPtr<ITfCompartment> comp;
@@ -523,6 +529,33 @@ int wmain(int argc, wchar_t** argv) {
         std::printf("%s  %s => %s%s%s\n", ok ? "ok  " : "FAIL", keys.c_str(), got.c_str(),
                     ok ? "" : "   (expected ", ok ? "" : (expected + ")").c_str());
         std::fflush(stdout);
+        // --shot <folder>: the window as it is now, the line's text in it, saved as line<N>.bmp (#36: how the kanji of
+        // a zh-TW input method and of a Japanese one look in a rich edit box, which tags text by the keyboard's language)
+        if (!shot_dir.empty()) {
+            RECT wr;
+            GetWindowRect(g_main, &wr);
+            int w = wr.right - wr.left, h = wr.bottom - wr.top;
+            HDC screen = GetDC(nullptr), mem = CreateCompatibleDC(screen);
+            BITMAPINFO bi{};
+            bi.bmiHeader = {sizeof(BITMAPINFOHEADER), w, -h, 1, 32, BI_RGB};
+            void* bits = nullptr;
+            HBITMAP bmp = CreateDIBSection(screen, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+            HGDIOBJ old = SelectObject(mem, bmp);
+            if (!PrintWindow(g_main, mem, 2 /* PW_RENDERFULLCONTENT */)) BitBlt(mem, 0, 0, w, h, screen, wr.left, wr.top, SRCCOPY);
+            std::wstring path = shot_dir + L"\\line" + std::to_wstring(passed + failed) + L".bmp";
+            if (FILE* f = _wfopen(path.c_str(), L"wb")) {
+                BITMAPFILEHEADER bf{0x4D42, static_cast<DWORD>(sizeof bf + sizeof(BITMAPINFOHEADER) + w * h * 4), 0, 0,
+                                    sizeof bf + sizeof(BITMAPINFOHEADER)};
+                fwrite(&bf, sizeof bf, 1, f);
+                fwrite(&bi.bmiHeader, sizeof(BITMAPINFOHEADER), 1, f);
+                fwrite(bits, 4, static_cast<size_t>(w) * h, f);
+                fclose(f);
+            }
+            SelectObject(mem, old);
+            DeleteObject(bmp);
+            DeleteDC(mem);
+            ReleaseDC(nullptr, screen);
+        }
         // anything still being typed goes away before the next line
         tap(VK_ESCAPE);
         tap(VK_ESCAPE);
