@@ -896,6 +896,29 @@ class SymbolTableTest(unittest.TestCase):
         pages = re.search(r"BuiltinPageKeys = \{(.*?)\};", cs, re.S).group(1)
         self.assertEqual(re.findall(r'"([^"]+)"', pages), ["".join(keys) for _, keys in symbols.PAGES])
         self.assertIn('SymbolKeyNames = "' + symbols.KEYS.replace("\\", "\\\\") + '"', cs)
+        # (the settings page's editor holds the rule too: findings #133, a key it allowed and the tool refused)
+        page = read("settings", "ui", "app.js")
+        js = page[page.index("const SK_EXTEND = ["):page.index("function skCharacters(")]
+        self.assertEqual([(int(a, 16), int(b, 16)) for a, b in re.findall(r"\[0x([0-9A-F]+), 0x([0-9A-F]+)\]", js)],
+                         list(symbols._EXTEND))
+
+    def test_the_settings_page_cuts_characters_as_the_engine(self):
+        # (findings #133: the browser's grapheme rule took ก่, कि, ｶﾞ, 葛 with a variation selector as one character)
+        import shutil
+        import subprocess
+        from engine import symbols
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node not found: the settings page's skCharacters is not run")
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "settings", "ui", "app.js"), encoding="utf-8") as f:
+            page = f.read()
+        fn = page[page.index("const SK_EXTEND = ["):page.index("const nameWidth = ")]
+        samples = ["ก่", "कि", "ｶﾞ", "葛\U000E0100", "가", "é", "👩‍💻", "🇹🇼🇯🇵", "1️⃣", "‍", "★☆", "表情 :)"]
+        script = fn + "\nconst ss = JSON.parse(process.argv[1]);\nconsole.log(JSON.stringify(ss.map(skCharacters)));\n"
+        out = subprocess.run([node, "-e", script, json.dumps(samples)], capture_output=True, timeout=60)
+        self.assertEqual(json.loads(out.stdout.decode("utf-8")), [symbols._characters(s) for s in samples],
+                         out.stderr.decode("utf-8", "replace"))
 
     def test_a_file_breaking_a_rule_is_the_built_in_table(self):
         good = self.builtin(0)

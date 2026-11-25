@@ -1022,8 +1022,10 @@ void SymbolKeyboard::draw(HDC dc, int w, int h) {
                     ct.text(sym, it.x, it.y + 12, it.w, it.h - 12, it.value == cursor_ ? th.accent_text : th.text,
                             emoji(sym) ? L"Segoe UI Emoji" : L"Microsoft JhengHei UI", 19, true);
                 } else if (it.kind == Item::Tab) {
+                    // (a name with an emoji in the emoji font too - ♥️ 愛心, 1️⃣2️⃣; its Chinese falls back to a Chinese font
+                    // through DirectWrite, zh-TW - findings #134)
                     ct.text(name_of(it), it.x + 4, it.y, it.w - 8, it.h, it.value == page_ ? th.accent_text : th.text,
-                            L"Microsoft JhengHei UI", size_of(it), true);
+                            emoji(name_of(it)) ? L"Segoe UI Emoji" : L"Microsoft JhengHei UI", size_of(it), true);
                 }
             }
         if (ct.finish()) return;

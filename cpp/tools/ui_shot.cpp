@@ -113,8 +113,9 @@ int wmain(int argc, wchar_t** argv) {
     CreateDirectoryW(out.c_str(), nullptr);
 
     // ten pages shown, names of 8 cells (4 CJK, 8 ASCII), a page of one's own with emoji (joiners, a flag, a keycap)
-    // (WWWWWWWW: 8 cells of the widest letter, too wide for one of ten tabs - made smaller, then "…", #131)
-    std::vector<std::wstring> names = {L"表情 :)", L"一般", L"數學", L"特殊", L"圈圈數字", L"Emoji123", L"箭頭符號",
+    // (WWWWWWWW: 8 cells of the widest letter, too wide for one of ten tabs - made smaller, then "…", #131; names
+    // with emoji in colour, #134)
+    std::vector<std::wstring> names = {L"表情 :)", L"一般", L"數學", L"特殊", L"♥️愛心", L"1️⃣2️⃣", L"箭頭符號",
                                        L"希臘字母", L"WWWWWWWW", L"我的符號"};
     std::vector<std::wstring> emoji(47, L"");
     // (the second row's last keys: emoji with no FE0F, a heart and a keycap with it - #128, #129)

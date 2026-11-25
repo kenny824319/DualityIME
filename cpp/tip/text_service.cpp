@@ -1891,6 +1891,9 @@ void TextService::show_mode(const std::wstring& text, bool notice) {
     if (!found && !caret_rect(ctx.Get(), rc)) return;
     if (ctx) own_popups(ctx.Get());  // (Shift before anything was typed in the search box)
     auto& win = notice ? notice_win_ : mode_win_;
+    // (the two boxes sit at the same spot: the one coming up closes the other - a Shift tap over "Insert 沒有放開"
+    // drew 英 on top of it, findings #135)
+    if (auto& other = notice ? mode_win_ : notice_win_) other->hide();
     if (!win) {
         win = std::make_unique<HintWindow>();
         win->look = notice ? "notice" : "mode";  // (自訂外觀: each its own photo - 訊息提示 #73, wider than 中)

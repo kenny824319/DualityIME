@@ -825,8 +825,30 @@ const SK_DEFAULT = [
 ].map(([name, s], i) => ({ name, builtin: i, hidden: false, keys: s.split(" ") }));
 const SK_MAX = 10;     // categories shown on the keyboard at once (hidden built-ins do not count)
 const SK_NAME_MAX = 8; // a name's width in half-width cells - Chinese and emoji 2, letters and digits 1: the tabs fit
+// what a reader sees as one character each - the rule settings.exe and both engines hold (engine/symbols.py _characters:
+// a letter with its marks, an emoji with its joiners and modifiers, a flag's two halves), not the browser's: a key or a
+// name the page allowed and the tool refused left the editor unable to save anything (findings #133)
+const SK_EXTEND = [[0x0300, 0x036F], [0x1AB0, 0x1AFF], [0x1DC0, 0x1DFF], [0x200D, 0x200D], [0x20D0, 0x20FF], [0x3099, 0x309A],
+  [0xFE00, 0xFE0F], [0xFE20, 0xFE2F], [0x1F3FB, 0x1F3FF], [0xE0020, 0xE007F]];
+function skCharacters(s) {
+  const out = [];
+  let joined = false, flag = false;
+  for (const ch of s) {
+    const cp = ch.codePointAt(0);
+    if (SK_EXTEND.some(([a, b]) => cp >= a && cp <= b)) {
+      if (out.length) out[out.length - 1] += ch; else out.push(ch);
+      joined = cp === 0x200D;
+      continue;
+    }
+    const ri = cp >= 0x1F1E6 && cp <= 0x1F1FF;
+    if (out.length && (joined || (ri && flag))) { out[out.length - 1] += ch; flag = false; }
+    else { out.push(ch); flag = ri; }
+    joined = false;
+  }
+  return out;
+}
 const nameWidth = (parts) => parts.reduce((w, g) => w + (/^[\x20-\x7E]$/.test(g) ? 1 : 2), 0);
-const graphemes = (s) => [...new Intl.Segmenter("zh-Hant", { granularity: "grapheme" }).segment(s)].length;
+const graphemes = (s) => skCharacters(s).length;
 
 function symbolsEditor() {
   let cats = SK_DEFAULT.map((c) => ({ ...c, keys: [...c.keys] }));
@@ -838,7 +860,8 @@ function symbolsEditor() {
   const shown = () => cats.filter((c) => !c.hidden).length;
   // (settings.exe writes symbols.json, the IME reads it at its next key; a table it refuses: its message, the file
   // as it was)
-  const save = () => api("saveSymbols", { pages: cats }).then((r) => { if (r && r.error) toast(r.error); });
+  // (refused: the table it keeps is read back - the editor never shows what is not saved, findings #132 #133)
+  const save = () => api("saveSymbols", { pages: cats }).then((r) => { if (r && r.error) { toast(r.error); load(); } });
   const load = () => api("symbols").then((d) => {
     cats = d.pages.map((c) => ({ ...c, keys: [...c.keys] }));
     cur = Math.min(cur, cats.length - 1);
@@ -880,7 +903,7 @@ function symbolsEditor() {
         // (counted as seen: an emoji is one; only this chip's label changes, so typing - and the IME's
         // composition - goes on uninterrupted; nothing cut while a syllable is still being composed)
         if (e.isComposing) return;
-        let parts = [...new Intl.Segmenter("zh-Hant", { granularity: "grapheme" }).segment(name.value)].map((s) => s.segment);
+        let parts = skCharacters(name.value);
         if (nameWidth(parts) > SK_NAME_MAX) {
           while (nameWidth(parts) > SK_NAME_MAX) parts.pop();  // (cut what does not fit the tab)
           name.value = parts.join("");
@@ -911,7 +934,7 @@ function symbolsEditor() {
             if (c.hidden && shown() >= SK_MAX) { toast(`最多顯示 ${SK_MAX} 個類別`); return; }
             c.hidden = !c.hidden; save(); draw();
           } }, c.hidden ? "顯示這個類別" : "隱藏這個類別")
-        : h("button", { class: "btn danger", onclick: async () => {
+        : h("button", { class: "btn danger", disabled: shown() <= 1, onclick: async () => {  // (the last shown: #132)
             const ok = await dialog("刪除類別", h("p", { class: "row-desc", style: "font-size:14px" }, `確定要刪除「${c.name || "未命名"}」嗎？此操作無法復原。`),
               [{ text: "取消", value: false }, { text: "刪除", kind: "danger", value: true }]);
             if (!ok) return;
