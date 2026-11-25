@@ -819,6 +819,203 @@ class SymbolKeyboardTest(Base):
         self.assertIsNone(c.symbol_page)
 
 
+class SymbolTableTest(unittest.TestCase):
+    """符號鍵盤自訂 (#69): symbols.json read into a SymbolTable; anything breaking a rule -> the built-in table whole."""
+
+    def table(self, pages):
+        from engine import symbols
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "symbols.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"format": 1, "pages": pages} if pages is not None else "nonsense", f, ensure_ascii=False)
+            return symbols.SymbolTable.load(path)
+
+    def builtin(self, i, hidden=False):
+        from engine import symbols
+        return {"builtin": i, "name": symbols.PAGES[i][0], "hidden": hidden, "keys": list(symbols.PAGES[i][1])}
+
+    def test_no_file_is_the_built_in_table(self):
+        from engine import symbols
+        t = symbols.SymbolTable.load(os.path.join(tempfile.gettempdir(), "no-such-folder-69", "symbols.json"))
+        self.assertEqual(t.names(), ["一般", "數學", "特殊"])
+        self.assertEqual(t.symbol(1, symbols.KEYS.index("q")), "√")
+
+    def test_order_hidden_and_custom_pages(self):
+        from engine import symbols
+        custom = {"builtin": None, "name": "Emoji", "hidden": False, "keys": ["😀"] + [""] * 46}
+        t = self.table([custom, self.builtin(2), self.builtin(0), self.builtin(1, hidden=True)])
+        self.assertEqual(t.names(), ["Emoji", "特殊", "一般"])
+        self.assertEqual((t.count(), t.symbol(0, 0), t.symbol(0, 1)), (3, "😀", ""))
+
+    def test_a_built_in_page_keeps_its_own_name(self):
+        page = self.builtin(1)
+        page["name"] = "改過"
+        self.assertEqual(self.table([page]).names(), ["數學"])
+
+    def test_one_character_or_one_emoji(self):
+        from engine.symbols import one_symbol
+        for s in ("★", "a", "", "❤️", "👩‍💻", "👍🏽", "🇹🇼", "1️⃣", "é", "é"):
+            with self.subTest(s=s):
+                self.assertTrue(one_symbol(s))
+        for s in ("ab", "★☆", "🇹🇼🇯🇵", "😀😀", "abc"):
+            with self.subTest(s=s):
+                self.assertFalse(one_symbol(s))
+
+    def test_name_width(self):
+        from engine.symbols import name_cells
+        self.assertEqual([name_cells(s) for s in ("Emoji", "表情符號", "顏文字ab", "😀x")], [5, 8, 8, 3])
+
+    def test_the_engines_and_the_settings_tool_hold_the_same_rules(self):
+        # (a key the settings tool writes and an engine refuses would turn the whole table into the built-in one)
+        import re
+        from engine import symbols
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+        def read(*parts):
+            with open(os.path.join(root, *parts), encoding="utf-8") as f:
+                return f.read()
+
+        cpp, cs = read("cpp", "engine", "symbols.cpp"), read("installer", "src", "Settings.cs")
+        cpp_extend = cpp[cpp.index("static bool extend("):cpp.index("static bool blank(")]
+        self.assertEqual([(int(a, 16), int(b, 16)) for a, b in re.findall(r"\{0x([0-9A-F]+), 0x([0-9A-F]+)\}", cpp_extend)],
+                         list(symbols._EXTEND))
+        cs_extend = cs[cs.index("static bool SymbolExtend("):cs.index("static IEnumerable<string> CodePoints(")]
+        ranges = [(int(a, 16), int(b, 16)) for a, b in re.findall(r"cp >= 0x([0-9A-F]+) && cp <= 0x([0-9A-F]+)", cs_extend)]
+        ranges += [(int(a, 16), int(a, 16)) for a in re.findall(r"cp == 0x([0-9A-F]+)", cs_extend)]
+        self.assertEqual(sorted(ranges), sorted(symbols._EXTEND))
+        for source, start, end in ((cpp, "static bool blank(", "std::vector<ustr> characters("),
+                                   (cs, "static bool BlankName(", "// the first thing wrong")):
+            body = source[source.index(start):source.index(end)]
+            listed = set()
+            for a, b in re.findall(r"c?p? >= 0x([0-9A-F]+) && c?p? <= 0x([0-9A-F]+)", body):
+                listed |= set(range(int(a, 16), int(b, 16) + 1))
+            listed |= {int(a, 16) for a in re.findall(r"== 0x([0-9A-F]+)", body)}
+            self.assertEqual(listed, set(symbols._BLANK), start)
+        names = re.search(r"BuiltinPageNames = \{ (.*?) \};", cs).group(1)
+        self.assertEqual(re.findall(r'"([^"]+)"', names), symbols.page_names())
+        pages = re.search(r"BuiltinPageKeys = \{(.*?)\};", cs, re.S).group(1)
+        self.assertEqual(re.findall(r'"([^"]+)"', pages), ["".join(keys) for _, keys in symbols.PAGES])
+        self.assertIn('SymbolKeyNames = "' + symbols.KEYS.replace("\\", "\\\\") + '"', cs)
+
+    def test_a_file_breaking_a_rule_is_the_built_in_table(self):
+        good = self.builtin(0)
+        short = dict(good, keys=good["keys"][:46])
+        long_key = dict(good, keys=["abc"] + good["keys"][1:])
+        wide = {"builtin": None, "name": "表情符號啊", "hidden": False, "keys": [""] * 47}
+        empty_name = {"builtin": None, "name": "", "hidden": False, "keys": [""] * 47}
+        eleven = [{"builtin": None, "name": f"p{i}", "hidden": False, "keys": [""] * 47} for i in range(11)]
+        twice = [self.builtin(0), self.builtin(0)]
+        for name, pages in (("46 keys", [short]), ("a 3-character key", [long_key]), ("a 10-cell name", [wide]),
+                            ("an empty name", [empty_name]), ("11 pages shown", eleven), ("none shown", [self.builtin(0, True)]),
+                            ("a built-in page twice", twice), ("no pages", []), ("not an object", None)):
+            with self.subTest(name):
+                self.assertEqual(self.table(pages).names(), ["一般", "數學", "特殊"])
+
+
+class CustomSymbolKeyboardTest(Base):
+    """符號鍵盤自訂 (#69): typing from symbols.json next to user.json, read again when it changes."""
+    stamp = 1_000_000
+
+    def write(self, pages):
+        path = os.path.join(self.tmp.name, "symbols.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"format": 1, "pages": pages}, f, ensure_ascii=False)
+        CustomSymbolKeyboardTest.stamp += 10  # (a new modification time each write: the engine looks at it)
+        os.utime(path, (self.stamp, self.stamp))
+
+    def tearDown(self):
+        path = os.path.join(self.tmp.name, "symbols.json")
+        if os.path.exists(path):
+            os.remove(path)
+        self.c.user.reload_symbols()
+
+    def page(self, i, hidden=False, **changed):
+        from engine import symbols
+        keys = list(symbols.PAGES[i][1])
+        for k, v in changed.items():
+            keys[symbols.KEYS.index(k)] = v
+        return {"builtin": i, "name": symbols.PAGES[i][0], "hidden": hidden, "keys": keys}
+
+    def test_a_changed_key_types_its_new_symbol(self):
+        self.write([self.page(0, a="★"), self.page(1), self.page(2)])
+        c = self.c
+        c.key("`")
+        c.key("a")
+        self.assertEqual(c.commit, "★")
+
+    def test_two_keys_swapped(self):
+        self.write([self.page(0, a="（", q="※"), self.page(1), self.page(2)])
+        c = self.c
+        for ch, want in (("a", "（"), ("q", "※")):
+            c.key("`")
+            c.key(ch)
+            self.assertEqual(c.commit, want)
+
+    def test_a_custom_page_first_and_backquote_twice(self):
+        from engine import symbols
+        keys = [""] * len(symbols.KEYS)
+        keys[symbols.KEYS.index("`")], keys[symbols.KEYS.index("a")] = "♪", "😀"
+        self.write([{"builtin": None, "name": "Emoji", "hidden": False, "keys": keys}, self.page(0)])
+        c = self.c
+        c.key("`")
+        self.assertEqual(c.symbol_page, 0)
+        c.key("a")
+        self.assertEqual(c.commit, "😀")
+        c.key("`")
+        c.key("`")  # (`` types the first page's ` key: no special case)
+        self.assertEqual(c.commit, "♪")
+
+    def test_tab_goes_through_the_pages_shown_only(self):
+        self.write([self.page(0), self.page(1, hidden=True), self.page(2)])
+        c = self.c
+        c.key("`")
+        c.key(special="TAB")
+        self.assertEqual(c.symbol_page, 1)
+        c.key("8")
+        self.assertEqual(c.commit, "✓")  # (特殊, 數學 skipped)
+        c.key("`")
+        c.key(special="TAB")
+        c.key(special="TAB")
+        self.assertEqual(c.symbol_page, 0)
+
+    def test_an_empty_key_does_nothing(self):
+        self.write([self.page(0, a=""), self.page(1), self.page(2)])
+        c = self.c
+        for ch in "su3":
+            c.key(ch)
+        c.key("`")
+        self.assertTrue(c.key("a"))
+        self.assertEqual((c.commit, c.composition, c.symbol_page), ("", "你", 0))
+        c.key(special="ESC")
+
+    def test_an_emoji_key_is_typed_whole(self):
+        self.write([self.page(0, a="👩‍💻", s="❤️"), self.page(1), self.page(2)])
+        c = self.c
+        for ch, want in (("a", "👩‍💻"), ("s", "❤️")):
+            c.key("`")
+            c.key(ch)
+            self.assertEqual(c.commit, want)
+
+    def test_the_file_changed_while_open(self):
+        # (the settings saved while the keyboard is up on its third page: the next key reads the new file, the page in range)
+        self.write([self.page(0), self.page(1), self.page(2)])
+        c = self.c
+        c.key("`")
+        c.key(special="TAB")
+        c.key(special="TAB")
+        self.assertEqual(c.symbol_page, 2)
+        self.write([self.page(0, a="★")])
+        c.key(special="RIGHT")
+        self.assertEqual(c.symbol_page, 0)
+        c.key("a")
+        self.assertEqual(c.commit, "★")
+
+    def test_names_for_the_window(self):
+        self.write([self.page(2), self.page(0), self.page(1, hidden=True)])
+        self.c.user.reload_symbols()
+        self.assertEqual(self.c.user.symbols.names(), ["特殊", "一般"])
+
+
 class SettingsTest(Base):
     def test_full_width_space(self):
         c = self.c

@@ -227,6 +227,75 @@ static class SettingsTest {
             File.Delete(Path.Combine(dir, "keys.json"));
             File.Delete(Path.Combine(dir, "user_simplified.json"));
 
+            // 符號鍵盤自訂 (#69): symbols.json, the same rules as engine/symbols.py
+            string symbolsPath = Path.Combine(dir, "symbols.json");
+            var sym = (Dictionary<string, object>)call("symbols", null);
+            var symPages = (object[])sym["pages"];
+            var first = (Dictionary<string, object>)symPages[0];
+            Check("no symbols.json: the built-in three pages", symPages.Length == 3 && (string)first["name"] == "一般" &&
+                  (int)first["builtin"] == 0 && (string)((object[])first["keys"])[0] == "`" &&
+                  (string)((object[])((Dictionary<string, object>)symPages[1])["keys"])[13] == "√", json.Serialize(sym));
+            Func<object, string, object, Dictionary<string, object>> page = (bi, name, keys) => new Dictionary<string, object> {
+                { "builtin", bi }, { "name", name }, { "hidden", false }, { "keys", keys } };
+            Func<string, object[]> blankKeys = (k0) => { var ks = new object[47]; for (int i = 0; i < 47; i++) ks[i] = ""; ks[0] = k0; return ks; };
+            var general = (object[])((object[])first["keys"]).Clone();
+            general[26] = "★";  // (the a key)
+            var good = new object[] { page(null, "Emoji", blankKeys("😀")), page(0, "改了名字", general), page(null, "表情符號", blankKeys("👩‍💻")),
+                                      page(2, "特殊", ((Dictionary<string, object>)symPages[2])["keys"]) };
+            object saved69 = call("saveSymbols", new Dictionary<string, object> { { "pages", good } });
+            var file69 = File.Exists(symbolsPath) ? (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(symbolsPath, Encoding.UTF8)) : null;
+            var filePages = file69 != null ? (object[])file69["pages"] : new object[0];
+            Check("saveSymbols writes symbols.json (a built-in page keeps its own name)", saved69 is bool && (bool)saved69 &&
+                  filePages.Length == 4 && (string)((Dictionary<string, object>)filePages[1])["name"] == "一般" &&
+                  (string)((object[])((Dictionary<string, object>)filePages[1])["keys"])[26] == "★" &&
+                  (int)file69["format"] == 1, file69 == null ? "no file" : json.Serialize(file69));
+            var back = (object[])((Dictionary<string, object>)call("symbols", null))["pages"];
+            Check("symbols reads the file back, hidden pages too", back.Length == 4 &&
+                  (string)((Dictionary<string, object>)back[0])["name"] == "Emoji", json.Serialize(back));
+            var eleven = new object[11];
+            for (int i = 0; i < 11; i++) eleven[i] = page(null, "p" + i, blankKeys(""));
+            var hiddenOnly = page(0, "一般", general);
+            hiddenOnly["hidden"] = true;
+            foreach (var badCase in new[] {
+                Tuple.Create("a key of two characters", new object[] { page(null, "Emoji", blankKeys("ab")) }),
+                Tuple.Create("a name of 10 cells", new object[] { page(null, "表情符號啊", blankKeys("")) }),
+                Tuple.Create("an empty name", new object[] { page(null, "　", blankKeys("")) }),
+                Tuple.Create("11 pages shown", eleven),
+                Tuple.Create("none shown", new object[] { hiddenOnly }),
+                Tuple.Create("46 keys", new object[] { page(null, "x", new object[46]) }) }) {
+                object res69 = call("saveSymbols", new Dictionary<string, object> { { "pages", badCase.Item2 } });
+                var err = res69 as Dictionary<string, object>;
+                var still = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(symbolsPath, Encoding.UTF8));
+                Check("saveSymbols refuses " + badCase.Item1 + " with a message, the file as it was",
+                      err != null && err.ContainsKey("error") && ((string)err["error"]).Length > 0 &&
+                      ((object[])still["pages"]).Length == 4, json.Serialize(res69));
+            }
+            string backup69 = Path.Combine(dir, "backup69.json");
+            b.WriteBackup(backup69);
+            var bk69 = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(backup69, Encoding.UTF8));
+            Check("a backup carries the symbol keyboard", bk69.ContainsKey("symbols") &&
+                  ((object[])((Dictionary<string, object>)bk69["symbols"])["pages"]).Length == 4, File.ReadAllText(backup69, Encoding.UTF8));
+            call("resetSymbols", null);
+            Check("resetSymbols deletes symbols.json", !File.Exists(symbolsPath), "");
+            b.ReadBackup(backup69);
+            b.RestoreBackup(false, false, false, false);
+            Check("a restore without 設定 leaves the symbol keyboard", !File.Exists(symbolsPath), "");
+            b.ReadBackup(backup69);
+            b.RestoreBackup(false, false, false, true);
+            Check("a restore with 設定 brings the symbol keyboard back", File.Exists(symbolsPath) &&
+                  ((object[])((Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(symbolsPath, Encoding.UTF8)))["pages"]).Length == 4, "");
+            bk69.Remove("symbols");
+            File.WriteAllText(backup69, json.Serialize(bk69), new UTF8Encoding(false));
+            call("resetSymbols", null);
+            call("saveSymbols", new Dictionary<string, object> { { "pages", new object[] { page(null, "Mine", blankKeys("♪")) } } });
+            b.ReadBackup(backup69);
+            b.RestoreBackup(false, false, false, true);
+            var kept = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(symbolsPath, Encoding.UTF8));
+            Check("a backup without the symbol keyboard keeps this one", (string)((Dictionary<string, object>)((object[])kept["pages"])[0])["name"] == "Mine",
+                  json.Serialize(kept));
+            File.Delete(symbolsPath);
+            File.Delete(backup69);
+
             call("saveDictionary", new Dictionary<string, object> {
                 { "kind", "words" }, { "rows", new object[] { new object[] { "華碩", "ㄏㄨㄚˊ ㄕㄨㄛˋ" } } } });
             call("saveDictionary", new Dictionary<string, object> {

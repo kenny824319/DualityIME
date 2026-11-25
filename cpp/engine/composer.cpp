@@ -5294,6 +5294,7 @@ void Composer::leave_bar() {
 // ---- symbol keyboard -------------------------------------------------------------------
 
 void Composer::open_symbols() {
+    user.reload_symbols();  // (符號鍵盤自訂, #69: the settings may have saved a new table)
     symbol_page = 0;
     symbol_fresh_ = true;
     symbol_cursor = static_cast<int>(symbols::KEYS.find('1'));
@@ -5417,17 +5418,23 @@ bool Composer::key_symbols(std::optional<char32_t> ch, const std::string& specia
     // Enter types the symbol at the arrows' cursor, Space a space (the user 2026-11-17); with 符號鍵盤選完不關 (#49) it
     // stays open, Esc (or ×) closes it and Backspace is the app's (the text being typed first) - engine/composer.py
     bool stay = config.flag("symbols_stay_open");
-    int pages = static_cast<int>(symbols::page_count());
+    // (符號鍵盤自訂, #69: the table saved while the keyboard is up is read at the next key, the page kept in range)
+    if (user.reload_symbols()) symbol_page = std::min(*symbol_page, user.symbols.count() - 1);
+    const symbols::SymbolTable& table = user.symbols;
+    int pages = table.count();
     if (ch && *ch == ' ') {
         type_symbol(config.text("space") == "full" || config.flag("full_width") ? FULL_SPACE : U" ", stay, true);
     } else if (ch) {
-        if (auto i = symbols::key_index(*ch)) type_symbol(symbols::symbol(*symbol_page, *i), stay, true);
+        auto i = symbols::key_index(*ch);
+        ustr sym = i ? table.symbol(*symbol_page, *i) : ustr();
+        if (!sym.empty()) type_symbol(sym, stay, true);  // (an empty key types nothing: keyboard and text stay)
     } else if (special == "BACK" && stay) {
         return key_special("BACK");  // (false with nothing typed: the app deletes a character)
     } else if (special == "ESC" || special == "BACK") {
         close_symbols();
     } else if (special == "ENTER") {
-        type_symbol(symbols::symbol(*symbol_page, symbol_cursor), stay, true);
+        ustr sym = table.symbol(*symbol_page, symbol_cursor);
+        if (!sym.empty()) type_symbol(sym, stay, true);
     } else if (special == "TAB" || special == "PGDN") {
         symbol_page = (*symbol_page + 1) % pages;
     } else if (special == "STAB" || special == "PGUP") {

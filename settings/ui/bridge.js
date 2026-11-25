@@ -67,6 +67,13 @@ const api = (() => {
   };
   const remembered = () => ({ remembered: memory.picks.length + memory.words.length + memory.keys.length,
     rememberedEmails: memory.emails.length, rememberedSimplified: memory.simplified ? memory.simplified.length : null });
+  // 符號鍵盤自訂 (#69): the table as settings.exe keeps it (symbols.json), the built-in pages as engine/symbols.py PAGES
+  const BUILTIN_SYMBOL_NAMES = ["一般", "數學", "特殊"];
+  const BUILTIN_SYMBOL_KEYS = ["`1234567890-=《》〈〉“”【】（）〔〕＼※＊○●「」『』：；、！？…‥—｛｝，。／",
+    "≦≧＜＞∈∉∃°℃℉±－＝√∞∩∪∂∀∇Δ×÷＋≠≒μαβγδΩ∵∴∑πΦ∫∬∭§ρ∧∨λ′″",
+    "〰┌┬┐¿¡☑☒✓✗©®™├┼┤↔↕↖↗↙↘←→↑↓└┴┘♫◉♀♂★■●▲₩¥£€☺☹♥♦♠♣"];
+  const builtinSymbolPages = () => BUILTIN_SYMBOL_NAMES.map((name, i) => ({ builtin: i, name, hidden: false, keys: [...BUILTIN_SYMBOL_KEYS[i]] }));
+  let symbolPages = builtinSymbolPages();
   const sys = { ok: true, default_ime: true, language_hk: false };
   const wait = (ms, v) => new Promise((r) => setTimeout(() => r(v), ms));
   const demo = new URLSearchParams(location.search).get("update") || "";
@@ -85,6 +92,9 @@ const api = (() => {
       case "dictionary": return dict;
       case "saveDictionary": dict[args.kind] = args.rows; return args.rows.length;
       case "quickFill": return quickFill.map((r) => [...r]);
+      case "symbols": return wait(100, { pages: JSON.parse(JSON.stringify(symbolPages)), builtinNames: BUILTIN_SYMBOL_NAMES });
+      case "saveSymbols": symbolPages = JSON.parse(JSON.stringify(args.pages)); return wait(100, true);
+      case "resetSymbols": symbolPages = builtinSymbolPages(); return wait(100, true);
       case "memory": return wait(150, JSON.parse(JSON.stringify(memory)));
       case "forgetMemory": {
         const gone = new Set(args.items.map((r) => r.join("\u0000")));

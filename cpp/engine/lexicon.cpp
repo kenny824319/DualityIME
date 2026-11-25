@@ -856,9 +856,11 @@ UserModel::UserModel(const std::wstring& path, std::function<int()> today)
         custom_path_ = (slash == std::wstring::npos ? std::wstring() : path.substr(0, slash + 1)) + L"dictionary.json";
         quick_fill_path_ = (slash == std::wstring::npos ? std::wstring() : path.substr(0, slash + 1)) + L"quick_fill.json";
         simplified_path_ = (slash == std::wstring::npos ? std::wstring() : path.substr(0, slash + 1)) + L"user_simplified.json";
+        symbols_path_ = (slash == std::wstring::npos ? std::wstring() : path.substr(0, slash + 1)) + L"symbols.json";
     }
     reload_custom();
     reload_quick_fill();
+    reload_symbols();
     std::string text;
     // 簡體輸出 (#32): what Simplified mode learned (read even when user.json is not there yet)
     if (!simplified_path_.empty() && read_file(simplified_path_, text)) {
@@ -1027,6 +1029,19 @@ bool UserModel::reload_quick_fill() {
                         items.emplace_back(from_utf8(row.items()[0].as_string()), from_utf8(row.items()[1].as_string()));
     }
     quick_fill = std::move(items);
+    return true;
+}
+
+bool UserModel::reload_symbols() {
+    // no file or one breaking a rule: the built-in pages (symbols.cpp SymbolTable::load); true when read again
+    if (symbols_path_.empty()) return false;
+    long long mtime = 0;
+    bool exists = file_mtime(symbols_path_, mtime);
+    int state = exists ? 1 : 0;
+    if (state == symbols_state_ && (!exists || mtime == symbols_mtime_)) return false;
+    symbols_state_ = state;
+    symbols_mtime_ = mtime;
+    symbols = exists ? symbols::SymbolTable::load(symbols_path_) : symbols::SymbolTable();
     return true;
 }
 

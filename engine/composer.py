@@ -3872,6 +3872,7 @@ class Composer:
 
     # ---- symbol keyboard ----------------------------------------------------
     def open_symbols(self):
+        self.user.reload_symbols()  # (符號鍵盤自訂, #69: the settings may have saved a new table)
         self.symbol_page = 0
         self.symbol_fresh = True
         self.symbol_cursor = symbols.KEYS.index("1")
@@ -3986,19 +3987,27 @@ class Composer:
             self.open_fill()
             return True
         stay = bool(self.config.symbols_stay_open)
-        pages = len(symbols.PAGES)
+        # (符號鍵盤自訂, #69: the table saved while the keyboard is up is read at the next key, the page kept in range)
+        table = self.user.symbols
+        if self.user.reload_symbols():
+            table = self.user.symbols
+            self.symbol_page = min(self.symbol_page, table.count() - 1)
+        pages = table.count()
         if ch == " ":
             self._type_symbol(FULL_SPACE if self.config.space == "full" or self.config.full_width else " ", stay, True)
         elif ch:
             i = symbols.key_index(ch)
-            if i is not None:
-                self._type_symbol(symbols.symbol(self.symbol_page, i), stay, True)
+            sym = table.symbol(self.symbol_page, i) if i is not None else ""
+            if sym:  # (an empty key types nothing: the keyboard and the text stay as they are)
+                self._type_symbol(sym, stay, True)
         elif special == "BACK" and stay:
             return self._key_special("BACK")  # (False with nothing typed: the app deletes a character)
         elif special in ("ESC", "BACK"):
             self.close_symbols()
         elif special == "ENTER":
-            self._type_symbol(symbols.symbol(self.symbol_page, self.symbol_cursor), stay, True)
+            sym = table.symbol(self.symbol_page, self.symbol_cursor)
+            if sym:
+                self._type_symbol(sym, stay, True)
         elif special in ("TAB", "PGDN"):
             self.symbol_page = (self.symbol_page + 1) % pages
         elif special in ("STAB", "PGUP"):

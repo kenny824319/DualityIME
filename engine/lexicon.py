@@ -6,6 +6,8 @@ import os
 import re
 import time
 
+from . import symbols
+
 MAX_PHRASE_LEN = 8
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 
@@ -750,6 +752,11 @@ class UserModel:
         self.quick_fill = []
         self._quick_fill_mtime = _NOT_READ
         self.reload_quick_fill()
+        # 符號鍵盤自訂 (#69): symbols.json next to user.json (a file of its own), read again when it changes
+        self.symbols_path = os.path.join(os.path.dirname(path), "symbols.json") if path else None
+        self.symbols = symbols.SymbolTable()
+        self._symbols_mtime = _NOT_READ
+        self.reload_symbols()
         # 簡體輸出 (#32): what Simplified mode learned, in a file of its own laid over phrases / phrase_used
         # (set_simplified); replacements: a Taiwan word -> {its Mainland word: count} picked in Simplified mode
         self.simplified = False
@@ -807,6 +814,21 @@ class UserModel:
         is mochi真, not mochi5p). Built each time: tests change words directly (the C++ caches it)."""
         typed = {w.lower() for w in self.words if self.word_count(w) >= WORD_MIN_USES}
         return self.custom_english | typed if typed else self.custom_english
+
+    def reload_symbols(self):
+        """Re-read symbols.json if it changed (engine/symbols.py: no file or one breaking a rule, the built-in table).
+        True when it was read again."""
+        if not self.symbols_path:
+            return False
+        try:
+            mtime = os.stat(self.symbols_path).st_mtime
+        except OSError:
+            mtime = None
+        if mtime == self._symbols_mtime:
+            return False
+        self._symbols_mtime = mtime
+        self.symbols = symbols.SymbolTable() if mtime is None else symbols.SymbolTable.load(self.symbols_path)
+        return True
 
     def reload_quick_fill(self):
         """Re-read quick_fill.json if it changed: {"format": 1, "items": [["text", "shortcut"], ...]}.

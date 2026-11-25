@@ -242,6 +242,11 @@ public class Backend {
             }
             case "memory": return MemoryList(Today());  // 記憶清單 (#65)
             case "forgetMemory": return ForgetMemory(a);
+            case "symbols": return ReadSymbols();  // 符號鍵盤自訂 (#69)
+            case "saveSymbols": return SaveSymbols(a);
+            case "resetSymbols":
+                if (File.Exists(SymbolsPath)) File.Delete(SymbolsPath);
+                return true;
             case "system": return RunSystem("state", 0);
             case "setSystem": return RunSystem(Str(a, "action"), Bool(a, "on") ? 1 : 0);
             case "openDataFolder":
@@ -944,6 +949,152 @@ public class Backend {
     const int BackupFormat = 1;
     static readonly string[] Counters = { "forget_words", "forget_emails", "forget_list", "import_memory" };  // this computer's own, never copied
 
+    // ---- 符號鍵盤自訂 (#69): symbols.json, written here and read by the engine - the same rules as engine/symbols.py -------
+    // {"format": 1, "pages": [{"builtin": 0|1|2|null, "name": "...", "hidden": false, "keys": [47 strings]}]} in the
+    // order shown. A table the engine would refuse is never written: it would show the built-in pages instead.
+    string SymbolsPath { get { return Path.Combine(dataDir, "symbols.json"); } }
+    const string SymbolKeyNames = "`1234567890-=qwertyuiop[]\\asdfghjkl;'zxcvbnm,./";  // engine/symbols.py KEYS
+    // the built-in pages, as engine/symbols.py PAGES (tests/test_engine.py checks they agree)
+    public static readonly string[] BuiltinPageNames = { "一般", "數學", "特殊" };
+    public static readonly string[] BuiltinPageKeys = {
+        "`1234567890-=《》〈〉“”【】（）〔〕＼※＊○●「」『』：；、！？…‥—｛｝，。／",
+        "≦≧＜＞∈∉∃°℃℉±－＝√∞∩∪∂∀∇Δ×÷＋≠≒μαβγδΩ∵∴∑πΦ∫∬∭§ρ∧∨λ′″",
+        "〰┌┬┐¿¡☑☒✓✗©®™├┼┤↔↕↖↗↙↘←→↑↓└┴┘♫◉♀♂★■●▲₩¥£€☺☹♥♦♠♣" };
+
+    // never starts a character of its own (engine/symbols.py _EXTEND)
+    static bool SymbolExtend(int cp) {
+        return (cp >= 0x0300 && cp <= 0x036F) || (cp >= 0x1AB0 && cp <= 0x1AFF) || (cp >= 0x1DC0 && cp <= 0x1DFF) ||
+               cp == 0x200D || (cp >= 0x20D0 && cp <= 0x20FF) || (cp >= 0x3099 && cp <= 0x309A) ||
+               (cp >= 0xFE00 && cp <= 0xFE0F) || (cp >= 0xFE20 && cp <= 0xFE2F) || (cp >= 0x1F3FB && cp <= 0x1F3FF) ||
+               (cp >= 0xE0020 && cp <= 0xE007F);
+    }
+
+    static IEnumerable<string> CodePoints(string s) {
+        for (int i = 0; i < s.Length; ) {
+            int n = char.IsHighSurrogate(s[i]) && i + 1 < s.Length && char.IsLowSurrogate(s[i + 1]) ? 2 : 1;
+            yield return s.Substring(i, n);
+            i += n;
+        }
+    }
+
+    static int CodePoint(string c) { return c.Length == 2 ? char.ConvertToUtf32(c[0], c[1]) : c[0]; }
+
+    // what a reader sees as one character each (engine/symbols.py _characters)
+    public static List<string> SymbolCharacters(string s) {
+        var outp = new List<string>();
+        bool joined = false, flag = false;
+        foreach (string c in CodePoints(s)) {
+            int cp = CodePoint(c);
+            if (SymbolExtend(cp)) {
+                if (outp.Count == 0) outp.Add(c); else outp[outp.Count - 1] += c;
+                joined = cp == 0x200D;
+                continue;
+            }
+            bool ri = cp >= 0x1F1E6 && cp <= 0x1F1FF;
+            if (outp.Count > 0 && (joined || (ri && flag))) {
+                outp[outp.Count - 1] += c;
+                flag = false;
+            } else {
+                outp.Add(c);
+                flag = ri;
+            }
+            joined = false;
+        }
+        return outp;
+    }
+
+    public static bool OneSymbol(string s) { return SymbolCharacters(s).Count <= 1; }
+
+    // a page name's width: printable ASCII 1 cell, any other character 2 (engine/symbols.py name_cells)
+    public static int NameCells(string s) {
+        int n = 0;
+        foreach (string c in SymbolCharacters(s)) n += c.Length == 1 && c[0] >= 0x20 && c[0] <= 0x7E ? 1 : 2;
+        return n;
+    }
+
+    static bool BlankName(string s) {  // engine/symbols.py _BLANK
+        foreach (string c in CodePoints(s)) {
+            int cp = CodePoint(c);
+            if (!((cp >= 0x09 && cp <= 0x0D) || (cp >= 0x1C && cp <= 0x20) || cp == 0x85 || cp == 0xA0 || cp == 0x1680 ||
+                  (cp >= 0x2000 && cp <= 0x200A) || cp == 0x2028 || cp == 0x2029 || cp == 0x202F || cp == 0x205F || cp == 0x3000))
+                return false;
+        }
+        return true;
+    }
+
+    // the first thing wrong with a table, in the user's words; null when the engine will take it
+    static string SymbolProblem(object[] pages) {
+        if (pages == null || pages.Length == 0) return "符號鍵盤至少要有一個類別";
+        var builtins = new HashSet<int>();
+        int shown = 0;
+        foreach (object o in pages) {
+            var p = o as Dictionary<string, object>;
+            if (p == null) return "符號鍵盤的資料格式不對";
+            var keys = p.ContainsKey("keys") ? p["keys"] as object[] : null;
+            if (keys == null || keys.Length != SymbolKeyNames.Length) return "每個類別要有 47 個鍵";
+            object hidden = p.ContainsKey("hidden") ? p["hidden"] : false;
+            if (!(hidden is bool)) return "符號鍵盤的資料格式不對";
+            for (int i = 0; i < keys.Length; i++) {
+                string k = keys[i] as string;
+                if (k == null) return "符號鍵盤的資料格式不對";
+                if (!OneSymbol(k))
+                    return "「" + char.ToUpperInvariant(SymbolKeyNames[i]) + "」鍵只能放一個字或一個 emoji（較長的內容請用「快速填入」）";
+            }
+            object b = p.ContainsKey("builtin") ? p["builtin"] : null;
+            if (b == null) {
+                string name = p.ContainsKey("name") ? p["name"] as string : null;
+                if (name == null || BlankName(name)) return "類別名稱不能空白";
+                if (NameCells(name) > 8) return "類別名稱「" + name + "」太長（最多 4 個中文字或 8 個英文字母）";
+            } else if (!(b is int) || (int)b < 0 || (int)b >= BuiltinPageNames.Length || !builtins.Add((int)b)) {
+                return "符號鍵盤的資料格式不對";
+            }
+            if (!(bool)hidden) shown++;
+        }
+        if (shown == 0) return "至少要顯示一個類別";
+        if (shown > 10) return "符號鍵盤上最多顯示 10 個類別";
+        return null;
+    }
+
+    static List<object> BuiltinSymbolPages() {
+        var pages = new List<object>();
+        for (int i = 0; i < BuiltinPageNames.Length; i++)
+            pages.Add(new Dictionary<string, object> {
+                { "builtin", i }, { "name", BuiltinPageNames[i] }, { "hidden", false },
+                { "keys", BuiltinPageKeys[i].Select(ch => ch.ToString()).ToArray() } });
+        return pages;
+    }
+
+    // the table as the editor needs it: every page, hidden ones too; the built-in three without a file, or with one
+    // the engine would refuse (it shows the built-in pages then too)
+    object ReadSymbols() {
+        var data = File.Exists(SymbolsPath) ? ReadJson(SymbolsPath) : null;
+        object[] pages = data != null && data.ContainsKey("pages") ? data["pages"] as object[] : null;
+        if (SymbolProblem(pages) != null) pages = BuiltinSymbolPages().ToArray();
+        return new Dictionary<string, object> { { "pages", pages }, { "builtinNames", BuiltinPageNames } };
+    }
+
+    // writes symbols.json (a built-in page under its own name, whatever it was sent with), or {"error": ...}
+    object SaveSymbols(Dictionary<string, object> a) {
+        var pages = a != null && a.ContainsKey("pages") ? a["pages"] as object[] : null;
+        string problem = SymbolProblem(pages);
+        if (problem != null) return new Dictionary<string, object> { { "error", problem } };
+        var stored = new List<object>();
+        foreach (object o in pages) {
+            var p = (Dictionary<string, object>)o;
+            object b = p.ContainsKey("builtin") ? p["builtin"] : null;
+            stored.Add(new Dictionary<string, object> {
+                { "builtin", b }, { "name", b == null ? p["name"] : BuiltinPageNames[(int)b] },
+                { "hidden", p.ContainsKey("hidden") && (bool)p["hidden"] }, { "keys", p["keys"] } });
+        }
+        Directory.CreateDirectory(dataDir);
+        string tmp = SymbolsPath + ".tmp";
+        File.WriteAllText(tmp, json.Serialize(new Dictionary<string, object> { { "format", 1 }, { "pages", stored } }),
+                          new UTF8Encoding(false));
+        File.Copy(tmp, SymbolsPath, true);  // (the engine reads it again when it changes)
+        File.Delete(tmp);
+        return true;
+    }
+
     // A backup leaves out the rows waiting in forget_list (deleted in 記憶清單, the engine not there yet), from where
     // each kind is kept - as engine/lexicon.py forget_items removes them (the list itself is a Counter: never copied)
     void DropWaiting(Dictionary<string, object> memory) {
@@ -1034,6 +1185,9 @@ public class Backend {
         // that are not the user's and would join another computer's list on restore (#33)
         var savedFill = SavedQuickFill();
         if (savedFill != null) data["quick_fill"] = savedFill;
+        // 符號鍵盤自訂 (#69), restored with 設定 (an older version reading the backup leaves it)
+        var symbols = File.Exists(SymbolsPath) ? ReadJson(SymbolsPath) : null;
+        if (symbols != null) data["symbols"] = symbols;
         File.WriteAllText(path, json.Serialize(data), new UTF8Encoding(false));
         return true;
     }
@@ -1126,6 +1280,12 @@ public class Backend {
                     MakeAppearanceDir();
                     File.WriteAllBytes(Path.Combine(AppearanceDir, kv.Key), bytes);
                 }
+        }
+        // 符號鍵盤自訂 (#69) comes with 設定, the whole table; a backup without it (older) leaves this one
+        var theirSymbols = config && backup.ContainsKey("symbols") ? backup["symbols"] as Dictionary<string, object> : null;
+        if (theirSymbols != null) {
+            var pages = theirSymbols.ContainsKey("pages") ? theirSymbols["pages"] as object[] : null;
+            if (SymbolProblem(pages) == null) SaveSymbols(new Dictionary<string, object> { { "pages", pages } });
         }
         int addedWords = 0, addedShortcuts = 0;
         if (words || shortcuts) {

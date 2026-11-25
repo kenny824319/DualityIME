@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "script.h"
+#include "symbols.h"
 #include "util.h"
 
 namespace sz {
@@ -248,6 +249,9 @@ public:
     // 快速填入 (#21): (text, shortcut) in the order given, quick_fill.json next to user.json
     std::vector<std::pair<ustr, ustr>> quick_fill;
     bool reload_quick_fill();  // re-read it if it changed (see engine/lexicon.py reload_quick_fill)
+    // 符號鍵盤自訂 (#69): symbols.json next to user.json, read again when it changes (engine/lexicon.py reload_symbols)
+    symbols::SymbolTable symbols;
+    bool reload_symbols();
     double bonus(const ustr& reading_key, const ustr& phrase) const;
     double pick_bonus(const ustr& reading_key, const ustr& phrase) const;  // the part of bonus the picks give
     void learn_phrase(const ustr& reading_key, const ustr& phrase);
@@ -329,11 +333,13 @@ private:
     void prune_simplified();
     bool simp_dirty_ = false;  // changed in Traditional mode: saved with user.json
     void import_memory_now(int counter);
-    std::wstring path_, custom_path_, quick_fill_path_, simplified_path_;
+    std::wstring path_, custom_path_, quick_fill_path_, simplified_path_, symbols_path_;
     OrderedMap<ustr, OrderedMap<ustr, double>> simp_phrases_, shared_phrases_;
     OrderedMap<ustr, OrderedMap<ustr, int>> simp_used_, shared_used_;
     int quick_fill_state_ = -1;  // -1 not looked at yet, 0 no file, 1 a file (the first look always reads)
     long long quick_fill_mtime_ = 0;
+    int symbols_state_ = -1;  // (as quick_fill_state_)
+    long long symbols_mtime_ = 0;
     std::function<int()> today_;
     bool keep_files_ = false;
     bool custom_seen_ = false;
