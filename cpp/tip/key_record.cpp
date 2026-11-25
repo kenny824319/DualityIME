@@ -3,6 +3,9 @@
 #include <windows.h>
 #include <sddl.h>
 
+#include <string>
+#include <vector>
+
 namespace sz::keys {
 
 // bit 0: down; bit 1: always set, so a record is never 0 (not even at tick 0); above: the tick
@@ -19,20 +22,44 @@ namespace {
 
 volatile LONG64 own[KEYS];  // this program's own record, when the shared one can't be opened
 
+std::wstring user_sid() {  // this program's user, "S-1-5-21-..."
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return L"";
+    DWORD size = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+    std::vector<BYTE> buf(size);
+    std::wstring out;
+    LPWSTR text = nullptr;
+    if (size && GetTokenInformation(token, TokenUser, buf.data(), size, &size) &&
+        ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(buf.data())->User.Sid, &text)) {
+        out = text;
+        LocalFree(text);
+    }
+    CloseHandle(token);
+    return out;
+}
+
 volatile LONG64* table() {
     static volatile LONG64* const t = []() -> volatile LONG64* {
-        // one per Windows session, readable and writable by every program of it: low-integrity ones too (the label)
-        // and whatever made it first - an elevated program would label it high, and the others could not write it
-        PSECURITY_DESCRIPTOR sd = nullptr;
-        SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, FALSE};
-        if (ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:(A;;GA;;;WD)(A;;GA;;;AC)S:(ML;;NW;;;LW)",
-                                                                  SDDL_REVISION_1, &sd, nullptr))
-            sa.lpSecurityDescriptor = sd;
-        HANDLE h = CreateFileMappingW(INVALID_HANDLE_VALUE, sd ? &sa : nullptr, PAGE_READWRITE, 0, KEYS * sizeof(LONG64),
-                                      SECTION);
-        if (sd) LocalFree(sd);
+        // one per Windows session, read and written by this user's programs only (findings #118: not Everyone, not
+        // app containers): low-integrity ones too (the label), and whatever made it first - an elevated program would
+        // label it high, and the others could not write it
+        const DWORD access = FILE_MAP_READ | FILE_MAP_WRITE;
+        HANDLE h = OpenFileMappingW(access, FALSE, SECTION);
+        if (!h) {
+            std::wstring sid = user_sid();
+            PSECURITY_DESCRIPTOR sd = nullptr;
+            SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, FALSE};
+            if (!sid.empty() &&
+                ConvertStringSecurityDescriptorToSecurityDescriptorW((L"D:(A;;GRGW;;;" + sid + L")S:(ML;;NW;;;LW)").c_str(),
+                                                                      SDDL_REVISION_1, &sd, nullptr))
+                sa.lpSecurityDescriptor = sd;
+            if (sd)  // (without its own security it is not made at all: this program keeps its own record)
+                h = CreateFileMappingW(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE, 0, KEYS * sizeof(LONG64), SECTION);
+            if (sd) LocalFree(sd);
+        }
         if (!h) return own;
-        void* view = MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, KEYS * sizeof(LONG64));
+        void* view = MapViewOfFile(h, access, 0, 0, KEYS * sizeof(LONG64));
         if (!view) {
             CloseHandle(h);
             return own;
@@ -45,7 +72,7 @@ volatile LONG64* table() {
 }  // namespace
 
 void note(unsigned vk, bool down) {
-    if (vk >= KEYS) return;
+    if (vk >= KEYS || !recorded(vk)) return;
     InterlockedExchange64(&table()[vk], static_cast<LONG64>(entry(down, GetTickCount64())));
 }
 

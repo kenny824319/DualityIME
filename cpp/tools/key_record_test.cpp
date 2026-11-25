@@ -3,6 +3,8 @@
 //   sz_keytest            run the tests, print "ok ..." lines, exit 1 on a failure
 //   sz_keytest --child    (used by the test) note F24 down, wait for "up" on stdin, note it up
 #include <windows.h>
+#include <aclapi.h>
+#include <sddl.h>
 
 #include <chrono>
 #include <cstdio>
@@ -40,6 +42,38 @@ int main(int argc, char** argv) {
     check("down just now: Held", judge(entry(true, 1000), 1001) == Seen::Held);
     check("a tick before the record (not expected): Held", judge(entry(true, 5000), 4000) == Seen::Held);
     check("tick 0 down is still a record", judge(entry(true, 0), 1) == Seen::Held);
+
+    // only the keys Ctrl + a mark asks about go in (findings #118: letters, digits, the number pad never - a program
+    // reading the record must not be able to tell what is typed)
+    note('A', true);
+    check("a letter is never recorded", seen('A') == Seen::None);
+    note('7', true);
+    check("a digit is never recorded", seen('7') == Seen::None);
+    note(VK_NUMPAD7, true);
+    check("a number pad key is never recorded", seen(VK_NUMPAD7) == Seen::None);
+    note(VK_SPACE, true);
+    note(VK_OEM_COMMA, true);
+    check("space and a mark are never recorded", seen(VK_SPACE) == Seen::None && seen(VK_OEM_COMMA) == Seen::None);
+    note(VK_INSERT, true);
+    check("a shortcut key is recorded", seen(VK_INSERT) == Seen::Held);
+    note(VK_INSERT, false);
+    // ...and readable by this user's programs only (findings #118: Everyone and every app container could)
+    {
+        HANDLE h = OpenFileMappingW(READ_CONTROL, FALSE, SECTION);
+        PSECURITY_DESCRIPTOR sd = nullptr;
+        PACL dacl = nullptr;
+        LPWSTR text = nullptr;
+        bool got = h && GetSecurityInfo(h, SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION, nullptr, nullptr, &dacl, nullptr,
+                                        &sd) == ERROR_SUCCESS &&
+                   ConvertSecurityDescriptorToStringSecurityDescriptorW(sd, SDDL_REVISION_1, DACL_SECURITY_INFORMATION,
+                                                                        &text, nullptr);
+        std::wstring dacl_text = got ? text : L"";
+        check("the record's access: not Everyone, not app containers",
+              got && dacl_text.find(L";;;WD)") == std::wstring::npos && dacl_text.find(L";;;AC)") == std::wstring::npos);
+        if (text) LocalFree(text);
+        if (sd) LocalFree(sd);
+        if (h) CloseHandle(h);
+    }
 
     // this program's notes
     note(VK_F23, true);

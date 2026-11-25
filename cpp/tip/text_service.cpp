@@ -838,12 +838,7 @@ bool TextService::ctrl_punct_key(ITfContext* ctx, WPARAM vk, LPARAM lp) {
     // Ctrl+[ then Ctrl+] typed quickly gave 「 alone, and the ] went to the program (#46, Issue #6). Only real
     // keys count: the keyboard state can show a key code no key sends as held for good (0xF1, one of the
     // Japanese IME's, on a machine with it installed), which turned the setting off everywhere
-    auto shortcut_key = [](int k) {
-        return k == VK_BACK || k == VK_TAB || k == VK_RETURN || k == VK_CAPITAL || k == VK_ESCAPE ||
-               (k > VK_SPACE && k <= VK_HELP) ||         // Page Up/Down, End, Home, arrows, Insert, Delete...
-               (k >= VK_LWIN && k <= VK_APPS) ||         // Win, the menu key
-               (k >= VK_NUMPAD0 && k <= VK_F24);         // the number pad, F1-F24
-    };
+    // (keys::shortcut_key, key_record.h: the one list, the record keeps the same keys but the number pad's)
     // ...and a key held only for the keyboard state is not held either (#73, 2026-11-25: Insert's key-up went
     // missing and Ctrl + a mark was every program's shortcut until Insert was tapped there): the key record every
     // program's input method writes (key_record.h) shows it let go (another program saw the key-up) or pressed more
@@ -853,7 +848,7 @@ bool TextService::ctrl_punct_key(ITfContext* ctx, WPARAM vk, LPARAM lp) {
     BYTE ks[256];
     if (!GetKeyboardState(ks)) return false;
     for (int k = 0; k < 256; ++k) {
-        if (!(ks[k] & 0x80) || k == static_cast<int>(vk) || !shortcut_key(k)) continue;
+        if (!(ks[k] & 0x80) || k == static_cast<int>(vk) || !keys::shortcut_key(static_cast<unsigned>(k))) continue;
         keys::Seen s = keys::seen(static_cast<unsigned>(k));
         if (s == keys::Seen::Released || s == keys::Seen::Stuck) continue;
         if (s == keys::Seen::None && !(k >= VK_LWIN && k <= VK_APPS)) held_unseen_ = static_cast<unsigned>(k);
