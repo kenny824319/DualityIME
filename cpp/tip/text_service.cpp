@@ -1966,8 +1966,9 @@ void TextService::show_menu(POINT pt) {
     }
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, 1, L"兩儀輸入法設定 (&S)");
-    // (no 切換到英文 / 中文: a left click on the button does it - the user 2026-11-25; on the Japanese side the kana
-    // choices instead, the one in use ticked - 日文 #36)
+    // (no 切換到英文 / 中文: a left click on the button does it - the user 2026-11-25; with 日文輸入 on, Chinese <->
+    // Japanese as Ctrl+F2 does, and on the Japanese side the kana choices, the one in use ticked - 日文 #36, the user)
+    if (cfg_.ja_enabled) AppendMenuW(menu, MF_STRING, 2, japanese_ ? L"切換到中文 (&C)" : L"切換到日文 (&J)");
     static const struct {
         UINT id;
         const wchar_t* text;
@@ -1982,6 +1983,11 @@ void TextService::show_menu(POINT pt) {
     DestroyMenu(menu);
     if (cmd == 1) {
         open_settings();
+        return;
+    }
+    if (cmd == 2 && cfg_.ja_enabled) {
+        ComPtr<ITfContext> ctx = comp_context_ ? comp_context_ : focused_context(thread_mgr_.Get());
+        switch_side(ctx.Get());
         return;
     }
     for (auto& k : kana) {
