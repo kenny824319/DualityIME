@@ -815,6 +815,184 @@ function candLayoutRows() {
   ];
 }
 
+// ---- 符號鍵盤內容 (#69): symbols per key, drag to swap, categories; symbols.json through settings.exe ------------------------------
+const SK_ROWS = ["`1234567890-=", "qwertyuiop[]\\", "asdfghjkl;'", "zxcvbnm,./"];
+const SK_OFFSETS = [0, 1.5, 1.75, 2.25];  // (engine/symbols.py ROW_OFFSETS, in key widths)
+const SK_DEFAULT = [
+  ["一般", "` 1 2 3 4 5 6 7 8 9 0 - = 《 》 〈 〉 “ ” 【 】 （ ） 〔 〕 ＼ ※ ＊ ○ ● 「 」 『 』 ： ； 、 ！ ？ … ‥ — ｛ ｝ ， 。 ／"],
+  ["數學", "≦ ≧ ＜ ＞ ∈ ∉ ∃ ° ℃ ℉ ± － ＝ √ ∞ ∩ ∪ ∂ ∀ ∇ Δ × ÷ ＋ ≠ ≒ μ α β γ δ Ω ∵ ∴ ∑ π Φ ∫ ∬ ∭ § ρ ∧ ∨ λ ′ ″"],
+  ["特殊", "〰 ┌ ┬ ┐ ¿ ¡ ☑ ☒ ✓ ✗ © ® ™ ├ ┼ ┤ ↔ ↕ ↖ ↗ ↙ ↘ ← → ↑ ↓ └ ┴ ┘ ♫ ◉ ♀ ♂ ★ ■ ● ▲ ₩ ¥ £ € ☺ ☹ ♥ ♦ ♠ ♣"]
+].map(([name, s], i) => ({ name, builtin: i, hidden: false, keys: s.split(" ") }));
+const SK_MAX = 10;     // categories shown on the keyboard at once (hidden built-ins do not count)
+const SK_NAME_MAX = 8; // a name's width in half-width cells - Chinese and emoji 2, letters and digits 1: the tabs fit
+const nameWidth = (parts) => parts.reduce((w, g) => w + (/^[\x20-\x7E]$/.test(g) ? 1 : 2), 0);
+const graphemes = (s) => [...new Intl.Segmenter("zh-Hant", { granularity: "grapheme" }).segment(s)].length;
+
+function symbolsEditor() {
+  let cats = SK_DEFAULT.map((c) => ({ ...c, keys: [...c.keys] }));
+  let cur = 0, sel = -1, dragKey = -1, dragCat = -1, selOrig = "";
+  const tabs = h("div", { class: "sk-tabs", role: "tablist", "aria-label": "符號鍵盤類別" });
+  const bar = h("div", { class: "sk-bar" });
+  const board = h("div", { class: "sk-board" });
+  const edit = h("div", { class: "sk-edit" });
+  const shown = () => cats.filter((c) => !c.hidden).length;
+  // (settings.exe writes symbols.json, the IME reads it at its next key; a table it refuses: its message, the file
+  // as it was)
+  const save = () => api("saveSymbols", { pages: cats }).then((r) => { if (r && r.error) toast(r.error); });
+  const load = () => api("symbols").then((d) => {
+    cats = d.pages.map((c) => ({ ...c, keys: [...c.keys] }));
+    cur = Math.min(cur, cats.length - 1);
+    sel = -1;
+    draw();
+  });
+  function draw() {
+    const firstShown = cats.findIndex((c) => !c.hidden);
+    tabs.replaceChildren(...cats.map((c, i) => {
+      const chip = h("button", { class: "sk-chip" + (i === cur ? " on" : "") + (c.hidden ? " off" : ""), role: "tab", draggable: "true",
+        title: c.hidden ? "已隱藏：符號鍵盤上不顯示" : "拖曳可調整順序", onclick: () => { cur = i; sel = -1; draw(); } },
+        c.name || "（未命名）", c.hidden ? "（已隱藏）" : "", i === firstShown ? h("span", { class: "sk-first" }, "打開時") : "");
+      chip.addEventListener("dragstart", (e) => { dragCat = i; e.dataTransfer.effectAllowed = "move"; });
+      chip.addEventListener("dragover", (e) => { if (dragCat >= 0) { e.preventDefault(); chip.classList.add("drop"); } });
+      chip.addEventListener("dragleave", () => chip.classList.remove("drop"));
+      chip.addEventListener("drop", (e) => {
+        e.preventDefault();
+        if (dragCat < 0 || dragCat === i) return;
+        const moved = cats.splice(dragCat, 1)[0];
+        cats.splice(i, 0, moved);
+        cur = i; dragCat = -1; save(); draw();
+      });
+      chip.addEventListener("dragend", () => { dragCat = -1; });
+      return chip;
+    }), h("button", { class: "sk-chip sk-add", disabled: shown() >= SK_MAX, title: shown() >= SK_MAX ? `最多顯示 ${SK_MAX} 個類別` : "",
+      onclick: () => {
+        cats.push({ name: "自訂", builtin: null, hidden: false, keys: Array(47).fill("") });
+        cur = cats.length - 1; sel = -1; save(); draw();
+      } }, "＋ 新增類別"));
+    const c = cats[cur];
+    // (a built-in's name stays: 一般／數學／特殊 always recognisable, 恢復預設 never surprising - the user 2026-11-24)
+    let naming;
+    if (c.builtin != null) {
+      naming = [h("span", { class: "row-title" }, c.name)];
+    } else {
+      const name = h("input", { value: c.name, "aria-label": "類別名稱" });
+      const note = h("span", { class: "row-desc" }, "最多 4 個中文字或 8 個英文字母");
+      name.addEventListener("input", (e) => {
+        // (counted as seen: an emoji is one; only this chip's label changes, so typing - and the IME's
+        // composition - goes on uninterrupted; nothing cut while a syllable is still being composed)
+        if (e.isComposing) return;
+        let parts = [...new Intl.Segmenter("zh-Hant", { granularity: "grapheme" }).segment(name.value)].map((s) => s.segment);
+        if (nameWidth(parts) > SK_NAME_MAX) {
+          while (nameWidth(parts) > SK_NAME_MAX) parts.pop();  // (cut what does not fit the tab)
+          name.value = parts.join("");
+          note.style.color = "var(--danger)";
+        } else note.style.color = "";
+        c.name = name.value.trim();
+        if (c.name) save();  // (emptied while retyping: not saved - leaving the box puts the old name back)
+        tabs.children[cur].firstChild.textContent = c.name || "（未命名）";
+      });
+      name.addEventListener("compositionend", () => name.dispatchEvent(new Event("input")));
+      // (never empty: the keyboard's tab would show nothing - left empty, the name it had comes back; the user
+      // 2026-11-24 asked whether an empty name is allowed)
+      const before = c.name || "自訂";
+      name.addEventListener("blur", () => {
+        if (name.value.trim()) return;
+        name.value = c.name = before;
+        save();
+        tabs.children[cur].firstChild.textContent = before;
+        note.textContent = "名稱不能空白，已改回「" + before + "」";
+        note.style.color = "var(--danger)";
+      });
+      naming = [h("span", { class: "row-desc" }, "名稱"), name, note];
+    }
+    bar.replaceChildren(...naming,
+      h("span", { class: "spacer", style: "flex:1" }),
+      c.builtin != null
+        ? h("button", { class: "btn", disabled: !c.hidden && shown() <= 1, onclick: () => {
+            if (c.hidden && shown() >= SK_MAX) { toast(`最多顯示 ${SK_MAX} 個類別`); return; }
+            c.hidden = !c.hidden; save(); draw();
+          } }, c.hidden ? "顯示這個類別" : "隱藏這個類別")
+        : h("button", { class: "btn danger", onclick: async () => {
+            const ok = await dialog("刪除類別", h("p", { class: "row-desc", style: "font-size:14px" }, `確定要刪除「${c.name || "未命名"}」嗎？此操作無法復原。`),
+              [{ text: "取消", value: false }, { text: "刪除", kind: "danger", value: true }]);
+            if (!ok) return;
+            cats.splice(cur, 1); cur = Math.max(0, cur - 1); sel = -1; save(); draw();
+          } }, "刪除這個類別"));
+    let k = 0;
+    board.replaceChildren(...SK_ROWS.map((row, r) => h("div", { class: "sk-row", style: `padding-left:${SK_OFFSETS[r] * 52}px` },
+      ...[...row].map((keyName) => {
+        const idx = k++;
+        const sym = c.keys[idx];
+        const key = h("div", { class: "sk-key" + (idx === sel ? " sel" : "") + (sym ? "" : " empty"), draggable: "true",
+          role: "button", tabindex: "0", "aria-label": `${keyName.toUpperCase()} 鍵：${sym || "空白"}` },
+          h("i", {}, keyName.toUpperCase()), sym || "空");
+        key.addEventListener("click", () => {
+          if (sel !== idx) selOrig = c.keys[idx];  // (what it had when picked: 還原 until another key is picked)
+          sel = idx; draw();
+          const box = edit.querySelector("input");  // (the symbol there selected: what is typed replaces it)
+          if (box) { box.focus(); box.select(); }
+        });
+        key.addEventListener("dragstart", (e) => { dragKey = idx; e.dataTransfer.effectAllowed = "move"; });
+        key.addEventListener("dragover", (e) => { if (dragKey >= 0) { e.preventDefault(); key.classList.add("drop"); } });
+        key.addEventListener("dragleave", () => key.classList.remove("drop"));
+        key.addEventListener("drop", (e) => {
+          e.preventDefault();
+          if (dragKey < 0 || dragKey === idx) return;
+          [c.keys[dragKey], c.keys[idx]] = [c.keys[idx], c.keys[dragKey]];
+          sel = idx; selOrig = c.keys[idx]; dragKey = -1; save(); draw();
+        });
+        key.addEventListener("dragend", () => { dragKey = -1; });
+        return key;
+      }))));
+    if (sel < 0) {
+      edit.replaceChildren(h("span", { class: "row-desc" }, "點一下鍵可以改符號；把一個鍵拖到另一個鍵上可以對調。"));
+    } else {
+      const keyName = SK_ROWS.join("")[sel].toUpperCase();
+      const input = h("input", { value: c.keys[sel], "aria-label": `${keyName} 鍵的符號` });
+      input.addEventListener("focus", () => input.select());
+      const msg = h("span", { class: "row-desc" }, "一個字或一個 emoji；清空表示這個鍵不打字");
+      const undo = h("button", { class: "btn", disabled: c.keys[sel] === selOrig,
+        title: `還原成「${selOrig || "空"}」` }, "還原");
+      const put = (v) => {
+        c.keys[sel] = v; save();
+        const el = board.querySelectorAll(".sk-key")[sel];
+        el.lastChild.textContent = v || "空"; el.classList.toggle("empty", !v);
+        undo.disabled = v === selOrig;
+      };
+      input.addEventListener("input", () => {
+        const v = input.value.trim();
+        if (graphemes(v) > 1) { msg.textContent = "只能放一個字或一個 emoji（較長的內容請用「快速填入」）"; msg.style.color = "var(--danger)"; return; }
+        msg.textContent = "一個字或一個 emoji；清空表示這個鍵不打字"; msg.style.color = "";
+        put(v);
+      });
+      // (改錯了: back to what the key had when it was picked, the button only - the user 2026-11-24, Esc not)
+      undo.addEventListener("click", () => {
+        input.value = selOrig; put(selOrig);
+        msg.textContent = "一個字或一個 emoji；清空表示這個鍵不打字"; msg.style.color = "";
+        input.focus(); input.select();
+      });
+      edit.replaceChildren(h("span", { class: "row-title" }, `${keyName} 鍵`), input, undo, msg);
+    }
+  }
+  draw();
+  load();
+  return h("div", { class: "row column" },
+    h("div", { class: "row-text" },
+      h("div", { class: "row-title" }, "符號鍵盤內容"),
+      h("div", { class: "row-desc" }, "第一個顯示的類別是按「`」打開時看到的那頁，Tab 照順序切換。拖曳類別可以調整順序。")),
+    h("div", { style: "width:100%" }, tabs, bar, board, edit,
+      h("div", { class: "sk-foot" }, h("span", { class: "row-desc" }, `符號鍵盤上最多顯示 ${SK_MAX} 個類別；內建的類別只能隱藏，不會刪掉`),
+        h("button", { class: "btn", onclick: async () => {
+          const ok = await dialog("恢復預設", h("p", { class: "row-desc", style: "font-size:14px" },
+            "確定要把符號鍵盤恢復成原本的「一般、數學、特殊」三頁嗎？自訂的類別與改過的符號都會清除。"),
+            [{ text: "取消", value: false }, { text: "恢復預設", kind: "danger", value: true }]);
+          if (!ok) return;
+          await api("resetSymbols");  // (symbols.json removed: the built-in pages again)
+          cur = 0;
+          await load();
+          toast("已恢復預設");
+        } }, "恢復預設"))));
+}
+
 function pageLook() {
   const sizes = [[14, "小"], [18, "中"], [22, "大"], [26, "特大"]];
   const near = sizes.reduce((a, b) => (Math.abs(b[0] - S.config.cand_font_size) < Math.abs(a[0] - S.config.cand_font_size) ? b : a))[0];
@@ -826,6 +1004,7 @@ function pageLook() {
       row("符號鍵盤位置", "按「`」叫出的符號鍵盤可自由拖曳並記憶位置",
         h("button", { class: "btn", onclick: async () => { await api("resetKeyboard"); toast("已重設，符號鍵盤下次將跟隨游標顯示"); } }, "重設為跟隨游標")),
       row("符號鍵盤選完不關", "開著時可以連續選符號，按 Esc 或 × 才關", cfgToggle("symbols_stay_open", "符號鍵盤選完不關"))),
+    card(symbolsEditor()),
     lookCard(),
     h("p", { class: "foot" }, "預設外觀會自動跟隨 Windows 系統的主題模式；選「自訂」後改用自己的顏色與照片。")
   ];
@@ -920,7 +1099,7 @@ const FAQ = [
   ["我打的字會被上傳嗎？", "不會。選字記憶、記住的英文字與 Email、個人詞庫和設定都只存在這台電腦；輸入法只有在您按「檢查更新」或「立即更新」時才會連網。", ["about", "本機學習紀錄與設定"]],
   ["怎麼打出簡體字？", "到「打字」頁的「繁體／簡體輸出」切換成簡體，注音照打、送出簡體字；也可以開啟「繁簡切換快捷鍵」，打字時按 Ctrl + F1（可自訂）隨時切換。", ["typing", "繁體／簡體輸出"]],
   ["怎麼快速輸入 Email、電話、地址？", "使用「個人詞庫」頁的「快速填入」：存好常用的資料並各取一個捷徑，打字時按 ` 再按空白叫出清單，↑ ↓ 選擇、Enter 送出。整段常用回覆也可以用「映射詞彙」取個捷徑，打出捷徑後按 ↓。", ["dict", "快速填入"]],
-  ["怎麼打出 ★ ※ ← 這類符號？", "按 ` 叫出符號鍵盤（一般／數學／特殊三頁，Tab 換頁），按鍵盤上對應的鍵或用滑鼠點選即可；要打 ` 本身就連按兩下。", ["look", "符號鍵盤位置"]],
+  ["怎麼打出 ★ ※ ← 這類符號？", "按 ` 叫出符號鍵盤（一般／數學／特殊三頁，Tab 換頁），按鍵盤上對應的鍵或用滑鼠點選即可。預設連按兩下 ` 打出 `；改過第一頁 ` 鍵的話，打出改後的符號。每個鍵的符號、類別與順序可以在「外觀」頁的「符號鍵盤內容」自訂，emoji 也行。", ["look", "符號鍵盤內容"]],
   ["程式裡的 Ctrl + , 這類快捷鍵沒反應？", "「Ctrl + 標點打全形」開啟時，中英混打模式下的 Ctrl + , . ; 等組合會打出全形標點，程式用這些組合的快捷鍵就會失效。需要的話請到「打字」頁關閉。", ["typing", "Ctrl + 標點打全形"]],
   ["輸入法的視窗太大或太小，想換顏色或照片？", "「外觀」頁可以調整候選字視窗大小，排成一欄、一排或格子；「自訂外觀」可以換顏色或放照片，每個視窗都能分別調整。", ["look", "候選字視窗大小"]],
   ["怎麼更新到新版？", "到「關於」頁按「檢查更新」，有新版時按「立即更新」，就會下載並更新。"],
@@ -1062,7 +1241,7 @@ async function restore() {
     ["config", "設定", info.config]];
   const boxes = {};
   const body = h("div", {},
-    h("p", { class: "row-desc", style: "font-size:14px" }, `匯出時間：${info.created}。記憶與詞庫會和目前的資料合併；勾選「設定」會換成檔案裡的設定。`),
+    h("p", { class: "row-desc", style: "font-size:14px" }, `匯出時間：${info.created}。記憶與詞庫會和目前的資料合併；勾選「設定」會換成檔案裡的設定（含自訂外觀的照片與符號鍵盤內容）。`),
     ...parts.filter(([, , has]) => has).map(([key, label]) => {
       boxes[key] = h("input", { type: "checkbox" });
       boxes[key].checked = true;
