@@ -1966,14 +1966,32 @@ void TextService::show_menu(POINT pt) {
     }
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, 1, L"兩儀輸入法設定 (&S)");
-    // (on the Japanese side the item goes back to Chinese, as toggle_mode does there - findings #160)
-    AppendMenuW(menu, MF_STRING, 2, english_ || japanese_ ? L"切換到中文 (&C)" : L"切換到英文 (&E)");
+    // (no 切換到英文 / 中文: a left click on the button does it - the user 2026-11-25; on the Japanese side the kana
+    // choices instead, the one in use ticked - 日文 #36)
+    static const struct {
+        UINT id;
+        const wchar_t* text;
+        const char* lock;
+    } kana[] = {{10, L"自動判斷 (&A)", "auto"}, {11, L"只打平假名 (&H)", "hira"}, {12, L"只打片假名 (&K)", "kata"}};
+    if (japanese_) {
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        for (auto& k : kana)
+            AppendMenuW(menu, MF_STRING | (state_.kana_lock == k.lock ? MF_CHECKED : 0), k.id, k.text);
+    }
     int cmd = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, pt.x, pt.y, owner, nullptr);
     DestroyMenu(menu);
     if (cmd == 1) {
         open_settings();
-    } else if (cmd == 2) {
-        toggle_mode();
+        return;
+    }
+    for (auto& k : kana) {
+        if (cmd != static_cast<int>(k.id) || !japanese_) continue;
+        ComPtr<ITfContext> ctx = comp_context_ ? comp_context_ : focused_context(thread_mgr_.Get());
+        Json req = Json::object();
+        req["op"] = Json("ja_kana");
+        req["lock"] = Json(std::string(k.lock));
+        if (ctx) call(ctx.Get(), req);
+        if (button_) button_->update();  // (ア while katakana is locked)
     }
 }
 
