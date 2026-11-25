@@ -281,7 +281,8 @@ public class Backend {
             case "imageUrl": return ImageUrl(Str(a, "file"));
             case "removeImage": RemoveImage(Str(a, "slot")); return true;
             case "restoreBackup":
-                return RestoreBackup(Bool(a, "memory"), Bool(a, "words"), Bool(a, "shortcuts"), Bool(a, "config"), Bool(a, "quickFill"));
+                return RestoreBackup(Bool(a, "memory"), Bool(a, "words"), Bool(a, "shortcuts"), Bool(a, "config"), Bool(a, "quickFill"),
+                                     Bool(a, "appearance"), Bool(a, "symbols"));
             case "setBeta":
                 using (var k = Registry.CurrentUser.CreateSubKey(OurKey)) k.SetValue("UpdateBranch", Bool(a, "on") ? "develop" : "main");
                 return true;
@@ -1280,11 +1281,17 @@ public class Backend {
             if (picks != null) learned += picks.Count;
         }
         var dict = BackupDictionary();
+        var theirConfig = data.ContainsKey("config") ? data["config"] as Dictionary<string, object> : null;
+        var images = data.ContainsKey("appearance_images") ? data["appearance_images"] as Dictionary<string, object> : null;
         return new Dictionary<string, object> {
             { "created", Str(data, "created") }, { "memory", learned },
             { "words", ((List<object>)dict["words"]).Count }, { "shortcuts", ((List<object>)dict["shortcuts"]).Count },
             { "quickFill", BackupQuickFill().Count },
-            { "config", data.ContainsKey("config") && data["config"] is Dictionary<string, object> }
+            // 自訂外觀 (with its photos) and 符號鍵盤 have checkboxes of their own (#77): offered when the file has them
+            { "appearance", theirConfig != null && theirConfig.ContainsKey("appearance") },
+            { "photos", images != null ? images.Keys.Count(ImageName) : 0 },
+            { "symbols", data.ContainsKey("symbols") && data["symbols"] is Dictionary<string, object> },
+            { "config", theirConfig != null }
         };
     }
 
@@ -1315,8 +1322,10 @@ public class Backend {
         return d;
     }
 
-    // Merged into what is here: nothing here is removed, and a row already here is kept as it is
-    public object RestoreBackup(bool memory, bool words, bool shortcuts, bool config, bool quickFill = false) {
+    // Merged into what is here: nothing here is removed, and a row already here is kept as it is. 設定, 自訂外觀 (its
+    // photos with it) and 符號鍵盤 are each replaced only when checked (#77: the look and the keyboard apart from 設定)
+    public object RestoreBackup(bool memory, bool words, bool shortcuts, bool config, bool quickFill = false,
+                                bool appearance = false, bool symbols = false) {
         if (backup == null) throw new Exception("no backup opened");
         var c = ReadConfig();
         var theirConfig = backup.ContainsKey("config") ? backup["config"] as Dictionary<string, object> : null;
@@ -1325,8 +1334,11 @@ public class Backend {
             if (!theirConfig.ContainsKey("cand_layout"))
                 foreach (var k in new[] { "cand_layout", "cand_keys", "cand_columns" }) c[k] = Defaults[k];
             foreach (var kv in theirConfig)
-                if (Defaults.ContainsKey(kv.Key) && Array.IndexOf(Counters, kv.Key) < 0) c[kv.Key] = kv.Value;
-            // 自訂外觀's photos come with the settings (a backup of before #22 has none: those here stay)
+                if (Defaults.ContainsKey(kv.Key) && Array.IndexOf(Counters, kv.Key) < 0 && kv.Key != "appearance") c[kv.Key] = kv.Value;
+        }
+        if (appearance && theirConfig != null && theirConfig.ContainsKey("appearance")) {
+            c["appearance"] = theirConfig["appearance"];
+            // its photos (a backup of before #22 has none: those here stay)
             var images = backup.ContainsKey("appearance_images") ? backup["appearance_images"] as Dictionary<string, object> : null;
             if (images != null)
                 foreach (var kv in images) {
@@ -1337,10 +1349,10 @@ public class Backend {
                     File.WriteAllBytes(Path.Combine(AppearanceDir, kv.Key), bytes);
                 }
         }
-        // 符號鍵盤自訂 (#69) comes with 設定, the whole table; a backup without it (older) leaves this one. The built-in
-        // pages, or a table the engine would refuse (that computer showed the built-in pages), replace this one's own
-        // (findings #124)
-        var theirSymbols = config && backup.ContainsKey("symbols") ? backup["symbols"] as Dictionary<string, object> : null;
+        // 符號鍵盤自訂 (#69), the whole table, when 符號鍵盤 is checked (#77); a backup without it (older) leaves this one.
+        // The built-in pages, or a table the engine would refuse (that computer showed the built-in pages), replace this
+        // one's own (findings #124)
+        var theirSymbols = symbols && backup.ContainsKey("symbols") ? backup["symbols"] as Dictionary<string, object> : null;
         if (theirSymbols != null) {
             var pages = theirSymbols.ContainsKey("pages") ? theirSymbols["pages"] as object[] : null;
             if (SymbolProblem(pages) == null) SaveSymbols(new Dictionary<string, object> { { "pages", pages } });

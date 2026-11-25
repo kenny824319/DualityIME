@@ -287,19 +287,24 @@ static class SettingsTest {
                   ((object[])((Dictionary<string, object>)bk69["symbols"])["pages"]).Length == 4, File.ReadAllText(backup69, Encoding.UTF8));
             call("resetSymbols", null);
             Check("resetSymbols deletes symbols.json", !File.Exists(symbolsPath), "");
-            b.ReadBackup(backup69);
+            var read69 = (Dictionary<string, object>)b.ReadBackup(backup69);
+            Check("the 匯入 window offers the symbol keyboard of its own (#77)", (bool)read69["symbols"], json.Serialize(read69));
             b.RestoreBackup(false, false, false, false);
-            Check("a restore without 設定 leaves the symbol keyboard", !File.Exists(symbolsPath), "");
+            Check("a restore without 符號鍵盤 leaves the symbol keyboard", !File.Exists(symbolsPath), "");
             b.ReadBackup(backup69);
             b.RestoreBackup(false, false, false, true);
-            Check("a restore with 設定 brings the symbol keyboard back", File.Exists(symbolsPath) &&
+            Check("a restore of 設定 alone leaves the symbol keyboard (#77)", !File.Exists(symbolsPath), "");
+            b.ReadBackup(backup69);
+            b.RestoreBackup(false, false, false, false, false, false, true);
+            Check("a restore with 符號鍵盤 brings the symbol keyboard back", File.Exists(symbolsPath) &&
                   ((object[])((Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(symbolsPath, Encoding.UTF8)))["pages"]).Length == 4, "");
             bk69.Remove("symbols");
             File.WriteAllText(backup69, json.Serialize(bk69), new UTF8Encoding(false));
             call("resetSymbols", null);
             call("saveSymbols", new Dictionary<string, object> { { "pages", new object[] { page(null, "Mine", blankKeys("♪")) } } });
-            b.ReadBackup(backup69);
-            b.RestoreBackup(false, false, false, true);
+            var read69b = (Dictionary<string, object>)b.ReadBackup(backup69);
+            Check("a backup without the symbol keyboard offers none", !(bool)read69b["symbols"], json.Serialize(read69b));
+            b.RestoreBackup(false, false, false, false, false, false, true);
             var kept = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(symbolsPath, Encoding.UTF8));
             Check("a backup without the symbol keyboard keeps this one", (string)((Dictionary<string, object>)((object[])kept["pages"])[0])["name"] == "Mine",
                   json.Serialize(kept));
@@ -312,13 +317,13 @@ static class SettingsTest {
             Check("a backup of the built-in pages says so", bkb.ContainsKey("symbols"), File.ReadAllText(backupBuiltin, Encoding.UTF8));
             call("saveSymbols", new Dictionary<string, object> { { "pages", new object[] { page(null, "Mine", blankKeys("♪")) } } });
             b.ReadBackup(backupBuiltin);
-            b.RestoreBackup(false, false, false, true);
-            Check("restoring the built-in pages with 設定 replaces this one's own", !File.Exists(symbolsPath), "");
+            b.RestoreBackup(false, false, false, false, false, false, true);
+            Check("restoring the built-in pages with 符號鍵盤 replaces this one's own", !File.Exists(symbolsPath), "");
             bkb["symbols"] = new Dictionary<string, object> { { "format", 1 }, { "pages", new object[0] } };
             File.WriteAllText(backupBuiltin, json.Serialize(bkb), new UTF8Encoding(false));
             call("saveSymbols", new Dictionary<string, object> { { "pages", new object[] { page(null, "Mine", blankKeys("♪")) } } });
             b.ReadBackup(backupBuiltin);
-            b.RestoreBackup(false, false, false, true);
+            b.RestoreBackup(false, false, false, false, false, false, true);
             Check("a backup's table the tool refuses restores the built-in pages", !File.Exists(symbolsPath), "");
             File.Delete(backupBuiltin);
             File.Delete(symbolsPath);
@@ -569,11 +574,23 @@ static class SettingsTest {
             Check("the backup has the photos", images != null && images.ContainsKey("all.png") && images.ContainsKey("cand.jpg") &&
                   images.ContainsKey("keyboard.gif") && images.ContainsKey("fill.png"), json.Serialize(images.Keys));
             Directory.Delete(looks, true);
-            b.ReadBackup(file);
+            var readPics = (Dictionary<string, object>)b.ReadBackup(file);
+            Check("the 匯入 window offers 自訂外觀 with its photos counted (#77)",
+                  (bool)readPics["appearance"] && (int)readPics["photos"] == images.Count, json.Serialize(readPics));
+            call("setConfig", new Dictionary<string, object> { { "key", "appearance" }, { "value", new Dictionary<string, object> { { "on", false } } } });
             call("restoreBackup", new Dictionary<string, object> { { "config", true } });
-            Check("restoring 設定 writes the photos back", File.Exists(Path.Combine(looks, "all.png")) &&
+            var after77 = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(Path.Combine(dir, "config.json"), Encoding.UTF8));
+            Check("restoring 設定 alone leaves the look and writes no photo (#77)", !Directory.Exists(looks) &&
+                  !(bool)((Dictionary<string, object>)after77["appearance"])["on"], json.Serialize(after77["appearance"]));
+            b.ReadBackup(file);
+            call("restoreBackup", new Dictionary<string, object> { { "appearance", true } });
+            after77 = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(Path.Combine(dir, "config.json"), Encoding.UTF8));
+            string theirLook = json.Serialize(((Dictionary<string, object>)withPics["config"])["appearance"]);
+            Check("restoring 自訂外觀 brings the look back as the file has it", json.Serialize(after77["appearance"]) == theirLook,
+                  json.Serialize(after77["appearance"]) + " / " + theirLook);
+            Check("restoring 自訂外觀 writes the photos back", File.Exists(Path.Combine(looks, "all.png")) &&
                   File.ReadAllBytes(Path.Combine(looks, "all.png")).SequenceEqual(allBytes), "");
-            Check("restoring 設定 writes an animated GIF and APNG back as they were",
+            Check("restoring 自訂外觀 writes an animated GIF and APNG back as they were",
                   File.Exists(Path.Combine(looks, "keyboard.gif")) && File.ReadAllBytes(Path.Combine(looks, "keyboard.gif")).SequenceEqual(gif) &&
                   File.ReadAllBytes(Path.Combine(looks, "fill.png")).SequenceEqual(apng), "");
             // a backup naming a file with a path in it writes nothing outside appearance\ (review 2026-11-13)
@@ -584,7 +601,7 @@ static class SettingsTest {
                 { Path.Combine(pics, "cand.jpg"), Convert.ToBase64String(new byte[] { 4, 5, 6 }) } };
             File.WriteAllText(file, json.Serialize(evil), new UTF8Encoding(false));
             b.ReadBackup(file);
-            call("restoreBackup", new Dictionary<string, object> { { "config", true } });
+            call("restoreBackup", new Dictionary<string, object> { { "appearance", true } });
             Check("a backup's file name with a path is not written", !File.Exists(outside) && !File.Exists(Path.Combine(pics, "cand.jpg")), "");
             b.WriteBackup(file);
             b.ReadBackup(file);
@@ -593,8 +610,10 @@ static class SettingsTest {
                 "{\"app\":\"兩儀輸入法\",\"format\":1,\"created\":\"2026-11-01 10:00\",\"memory\":{\"phrases\":{}}," +
                 "\"dictionary\":{\"words\":[],\"shortcuts\":[]},\"config\":{\"cand_per_row\":1}}", new UTF8Encoding(false));
             call("setConfig", new Dictionary<string, object> { { "key", "appearance" }, { "value", new Dictionary<string, object> { { "on", true } } } });
-            b.ReadBackup(file);
-            call("restoreBackup", new Dictionary<string, object> { { "config", true } });
+            var readOld = (Dictionary<string, object>)b.ReadBackup(file);
+            Check("an older backup (no appearance) offers no 自訂外觀 and no 符號鍵盤", !(bool)readOld["appearance"] && !(bool)readOld["symbols"],
+                  json.Serialize(readOld));
+            call("restoreBackup", new Dictionary<string, object> { { "config", true }, { "appearance", true } });
             saved = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(Path.Combine(dir, "config.json"), Encoding.UTF8));
             Check("an older backup (no appearance, no photos) leaves the look and the photos as they are",
                   (bool)((Dictionary<string, object>)saved["appearance"])["on"] && File.Exists(Path.Combine(looks, "all.png")), json.Serialize(saved));

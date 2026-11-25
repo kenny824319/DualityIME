@@ -1261,10 +1261,13 @@ async function restore() {
   }
   const parts = [["memory", `記憶（${info.memory} 筆）`, info.memory > 0], ["words", `自訂詞彙（${info.words} 筆）`, info.words > 0],
     ["shortcuts", `映射詞彙（${info.shortcuts} 筆）`, info.shortcuts > 0], ["quickFill", `快速填入（${info.quickFill || 0} 筆）`, info.quickFill > 0],
+    // (#77: the look and the symbol keyboard of their own - 設定 no longer replaces them)
+    ["appearance", info.photos ? `自訂外觀（含 ${info.photos} 張照片）` : "自訂外觀", info.appearance],
+    ["symbols", "符號鍵盤", info.symbols],
     ["config", "設定", info.config]];
   const boxes = {};
   const body = h("div", {},
-    h("p", { class: "row-desc", style: "font-size:14px" }, `匯出時間：${info.created}。記憶與詞庫會和目前的資料合併；勾選「設定」會換成檔案裡的設定（含自訂外觀的照片與符號鍵盤內容）。`),
+    h("p", { class: "row-desc", style: "font-size:14px" }, `匯出時間：${info.created}。記憶與詞庫會和目前的資料合併；勾選的自訂外觀、符號鍵盤與設定會換成檔案裡的。`),
     ...parts.filter(([, , has]) => has).map(([key, label]) => {
       boxes[key] = h("input", { type: "checkbox" });
       boxes[key].checked = true;

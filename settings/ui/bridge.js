@@ -120,7 +120,8 @@ const api = (() => {
       case "hotkeys": return { language: "Ctrl+Shift", layout: "Left Alt+Shift" };
       case "readings": return args.words.map((w) => (w === "台灣" ? "ㄊㄞˊ ㄨㄢ" : ""));
       case "exportBackup": return wait(200, true);
-      case "openBackup": return wait(200, { created: "2026-10-27 10:30", memory: 128, words: 3, shortcuts: 2, quickFill: 4, config: true });
+      case "openBackup": return wait(200, { created: "2026-10-27 10:30", memory: 128, words: 3, shortcuts: 2, quickFill: 4, appearance: true,
+        photos: 2, symbols: true, config: true });
       case "restoreBackup": return wait(300, { words: 1, shortcuts: 0 });
       case "checkUpdate": return wait(900, { code: demo === "available" || demo === "fail" ? 10 : 0, version: "2.2.0", stable: "2.2.0", beta: "2.3.0" });
       case "runUpdate": return wait(1500, { code: demo === "fail" ? 301 : 0, version: "2.2.0" });
