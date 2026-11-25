@@ -1,11 +1,10 @@
 """A setting's default lives in four places that must agree (CLAUDE.md Invariants): engine/config.py DEFAULTS,
 cpp/engine/config.cpp, installer/src/Settings.cs Defaults, settings/ui/bridge.js's stand-in config. Each is read as
 text, the values normalised (true/false, numbers, strings, {} and [])."""
+import ast
 import os
 import re
 import unittest
-
-from engine.config import DEFAULTS
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # the Japanese settings (#36) and the design's names for them (docs/superpowers/ui-mock/bridge.js)
@@ -32,6 +31,17 @@ def value(text):
     if text in ("[]", "Json::array()", "new object[0]"):
         return []
     raise ValueError(f"cannot read the value {text!r}")
+
+
+def py_defaults():
+    """engine/config.py's DEFAULTS as written (tests.test_engine changes the imported dict: long_sentence)."""
+    tree = ast.parse(read("engine", "config.py"))
+    node = next(n.value for n in tree.body if isinstance(n, ast.Assign) and
+                any(isinstance(t, ast.Name) and t.id == "DEFAULTS" for t in n.targets))
+    return ast.literal_eval(node)
+
+
+DEFAULTS = py_defaults()
 
 
 def cpp_defaults():
