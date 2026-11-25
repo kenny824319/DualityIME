@@ -1,6 +1,6 @@
 """#36: Japanese evaluation sentences from Tatoeba, with the romaji that types them.
 
-    py -3 tools/ja_sentences.py <jpn_sentences.tsv> [--mozc <folder>] [--count 300] [--seed 36] --out <tsv>
+    py -3 tools/ja_sentences.py <jpn_sentences.tsv> [--mozc <folder>] [--count 300] [--seed 36] [--exclude <tsv>]... --out <tsv>
 
 <jpn_sentences.tsv>: Tatoeba's Japanese sentences (https://tatoeba.org/en/downloads, CC BY 2.0 FR; lines
 id<TAB>jpn<TAB>text), downloaded by hand into %DUALITYIME_CORPUS%\\tatoeba\\ - never committed. Keeps sentences of only
@@ -117,8 +117,9 @@ def fingerprint(lines):
     return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()[:12]
 
 
-def main():
-    sys.stdout.reconfigure(encoding="utf-8")
+def main(argv=None):
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     corpus = os.environ.get("DUALITYIME_CORPUS", r"C:\Users\you\Data\corpus")
     ap = argparse.ArgumentParser()
     ap.add_argument("sentences")
@@ -126,7 +127,14 @@ def main():
     ap.add_argument("--count", type=int, default=300)
     ap.add_argument("--seed", type=int, default=36)
     ap.add_argument("--out", required=True)
-    a = ap.parse_args()
+    ap.add_argument("--exclude", action="append", default=[])  # (a tsv whose sentences are not kept: the dev set)
+    a = ap.parse_args(argv)
+    exclude = set()
+    for path in a.exclude:
+        for line in open(path, encoding="utf-8-sig"):
+            p = line.rstrip("\r\n").split("\t")
+            if len(p) >= 2:
+                exclude.add(p[1])
     texts = []
     for line in open(a.sentences, encoding="utf-8"):
         p = line.rstrip("\r\n").split("\t")
@@ -141,7 +149,9 @@ def main():
     for s in texts:
         if len(kept) >= a.count:
             break
-        reading = hira("".join(n.surface for n in convert(s, index)[0]))
+        if s in exclude:  # (skipped after the shuffle: a seed gives the same order with or without --exclude)
+            continue
+        reading =hira("".join(n.surface for n in convert(s, index)[0]))
         romaji = to_romaji(reading, inv)
         if romaji is None or table.finish(romaji) != reading:
             dropped += 1
