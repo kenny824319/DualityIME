@@ -1966,7 +1966,8 @@ void TextService::show_menu(POINT pt) {
     }
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, 1, L"兩儀輸入法設定 (&S)");
-    AppendMenuW(menu, MF_STRING, 2, english_ ? L"切換到中文 (&C)" : L"切換到英文 (&E)");
+    // (on the Japanese side the item goes back to Chinese, as toggle_mode does there - findings #160)
+    AppendMenuW(menu, MF_STRING, 2, english_ || japanese_ ? L"切換到中文 (&C)" : L"切換到英文 (&E)");
     int cmd = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, pt.x, pt.y, owner, nullptr);
     DestroyMenu(menu);
     if (cmd == 1) {

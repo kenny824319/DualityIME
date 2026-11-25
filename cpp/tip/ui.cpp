@@ -801,38 +801,31 @@ void SymbolKeyboard::build() {
     int width = 13 * UNIT + 13 * GAP + static_cast<int>(UNIT * 1.5);  // row 0: 13 keys + backspace
     int y0 = PAD + TAB_H;
     int index = 0;
-    static const wchar_t* left_labels[4] = {nullptr, L"Tab", L"Caps", L"Shift"};
-    static const wchar_t* right_labels[4] = {L"⬅", nullptr, L"Enter", L"Shift"};
+    // (Tab, Caps, Shift, Enter and ⬅ are not drawn - they type nothing and 符號鍵盤內容 cannot set them, the user
+    // 2026-11-25 - but the rows keep their stagger, as the settings page lays the keys out: SK_OFFSETS)
     for (int r = 0; r < 4; ++r) {
         int y = y0 + r * (KEY_H + GAP);
         int x = PAD;
         int n = static_cast<int>(std::char_traits<char>::length(symbols::ROWS[r]));
-        int left, right;
-        if (r == 0) {
+        int left;
+        if (r == 0)
             left = 0;
-            right = width - 13 * UNIT - 13 * GAP;
-        } else if (r == 1) {
+        else if (r == 1)
             left = static_cast<int>(UNIT * 1.5);
-            right = 0;
-        } else {
-            left = right = (width - n * UNIT - (n + 1) * GAP) / 2;
-        }
-        if (left) {
-            items_.push_back(Item{x, y, left, KEY_H, Item::Deco, 0, left_labels[r]});
-            x += left + GAP;
-        }
+        else
+            left = (width - n * UNIT - (n + 1) * GAP) / 2;
+        if (left) x += left + GAP;
         for (int k = 0; k < n; ++k) {
-            items_.push_back(Item{x, y, UNIT, KEY_H, Item::Key, index++, nullptr});
+            items_.push_back(Item{x, y, UNIT, KEY_H, Item::Key, index++});
             x += UNIT + GAP;
         }
-        if (right) items_.push_back(Item{x, y, PAD + width - x, KEY_H, Item::Deco, 0, right_labels[r]});
     }
     // the tabs: 100 wide as ever, narrower when more are shown (at most 10, a name of 8 cells: #69), the × kept free
     int tabs = static_cast<int>(names_.size());
     int room = width - 34 - 8;
     int step = tabs ? std::min(112, room / tabs) : 112, tab_w = std::min(100, step - 6);  // (3 tabs: 100 as ever, #130)
-    for (int p = 0; p < tabs; ++p) items_.push_back(Item{PAD + p * step, PAD, tab_w, TAB_H - 12, Item::Tab, p, nullptr});
-    items_.push_back(Item{PAD + width - 34, PAD + 2, 30, 30, Item::Close, 0, nullptr});
+    for (int p = 0; p < tabs; ++p) items_.push_back(Item{PAD + p * step, PAD, tab_w, TAB_H - 12, Item::Tab, p});
+    items_.push_back(Item{PAD + width - 34, PAD + 2, 30, 30, Item::Close, 0});
     width_ = PAD * 2 + width;
     height_ = y0 + 4 * (KEY_H + GAP) - GAP + PAD;
 }
@@ -901,7 +894,7 @@ const SymbolKeyboard::Item* SymbolKeyboard::hit(LPARAM lp) const {
     double s = scale();
     double x = GET_X_LPARAM(lp) / s, y = GET_Y_LPARAM(lp) / s;
     for (auto& it : items_)
-        if (it.kind != Item::Deco && it.x <= x && x < it.x + it.w && it.y <= y && y < it.y + it.h) return &it;
+        if (it.x <= x && x < it.x + it.w && it.y <= y && y < it.y + it.h) return &it;
     return nullptr;  // empty spot: grab to drag
 }
 
@@ -991,9 +984,6 @@ void SymbolKeyboard::draw(HDC dc, int w, int h) {
             wchar_t label[2] = {static_cast<wchar_t>(std::toupper(static_cast<unsigned char>(symbols::KEYS[it.value]))), 0};
             cv.text(label, it.x + 6, it.y + 2, it.w, 16, on ? th.accent_text : th.label, label_font,
                     DT_LEFT | DT_TOP | DT_SINGLELINE);
-        } else if (it.kind == Item::Deco) {
-            key_box(it, th.dim, th.key_border);
-            cv.text(it.label, it.x + 6, it.y + 2, it.w, 20, th.label, label_font, DT_LEFT | DT_TOP | DT_SINGLELINE);
         } else if (it.kind == Item::Tab) {
             if (it.value == page_) cv.box(it.x, it.y, it.w, it.h, th.accent, th.accent, 8);
         } else {

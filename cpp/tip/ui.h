@@ -203,9 +203,8 @@ protected:
 private:
     struct Item {
         int x, y, w, h;
-        enum Kind { Key, Deco, Tab, Close } kind;
+        enum Kind { Key, Tab, Close } kind;
         int value;
-        const wchar_t* label;
     };
     void build();
     const Item* hit(LPARAM lp) const;
