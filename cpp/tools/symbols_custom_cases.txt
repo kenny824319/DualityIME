@@ -1,0 +1,11 @@
+# e2e-args: -Symbols cpp\tools\symbols_custom.json
+# 符號鍵盤自訂 (#69): symbols_custom.json - a page of one's own first (表情: ` ♪, a 😀, d 👩‍💻, f ✨, the other keys empty),
+# 一般 with a ★ and q w swapped, 數學 hidden, 特殊. ` opens on the first page; `` types its ` key; Tab goes through the
+# pages shown only; an empty key types nothing (Esc closes); an emoji joined by ZWJ goes out whole.
+su3`a{ENTER} => 你😀
+su3`{TAB}a{ENTER} => 你★
+su3`{TAB}q{ENTER} => 你》
+su3``{ENTER} => 你♪
+su3`s{ESC}{ENTER} => 你
+su3`{TAB}{TAB}8{ENTER} => 你✓
+su3`d{ENTER} => 你👩‍💻

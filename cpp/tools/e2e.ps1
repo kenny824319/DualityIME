@@ -15,8 +15,9 @@
 # -Dictionary custom_prediction_dictionary.json: the test engine's dictionary.json (個人詞庫; else none)
 # -QuickFill quick_fill_sample.json: the test engine's quick_fill.json (快速填入; else none)
 # -Images folder: its files become the test engine's appearance folder (自訂外觀's photos; else none)
+# -Symbols symbols_custom.json: the test engine's symbols.json (符號鍵盤自訂, #69; else the built-in pages)
 param($Script = "$PSScriptRoot\tsf_test.txt", $Mode = "", $SaveTo = "", $Config = "", $User = "", $Dictionary = "", $QuickFill = "",
-      $Images = "", [switch]$Game)
+      $Images = "", $Symbols = "", [switch]$Game)
 # -Game: the test window counts as a game for the run (遊戲中 Shift 交給遊戲, #31): the test program is put in Windows'
 #   list of games (HKCU\System\GameConfigStore\Children\DualityIME-e2e) and taken out of it again afterwards
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -70,6 +71,7 @@ if ($Config) { Copy-Item $Config (Join-Path $dir "config.json") }
 if ($User) { Copy-Item $User (Join-Path $dir "user.json") }
 if ($Dictionary) { Copy-Item $Dictionary (Join-Path $dir "dictionary.json") }
 if ($QuickFill) { Copy-Item $QuickFill (Join-Path $dir "quick_fill.json") }
+if ($Symbols) { Copy-Item $Symbols (Join-Path $dir "symbols.json") }
 if ($Images) {
     New-Item -ItemType Directory (Join-Path $dir "appearance") | Out-Null
     Copy-Item (Join-Path $Images "*") (Join-Path $dir "appearance")
