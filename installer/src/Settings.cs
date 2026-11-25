@@ -1187,9 +1187,10 @@ public class Backend {
         // that are not the user's and would join another computer's list on restore (#33)
         var savedFill = SavedQuickFill();
         if (savedFill != null) data["quick_fill"] = savedFill;
-        // 符號鍵盤自訂 (#69), restored with 設定 (an older version reading the backup leaves it)
+        // 符號鍵盤自訂 (#69), restored with 設定 (an older version reading the backup leaves it); the built-in pages are
+        // carried too, as {"builtin": true}: restored, they replace a table of the other computer's own (findings #124)
         var symbols = File.Exists(SymbolsPath) ? ReadJson(SymbolsPath) : null;
-        if (symbols != null) data["symbols"] = symbols;
+        data["symbols"] = symbols ?? new Dictionary<string, object> { { "format", 1 }, { "builtin", true } };
         File.WriteAllText(path, json.Serialize(data), new UTF8Encoding(false));
         return true;
     }
@@ -1283,11 +1284,14 @@ public class Backend {
                     File.WriteAllBytes(Path.Combine(AppearanceDir, kv.Key), bytes);
                 }
         }
-        // 符號鍵盤自訂 (#69) comes with 設定, the whole table; a backup without it (older) leaves this one
+        // 符號鍵盤自訂 (#69) comes with 設定, the whole table; a backup without it (older) leaves this one. The built-in
+        // pages, or a table the engine would refuse (that computer showed the built-in pages), replace this one's own
+        // (findings #124)
         var theirSymbols = config && backup.ContainsKey("symbols") ? backup["symbols"] as Dictionary<string, object> : null;
         if (theirSymbols != null) {
             var pages = theirSymbols.ContainsKey("pages") ? theirSymbols["pages"] as object[] : null;
             if (SymbolProblem(pages) == null) SaveSymbols(new Dictionary<string, object> { { "pages", pages } });
+            else if (File.Exists(SymbolsPath)) File.Delete(SymbolsPath);
         }
         int addedWords = 0, addedShortcuts = 0;
         if (words || shortcuts) {

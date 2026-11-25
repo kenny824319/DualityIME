@@ -303,6 +303,24 @@ static class SettingsTest {
             var kept = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(symbolsPath, Encoding.UTF8));
             Check("a backup without the symbol keyboard keeps this one", (string)((Dictionary<string, object>)((object[])kept["pages"])[0])["name"] == "Mine",
                   json.Serialize(kept));
+            // a backup of a computer showing the built-in pages (no symbols.json) says so, and brings them back: the
+            // whole table is replaced (findings #124); so does a backup's table the tool refuses (it showed the built-in)
+            File.Delete(symbolsPath);
+            string backupBuiltin = Path.Combine(dir, "backup69b.json");
+            b.WriteBackup(backupBuiltin);
+            var bkb = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(backupBuiltin, Encoding.UTF8));
+            Check("a backup of the built-in pages says so", bkb.ContainsKey("symbols"), File.ReadAllText(backupBuiltin, Encoding.UTF8));
+            call("saveSymbols", new Dictionary<string, object> { { "pages", new object[] { page(null, "Mine", blankKeys("♪")) } } });
+            b.ReadBackup(backupBuiltin);
+            b.RestoreBackup(false, false, false, true);
+            Check("restoring the built-in pages with 設定 replaces this one's own", !File.Exists(symbolsPath), "");
+            bkb["symbols"] = new Dictionary<string, object> { { "format", 1 }, { "pages", new object[0] } };
+            File.WriteAllText(backupBuiltin, json.Serialize(bkb), new UTF8Encoding(false));
+            call("saveSymbols", new Dictionary<string, object> { { "pages", new object[] { page(null, "Mine", blankKeys("♪")) } } });
+            b.ReadBackup(backupBuiltin);
+            b.RestoreBackup(false, false, false, true);
+            Check("a backup's table the tool refuses restores the built-in pages", !File.Exists(symbolsPath), "");
+            File.Delete(backupBuiltin);
             File.Delete(symbolsPath);
             File.Delete(backup69);
 
