@@ -4,6 +4,9 @@ older docs/status.md gave another natural sentence set; a 13-hour compare ran ma
 parity run kept running on a copy after the copy was moved back).
 
     py -3 tools/longrun.py start --name <name> [--code <folder>] [--fixed-code "<why>"] [--log <file>] -- <command ...>
+                                             returns once a background process of its own runs it (see start)
+    py -3 tools/longrun.py wait <id>         follows it (its log as it grows) to its end, exit = its exit code; start
+                                             it in the background: ending it ends the watching, not the run
     py -3 tools/longrun.py status            every run: running or finished, and whether it still stands for the code
     py -3 tools/longrun.py status --hook     (PostToolUse) exit 2 listing the runs a change left behind, none: exit 0
     py -3 tools/longrun.py ack <id> --reason "<what was done about it>"     (after telling the user)
@@ -14,8 +17,12 @@ parity run kept running on a copy after the copy was moved back).
 start records, before running the command: the folder whose code it runs (--code, default the current folder), that
 code's fingerprint (engine/, cpp/engine/, cpp/tools/, tools/, data/, the docs and settings page the natural sentences
 come from, the built sz_trace.exe, and the folders of the .py scripts the command names - docs/superpowers/items/'s
-evaluations), the command and the start time; then runs it (its output to the console and --log), and records the end,
-the exit code and how long it took. It prints how long earlier runs of the same name took.
+evaluations), the command and the start time; then a hidden process Windows starts for it (WMI: not a child of the
+shell, so a session or terminal ending never takes it down - 2026-11-16 a 6-hour run died that way; the user
+2026-11-25: every long run so) runs it with the starter's environment, its output to --log (default the record's
+<id>.log), and records the end, the exit code and how long it took. A GPU job goes the same way, through
+tools/lm/gpu_run.py: start ... -- py -3 tools/lm/gpu_run.py --log <file> -- <command>. start prints how long earlier
+runs of the same name took.
 status compares each run with this folder's code now: a run of another folder's code, or of code changed since, no
 longer stands for this folder - its numbers do not count until it is run again. --fixed-code marks a run meant to
 measure other code (the engine before a change): listed, never flagged. A flagged run stays flagged (the hook says so
@@ -24,6 +31,7 @@ The records are this computer's, whichever folder started them (a copy's runs ar
 %LOCALAPPDATA%\\DualityIME-dev\\longrun\\<id>.json (DUALITYIME_LONGRUN_DIR moves them).
 """
 import argparse
+import base64
 import ctypes
 import datetime
 import hashlib
@@ -208,7 +216,11 @@ def history(name):
     return [r for r in _runs() if r["name"] == name and r.get("end") and r.get("exit") == 0]
 
 
-def start(args, command):
+def start(args, command, detach=True):
+    """Records the run, then runs it - detached (the default): in a hidden process Windows starts for it (WMI), not a
+    child of this one, so the session or terminal that started it can end and it goes on (2026-11-16 a 6-hour run died
+    with the session; the user 2026-11-25: every long run so); start returns once that process has it, and
+    `wait <id>` follows it. detach=False runs it here, its output to the console too."""
     code = os.path.abspath(args.code or os.getcwd())
     if not os.path.isdir(os.path.join(code, "engine")):
         sys.exit(f"--code {code}: no engine/ there (the folder whose code the run runs)")
@@ -217,9 +229,12 @@ def start(args, command):
     fp = fingerprint(code, cache, scripts)
     _save_cache(cache)
     rid = datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{os.getpid()}"
+    log = args.log or (os.path.join(RUNS, f"{rid}.log") if detach else None)
     run = {"id": rid, "name": args.name, "command": command, "cwd": os.getcwd(), "code": code, "scripts": scripts,
-           "fingerprint": fp, "fixed_code": args.fixed_code, "log": args.log, "pid": os.getpid(),
-           "created": _created(os.getpid()), "start": time.time()}
+           "fingerprint": fp, "fixed_code": args.fixed_code, "log": os.path.abspath(log) if log else None,
+           "pid": os.getpid(), "created": _created(os.getpid()), "start": time.time()}
+    if detach:
+        run["env"] = dict(os.environ)  # (the started process has the user's default environment, not this one's)
     _write(run)
     other = os.path.normcase(code) != os.path.normcase(ROOT)
     past = history(args.name)
@@ -228,13 +243,48 @@ def start(args, command):
     print(f"[longrun {rid}] earlier runs of {args.name}: "
           + (", ".join(_fmt(r["end"] - r["start"]) for r in past[-5:]) if past else "none (no measured time yet)"),
           flush=True)
-    log = open(args.log, "w", encoding="utf-8", newline="") if args.log else None
-    p = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                         env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+    if not detach:
+        return _execute(rid, echo=True)
+    worker = f'"{sys.executable}" "{os.path.abspath(__file__)}" _run {rid} --runs "{RUNS}"'
+    if not _launch_hidden(worker, os.getcwd()):
+        failed = _read(rid) or run
+        failed.update(end=time.time(), exit=-1, fixed_code="never started: Windows did not start the process")
+        _write(failed)
+        sys.exit(f"[longrun {rid}] Windows did not start the background process (WMI Win32_Process.Create)")
+    for _ in range(200):  # (the background process takes the record over: its pid in it)
+        r = _read(rid)
+        if r and r.get("detached"):
+            print(f"[longrun {rid}] running in a background process of its own (pid {r['pid']}), its output in "
+                  f"{r['log']}; follow it: py -3 tools/longrun.py wait {rid}", flush=True)
+            return 0
+        time.sleep(0.1)
+    sys.exit(f"[longrun {rid}] the background process did not take the run over in 20 s (see {log})")
+
+
+def _launch_hidden(command_line, cwd):
+    """Starts command_line through WMI (Win32_Process.Create, its window hidden): its parent is WMI's provider, so
+    neither this process nor the session above it takes it down when they end."""
+    q = lambda s: "'" + s.replace("'", "''") + "'"  # noqa: E731 (a PowerShell string)
+    ps = ("$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow = [uint16]0}; "
+          f"$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{{CommandLine = {q(command_line)}; "
+          f"CurrentDirectory = {q(cwd)}; ProcessStartupInformation = $si}}; exit $r.ReturnValue")
+    enc = base64.b64encode(ps.encode("utf-16-le")).decode("ascii")
+    r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", enc], capture_output=True)
+    return r.returncode == 0
+
+
+def _execute(rid, echo):
+    """Runs the recorded command (its environment as recorded, else this one), its output to the log (and the
+    console with echo), and records the end and the exit code."""
+    run = _read(rid)
+    env = dict(run.get("env") or os.environ, PYTHONIOENCODING="utf-8")
+    log = open(run["log"], "w", encoding="utf-8", newline="") if run.get("log") else None
+    p = subprocess.Popen(run["command"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, cwd=run["cwd"])
     for raw in p.stdout:
         line = raw.decode("utf-8", "replace").replace("\r\n", "\n")
-        sys.stdout.write(line)
-        sys.stdout.flush()
+        if echo:
+            sys.stdout.write(line)
+            sys.stdout.flush()
         if log:
             log.write(line)
             log.flush()
@@ -245,8 +295,74 @@ def start(args, command):
     done = _read(rid) or run  # (as written now: an ack made while it ran stays)
     done.update(end=time.time(), exit=p.returncode)
     _write(done)
-    print(f"[longrun {rid}] {args.name}: exit {p.returncode} after {_fmt(done['end'] - done['start'])}", flush=True)
+    if echo:
+        print(f"[longrun {rid}] {run['name']}: exit {p.returncode} after {_fmt(done['end'] - done['start'])}", flush=True)
     return p.returncode
+
+
+def _run_detached(rid):
+    """The background process start launched: takes the record over (its own pid: status sees it alive) and runs it."""
+    run = _read(rid)
+    if run is None:
+        return 1
+    run.update(pid=os.getpid(), created=_created(os.getpid()), detached=True)
+    _write(run)
+    return _execute(rid, echo=False)
+
+
+def wait(rid, poll=5.0):
+    """Follows a run to its end: its log's new lines as they come, then its exit code. Ending this ends only the
+    watching - the run goes on (status, wait again)."""
+    seen = 0
+    while True:
+        run = _read(rid)
+        if run is None:
+            sys.exit(f"no run {rid} (py -3 tools/longrun.py status)")
+        if run.get("log") and os.path.exists(run["log"]):
+            with open(run["log"], "rb") as f:
+                f.seek(seen)
+                chunk = f.read()
+            seen += len(chunk)
+            if chunk:
+                sys.stdout.write(chunk.decode("utf-8", "replace"))
+                sys.stdout.flush()
+        if run.get("end"):
+            print(f"[longrun {rid}] {run['name']}: exit {run.get('exit')} after {_fmt(run['end'] - run['start'])}",
+                  flush=True)
+            return run.get("exit") if isinstance(run.get("exit"), int) and run.get("exit") >= 0 else 1
+        if not _alive(run):
+            print(f"[longrun {rid}] {run['name']}: its process is gone before it ended", flush=True)
+            return 1
+        time.sleep(poll)
+
+
+def _parent(pid):
+    """The pid of the process that started pid (Windows), None when unknown."""
+    if os.name != "nt":
+        return None
+
+    class Entry(ctypes.Structure):
+        _fields_ = [("dwSize", ctypes.c_ulong), ("cntUsage", ctypes.c_ulong), ("th32ProcessID", ctypes.c_ulong),
+                    ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", ctypes.c_ulong),
+                    ("cntThreads", ctypes.c_ulong), ("th32ParentProcessID", ctypes.c_ulong),
+                    ("pcPriClassBase", ctypes.c_long), ("dwFlags", ctypes.c_ulong), ("szExeFile", ctypes.c_wchar * 260)]
+
+    k = ctypes.windll.kernel32
+    k.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+    snap = k.CreateToolhelp32Snapshot(0x2, 0)  # (TH32CS_SNAPPROCESS)
+    if not snap or snap == ctypes.c_void_p(-1).value:
+        return None
+    try:
+        e = Entry()
+        e.dwSize = ctypes.sizeof(Entry)
+        ok = k.Process32FirstW(ctypes.c_void_p(snap), ctypes.byref(e))
+        while ok:
+            if e.th32ProcessID == pid:
+                return e.th32ParentProcessID
+            ok = k.Process32NextW(ctypes.c_void_p(snap), ctypes.byref(e))
+        return None
+    finally:
+        k.CloseHandle(ctypes.c_void_p(snap))
 
 
 def judge(run, cache=None):
@@ -350,11 +466,25 @@ def main(argv):
     rt.add_argument("--reason", required=True)
     h = sub.add_parser("history")
     h.add_argument("name")
+    w = sub.add_parser("wait")
+    w.add_argument("id")
+    w.add_argument("--poll", type=float, default=5.0)
+    r = sub.add_parser("_run")  # (the background process start launches)
+    r.add_argument("id")
+    r.add_argument("--runs")
     args = ap.parse_args(argv)
     if args.what == "start":
         if not command:
             sys.exit("start ... -- <command>")
         return start(args, command)
+    if args.what == "wait":
+        return wait(args.id, args.poll)
+    if args.what == "_run":
+        global RUNS, CACHE
+        if args.runs:
+            RUNS = args.runs
+            CACHE = os.path.join(RUNS, "hash-cache.json")
+        return _run_detached(args.id)
     if args.what == "status":
         if args.hook:
             try:

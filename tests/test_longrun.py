@@ -60,12 +60,51 @@ class LongrunTest(unittest.TestCase):
             f.write(text)
         os.utime(path, (time.time() + 5, time.time() + 5))
 
-    def start(self, command, log=None):
+    def start(self, command, log=None, detach=False):
         args = argparse.Namespace(name="eval", code=self.root, fixed_code=None, log=log)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            code = longrun.start(args, command)
+            code = longrun.start(args, command, detach=detach)
         return code, out.getvalue()
+
+    def wait(self, rid):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = longrun.wait(rid, poll=0.5)
+        return code, out.getvalue()
+
+    def test_a_detached_run_goes_on_by_itself_and_wait_gets_its_end(self):
+        # (2026-11-16 a 6-hour run died with the session that started it; the user 2026-11-25: every long run in a
+        # background process of its own, not the shell's)
+        started = time.time()
+        code, out = self.start([sys.executable, "-c", "import time; time.sleep(4); print('done'); raise SystemExit(4)"],
+                               detach=True)
+        self.assertEqual(code, 0)
+        self.assertLess(time.time() - started, 15)  # (back before the run ends)
+        (run,) = longrun._runs()
+        self.assertNotIn("end", run)
+        self.assertTrue(longrun._alive(run))
+        self.assertNotEqual(longrun._parent(run["pid"]), os.getpid())  # (not this process's child)
+        code, out = self.wait(run["id"])
+        self.assertEqual(code, 4)
+        self.assertIn("done", out)
+        (run,) = longrun._runs()
+        self.assertEqual(run["exit"], 4)
+        with open(run["log"], encoding="utf-8") as f:
+            self.assertEqual(f.read(), "done\n")
+
+    def test_a_detached_run_gets_the_environment_it_was_started_with(self):
+        # (a process Windows starts for us has the user's default environment: DUALITYIME_CORPUS set in the shell
+        # would be lost)
+        os.environ["LONGRUN_TEST_VALUE"] = "ㄅ-69"
+        try:
+            self.start([sys.executable, "-c", "import os; print(os.environ.get('LONGRUN_TEST_VALUE'))"], detach=True)
+        finally:
+            del os.environ["LONGRUN_TEST_VALUE"]
+        (run,) = longrun._runs()
+        self.assertEqual(self.wait(run["id"])[0], 0)
+        with open(run["log"], encoding="utf-8") as f:
+            self.assertEqual(f.read(), "ㄅ-69\n")
 
     def test_a_run_of_this_code_is_not_flagged(self):
         self.record("a", self.root)
