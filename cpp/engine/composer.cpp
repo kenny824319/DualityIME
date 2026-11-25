@@ -79,11 +79,6 @@ const std::vector<ustr>& PUNCT_ROW_ORDER() {
                                         U"……", U"——", U"＼", U"｜"};
     return v;
 }
-bool swap_mark(const ustr& s) {  // a mark of some row: a swap's text (engine/composer.py SWAP_MARKS)
-    for (auto& [k, row] : PUNCT_SWAPS())
-        if (std::find(row.begin(), row.end(), s) != row.end()) return true;
-    return false;
-}
 bool is_opening(const ustr& s) {
     for (auto& [o, c] : BRACKETS())
         if (o == s) return true;
@@ -3311,28 +3306,27 @@ int Composer::caret_index() const {
 static std::vector<ustr> punct_choices(const ustr& shown) {
     // the marks a mark shown so can become (#53), itself first; empty when it is in no row. A half-width one (a value
     // of HALF_WIDTH: , . ? ...) takes its full-width mark's row with itself first; one with no row of its own (【 … ⁇,
-    // picked from a row) the first row holding it, itself first, so it can be swapped back (findings #110)
+    // picked from a row) every row holding it, merged in the table's order, itself first - whichever row it came from,
+    // the way back is there (findings #110, #113: … is in 。's row and in ……'s)
     auto it = PUNCT_SWAPS().find(shown);
     if (it != PUNCT_SWAPS().end()) return it->second;
-    const std::vector<ustr>* row = nullptr;
+    std::vector<const std::vector<ustr>*> rows;
     for (auto& [full, half] : HALF_WIDTH())
         if (half == shown) {
             auto r = PUNCT_SWAPS().find(full);
-            if (r != PUNCT_SWAPS().end()) row = &r->second;
+            if (r != PUNCT_SWAPS().end()) rows.push_back(&r->second);
             break;
         }
-    if (!row)
+    if (rows.empty())
         for (auto& key : PUNCT_ROW_ORDER()) {
             auto& r = PUNCT_SWAPS().at(key);
-            if (std::find(r.begin(), r.end(), shown) != r.end()) {
-                row = &r;
-                break;
-            }
+            if (std::find(r.begin(), r.end(), shown) != r.end()) rows.push_back(&r);
         }
-    if (!row) return {};
+    if (rows.empty()) return {};
     std::vector<ustr> out{shown};
-    for (auto& m : *row)
-        if (m != shown) out.push_back(m);
+    for (auto* row : rows)
+        for (auto& m : *row)
+            if (std::find(out.begin(), out.end(), m) == out.end()) out.push_back(m);
     return out;
 }
 
@@ -7030,10 +7024,9 @@ void Composer::marks_before_symbols() {
     for (size_t i = 0; i + 1 < tokens.size(); ++i) {
         const Token& t = tokens[i];
         const Token& next = tokens[i + 1];
-        // (and before a mark a swap left there: findings #108, 我「你好。」 with 「 swapped sent 我『你好.』)
-        if (t.kind != Kind::Partial || next.kind != Kind::Fix ||
-            (next.raw != std::string(1, NAME_MARK_KEY) && !swap_mark(next.value)))
-            continue;
+        // (before any fix: a mark a swap left there - findings #108, 我「你好。」 with 「 swapped sent 我『你好.』 - or a pick
+        // from the replacement bar, findings #115: 你，好 with 好 as ㄏㄠˇ sent 你,ㄏㄠˇ)
+        if (t.kind != Kind::Partial || next.kind != Kind::Fix) continue;
         if (!zp) zp = zhuyin_punct(table_);
         auto key = t.raw.size() == 1 ? zp->find(t.raw[0]) : zp->end();
         if (key != zp->end() && chinese_before(i)) tokens[i] = Token{Kind::Lit, t.raw, key->second, t.start};

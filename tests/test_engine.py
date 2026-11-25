@@ -5405,15 +5405,31 @@ class PunctuationSwapTest(Base):
         self.press("HOME", "RIGHT", "DOWN", "2")
         self.assertEqual(c.composition, "你『好:)』")
 
-    def test_a_mark_swapped_in_without_a_row_takes_the_row_it_came_from(self):
-        # (findings #110: 【 or … have no row of their own: once picked, nothing could bring the mark back)
+    def test_a_mark_swapped_in_without_a_row_lists_every_row_holding_it(self):
+        # (findings #110, #113: 【 or … have no row of their own: once picked, nothing could bring the mark back; the
+        # first row holding … was 。's, without …… - every row holding it, merged, always has the way back)
         c = self.c
         self.press("s", "u", "3"); c.type_full_punct("["); self.press(*"cl3", "LEFT", "LEFT", "DOWN", "4")
         self.assertEqual(c.composition, "你【好")
         self.press("LEFT", "DOWN")  # (the pick left the caret before 好: one step back is 【)
-        self.assertEqual(c.candidates, ["【", "「", "『", "（", "《", "〈", "“"])
+        self.assertEqual(c.candidates, ["【", "「", "『", "（", "《", "〈", "“", "〔", "("])
         self.press("2")
         self.assertEqual(c.composition, "你「好")
+        c.reset()
+        self.press("s", "u", "3"); c.type_full_punct("^"); self.press("LEFT", "DOWN", "2")
+        self.assertEqual(c.composition, "你…")
+        self.press("LEFT", "DOWN")
+        self.assertEqual(c.candidates, ["…", "。", "！", "？", ".", "……", "⋯⋯", "‥", "——"])
+
+    def test_a_mark_before_a_replacement_bar_pick_stays_a_mark(self):
+        # (findings #115, there since #52: a pick from the replacement bar is a fix too, and the , before it went out as
+        # an unfinished syllable: full width 你，好 with 好 swapped for ㄏㄠˇ sent 你,ㄏㄠˇ)
+        c = self.c
+        c.config.set(punctuation="full")
+        self.press(*"su3,cl3", "LEFT", "UP")
+        self.assertEqual(c.replacements[0], "ㄏㄠˇ")
+        self.press("ENTER")
+        self.assertEqual(c.composition, "你，ㄏㄠˇ")
 
     def test_every_row(self):
         # (findings #111: each row of the user's table swapped once - every mark Ctrl + a key types)
@@ -5436,13 +5452,18 @@ class PunctuationSwapTest(Base):
         # (findings #111: compare.py would not see a row changed on one side only)
         import re
         from engine.composer import PUNCT_SWAPS
-        src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cpp", "engine",
-                                "composer.cpp"), encoding="utf-8").read()
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cpp", "engine",
+                               "composer.cpp"), encoding="utf-8") as f:
+            src = f.read()
         body = src[src.index("PUNCT_SWAPS() {"):src.index("return m;", src.index("PUNCT_SWAPS() {"))]
         rows = re.findall(r'\{U"((?:[^"\\]|\\.)*)", \{((?:U"(?:[^"\\]|\\.)*"(?:, )?)+)\}\}', body)
         cpp = {k.replace("\\\\", "\\"): tuple(v.replace("\\\\", "\\") for v in re.findall(r'U"((?:[^"\\]|\\.)*)"', m))
                for k, m in rows}
         self.assertEqual(cpp, PUNCT_SWAPS)
+        # (findings #114: the rows' order matters - a mark with no row of its own lists the rows holding it in it - and
+        # the C++ map sorts its keys, so its order is a list of its own)
+        order = src[src.index("PUNCT_ROW_ORDER() {"):src.index("return v;", src.index("PUNCT_ROW_ORDER() {"))]
+        self.assertEqual(re.findall(r'U"((?:[^"\\]|\\.)*)"', order), list(PUNCT_SWAPS))
 
 
 class CandidateGridTest(Base):

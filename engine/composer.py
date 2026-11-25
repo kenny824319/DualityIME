@@ -46,20 +46,21 @@ PUNCT_SWAPS = {
     "\uff3c": ("\uff3c", "\uff0f", "\\"), "\uff5c": ("\uff5c", "\ufe31", "|"),
 }
 BRACKETS = {"\u300c": "\u300d", "\u300e": "\u300f", "\uff08": "\uff09", "\u3010": "\u3011", "\u300a": "\u300b", "\u3008": "\u3009", "\u201c": "\u201d", "\u3014": "\u3015", "(": ")"}
-SWAP_MARKS = frozenset(m for row in PUNCT_SWAPS.values() for m in row)  # (every mark of a row: a swap's text)
 
 
 def punct_choices(shown):
     """The marks a mark shown so can become (#53), itself first; [] when it is in no row. A half-width one (a value of
     HALF_WIDTH: , . ? ...) takes its full-width mark's row with itself first; one with no row of its own (\u3010 \u2026 \u2047,
-    picked from a row) the first row holding it, itself first, so it can be swapped back (findings #110)."""
+    picked from a row) every row holding it, merged in the table's order, itself first - whichever row it came from,
+    the way back is there (findings #110, #113: \u2026 is in \u3002's row and in \u2026\u2026's)."""
     if shown in PUNCT_SWAPS:
         return list(PUNCT_SWAPS[shown])
     full = next((f for f, h in HALF_WIDTH.items() if h == shown), None)
-    row = PUNCT_SWAPS.get(full) or next((r for r in PUNCT_SWAPS.values() if shown in r), None)
-    if not row:
-        return []
-    return [shown] + [m for m in row if m != shown]
+    rows = [PUNCT_SWAPS[full]] if full in PUNCT_SWAPS else [r for r in PUNCT_SWAPS.values() if shown in r]
+    out = [shown] if rows else []
+    for row in rows:
+        out += [m for m in row if m not in out]
+    return out
 
 
 def bracket_partner_text(old, new):
@@ -5116,8 +5117,9 @@ class Composer:
         zh_punct = None
         for i, t in enumerate(self.tokens[:-1]):
             nxt = self.tokens[i + 1]
-            # (and before a mark a swap left there: findings #108, 我「你好。」 with 「 swapped sent 我『你好.』)
-            if t.kind == "partial" and nxt.kind == "fix" and (nxt.raw == NAME_MARK_KEY or nxt.value in SWAP_MARKS):
+            # (before any fix: a mark a swap left there - findings #108, 我「你好。」 with 「 swapped sent 我『你好.』 - or a
+            # pick from the replacement bar, findings #115: 你，好 with 好 as ㄏㄠˇ sent 你,ㄏㄠˇ)
+            if t.kind == "partial" and nxt.kind == "fix":
                 zh_punct = zh_punct or zhuyin_punct(self.table)
                 if t.raw in zh_punct and self._chinese_before(t):
                     self.tokens[i] = Token("lit", t.raw, zh_punct[t.raw], t.start)
