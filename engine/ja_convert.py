@@ -78,6 +78,83 @@ def word_sid(d, bigram, node):
     return bigram.sid(node.entry) if node.entry >= 0 else _pin_sid(d, bigram, node.reading, node.surface)
 
 
+def _starting(kana, begin, d, bigram, pin, reach):
+    """The nodes starting at begin, in node order, each with its word number: a pin's one node, or every entry of every
+    reading kana[begin:begin+k] then the character's fallback node (convert and nbest share it)."""
+    out = []
+    if pin is not None:
+        node = Node(begin, pin.end, kana[begin:pin.end], pin.surface, pin.lid, pin.rid, 0)
+        return [(node, _pin_sid(d, bigram, node.reading, pin.surface) if bigram is not None else -1)]
+    by_index = hasattr(d, "lookup_ix")
+    for k in range(1, min(d.max_reading_len, reach - begin) + 1):
+        reading = kana[begin:begin + k]
+        if by_index:
+            start, end = d.lookup_ix(reading)
+            for j in range(start, end):
+                e = d.entry(j)
+                out.append((Node(begin, begin + k, reading, e.surface, e.lid, e.rid, e.cost, j),
+                            bigram.sid(j) if bigram is not None else -1))
+        else:
+            for e in d.lookup(reading):
+                out.append((Node(begin, begin + k, reading, e.surface, e.lid, e.rid, e.cost), -1))
+    ch = kana[begin]
+    out.append((Node(begin, begin + 1, ch, ch, d.unknown_id, d.unknown_id, FALLBACK_COST), -1))
+    return out
+
+
+def nbest(kana, d, pins=(), cuts=(), bigram=None, prev_sid=-1, k=5, n=10):
+    """Up to n distinct sentences of the lattice, best first, as (path, cost) - the rescoring model's candidates (plan 5b).
+    Each node keeps its k best partial paths ordered by (cost, predecessor's node order, its rank there): the first is
+    exactly convert's path. The endings are taken in the same order, a text seen before skipped. cpp ja_nbest the same."""
+    size = len(kana)
+    bos = {"node": Node(0, 0, "", "", 0, 0, 0), "sid": prev_sid if bigram is not None else -1, "order": -1,
+           "entries": [(0, None, None)]}
+    cells = [bos]
+    ends = [[] for _ in range(size + 1)]
+    ends[0].append(0)
+    order = 0
+    pin_at, inside, reach = _limits(size, pins, cuts)
+    for begin in range(size):
+        if not ends[begin] or inside[begin]:
+            continue
+        preds = [cells[i] for i in ends[begin]]
+        idx = list(ends[begin])
+        for node, sid in _starting(kana, begin, d, bigram, pin_at.get(begin), reach[begin]):
+            cands = []
+            for p, pi in zip(preds, idx):
+                step = d.cost(p["node"].rid, node.lid)
+                if sid >= 0 and p["sid"] >= 0:
+                    step -= bigram.bonus(p["sid"], sid)
+                for r, (total, _, _) in enumerate(p["entries"]):
+                    cands.append((total + step, p["order"], r, pi))
+            cands.sort()
+            cells.append({"node": node, "sid": sid, "order": order,
+                          "entries": [(t + node.cost, pi, r) for t, _, r, pi in cands[:k]]})
+            ends[node.end].append(len(cells) - 1)
+            order += 1
+    final = []
+    for pi in ends[size]:
+        p = cells[pi]
+        for r, (total, _, _) in enumerate(p["entries"]):
+            final.append((total + d.cost(p["node"].rid, 0), p["order"], r, pi))
+    final.sort()
+    out, seen = [], set()
+    for cost, _, r, pi in final:
+        path = []
+        while pi:  # (BOS is cell 0)
+            cell = cells[pi]
+            path.append(cell["node"])
+            _, pi, r = cell["entries"][r]
+        path.reverse()
+        text = "".join(x.surface for x in path)
+        if text not in seen:
+            seen.add(text)
+            out.append((path, cost))
+            if len(out) >= n:
+                break
+    return out
+
+
 def convert(kana, d, pins=(), cuts=(), bigram=None, prev_sid=-1):
     """(the cheapest path as Nodes, its cost): BOS and EOS are id 0; cost = sum of node cost + connection cost
     (- the bigram's bonuses). pins: spans whose text is fixed (begin, end, surface, lid, rid - ja_composer.Pin): the
@@ -90,32 +167,12 @@ def convert(kana, d, pins=(), cuts=(), bigram=None, prev_sid=-1):
     ends[0].append(bos)
     order = 0
     pin_at, inside, reach = _limits(n, pins, cuts)
-    by_index = hasattr(d, "lookup_ix")
     for begin in range(n):
         preds = _groups(ends[begin])
         if not preds or inside[begin]:
             continue
         with_sid = [c for c in ends[begin] if c.sid >= 0] if bigram is not None else []
-        starting = []
-        pin = pin_at.get(begin)
-        if pin is not None:
-            node = Node(begin, pin.end, kana[begin:pin.end], pin.surface, pin.lid, pin.rid, 0)
-            starting.append((node, _pin_sid(d, bigram, node.reading, pin.surface) if bigram is not None else -1))
-        else:
-            for k in range(1, min(d.max_reading_len, reach[begin] - begin) + 1):
-                reading = kana[begin:begin + k]
-                if by_index:
-                    start, end = d.lookup_ix(reading)
-                    for j in range(start, end):
-                        e = d.entry(j)
-                        starting.append((Node(begin, begin + k, reading, e.surface, e.lid, e.rid, e.cost, j),
-                                         bigram.sid(j) if bigram is not None else -1))
-                else:
-                    for e in d.lookup(reading):
-                        starting.append((Node(begin, begin + k, reading, e.surface, e.lid, e.rid, e.cost), -1))
-            ch = kana[begin]
-            starting.append((Node(begin, begin + 1, ch, ch, d.unknown_id, d.unknown_id, FALLBACK_COST), -1))
-        for node, sid in starting:
+        for node, sid in _starting(kana, begin, d, bigram, pin_at.get(begin), reach[begin]):
             best, best_total = None, 0
             for p in preds:
                 t = p.total + d.cost(p.node.rid, node.lid)
