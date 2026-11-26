@@ -42,11 +42,11 @@ def line_out(romaji, table, d, bigram=None):
     return f"{kana}\t{pending}\t{'|'.join(n.surface for n in path)}\t{cost}\t{table.finish(romaji)}\t{cuts}"
 
 
-def run_script(script, table, d):
+def run_script(script, table, d, bigram=None):
     """The state lines of one key script."""
     cfg = Config()
     cfg.values["ja_enabled"] = True
-    c = JaComposer(table, d, cfg)
+    c = JaComposer(table, d, cfg, bigram)
     out = []
     for tok in TOKEN.findall(script):
         if tok == "{SPACECONV}":
@@ -89,7 +89,7 @@ def main():
     out = sys.stdout.buffer
     for raw in sys.stdin.buffer:
         line = raw.decode("utf-8").rstrip("\r\n")
-        lines = run_script(line, table, d) if a.keys else [line_out(line, table, d, bigram)]
+        lines = run_script(line, table, d, bigram) if a.keys else [line_out(line, table, d, bigram)]
         out.write("".join(x + "\n" for x in lines).encode("utf-8"))
 
 

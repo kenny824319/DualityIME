@@ -21,7 +21,7 @@ import collections
 import unicodedata
 
 from . import candlayout
-from .ja_convert import convert
+from .ja_convert import convert, word_sid
 
 Pin = collections.namedtuple("Pin", "begin end surface lid rid")
 Segment = collections.namedtuple("Segment", "begin end surface")
@@ -61,10 +61,16 @@ def to_half_katakana(s):
 
 
 class JaComposer:
-    def __init__(self, table, d, config):
+    def __init__(self, table, d, config, bigram=None):
         self.table, self.d, self.config = table, d, config
+        self.bigram = bigram        # plan 5: engine/ja_bigram.JaBigram, or None
+        self.context_sid = -1       # ...the last word sent (the next conversion's context), -1 none
         self.kana_lock = "auto"
         self.reset()
+
+    def forget_context(self):
+        """No context: the field changed (the IME's reset), Esc, a sentence end."""
+        self.context_sid = -1
 
     # ---- state ----
 
@@ -93,7 +99,7 @@ class JaComposer:
 
     def _convert(self):
         cuts = {b for b, _ in self.spans} | {e for _, e in self.spans}
-        self._path = convert(self.kana, self.d, self.pins, cuts)[0] if self.kana else []
+        self._path = convert(self.kana, self.d, self.pins, cuts, self.bigram, self.context_sid)[0] if self.kana else []
 
     def segments(self):
         """The 文節 of what is typed (kana offsets) with the text each shows."""
@@ -322,6 +328,9 @@ class JaComposer:
         self._finish_pending()
         self._render()
         out = self.composition
+        # (what is sent is the next conversion's context: its last word; none after a sentence end or kana as typed)
+        last = self._path[-1] if self._path and self.kana_lock == "auto" and out and out[-1] not in "。？！" else None
+        self.context_sid = word_sid(self.d, self.bigram, last)
         lock = self.kana_lock
         self.reset()
         self.kana_lock = lock
@@ -371,6 +380,7 @@ class JaComposer:
             lock = self.kana_lock
             self.reset()
             self.kana_lock = lock
+            self.forget_context()
         elif special == "BACK":
             if self.pending:
                 self.pending = self.pending[:-1]

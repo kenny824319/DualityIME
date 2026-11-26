@@ -144,6 +144,7 @@ public:
     void context_lost() {
         lm_context_.clear();
         lm_units_.clear();
+        ja_context_ = -1;  // (中日混打's Japanese context too)
     }
     void keep_context(const ustr& context, const ustr& units) {  // (engine_main's flush, after reset)
         lm_context_ = context;
@@ -263,6 +264,9 @@ private:
     void ja_piece(const Token& t, ustr& kana, ustr& pending, ustr& spaces) const;
     std::vector<JaPin> ja_pins_of(const Token& t, const ustr& kana) const;
     std::vector<JaNode> ja_path(const Token& t, ustr& kana, ustr& pending, ustr& spaces) const;
+    int ja_prev_sid(const Token& t) const;          // a romaji token's context (plan 5, engine/composer.py)
+    int ja_context_after(const Token* last) const;  // ...after sending a text ending in `last`
+    int ja_context_ = -1;  // the last Japanese word sent (its bigram number), -1 none
     ustr ja_text(const Token& t) const;
     bool is_romaji(const Token& t) const;      // shown as Japanese: it has a lowercase letter (#162)
     // its keys' kana: digits and a capital's word kept as typed inside it (#169, #172); pending only when pending_ok

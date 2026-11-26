@@ -31,14 +31,17 @@ class JaMixed:
     """The romaji table and dictionary the 中日混打 tokenizer reads, and the costs it worked out (pieces repeat as the
     text grows key by key)."""
 
-    def __init__(self, table, d):
+    def __init__(self, table, d, bigram=None):
         self.table, self.d = table, d
+        self.bigram = bigram  # (plan 5: what the composer shows its pieces with; piece_cost never uses it)
         self._cache = {}
         self.space_cost = RJ["space"]  # (added by the tokenizer to a piece that takes the space after it)
 
     @classmethod
     def load(cls, table=None, d=None):
-        return cls(table or RomajiTable.load(), d or JaDict.load())
+        from .ja_bigram import JaBigram
+        d = d or JaDict.load()
+        return cls(table or RomajiTable.load(), d, JaBigram.load(d))
 
     def piece_cost(self, piece, at_end):
         key = (piece, at_end)

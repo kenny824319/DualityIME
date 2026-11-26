@@ -42,7 +42,20 @@ std::vector<int> groups(const std::vector<Cell>& cells, const std::vector<int>& 
     return out;
 }
 
+// a pin's word number: the first entry of its reading written as it (-1 when the dictionary has none)
+int pin_sid(const JaDict& d, const JaBigram& bigram, const ustr& reading, const ustr& surface) {
+    auto [first, last] = d.lookup(reading);
+    for (uint32_t e = first; e < last; ++e)
+        if (d.surface(e) == surface) return bigram.sid(e);
+    return -1;
+}
+
 }  // namespace
+
+int ja_word_sid(const JaDict& d, const JaBigram* bigram, const JaNode& node) {
+    if (!bigram) return -1;
+    return node.entry >= 0 ? bigram->sid(static_cast<uint32_t>(node.entry)) : pin_sid(d, *bigram, node.reading, node.surface);
+}
 
 std::pair<std::vector<JaNode>, int64_t> ja_convert(const ustr& kana, const JaDict& d, const std::vector<JaPin>& pins,
                                                    const std::vector<int>& cuts, const JaBigram* bigram, int prev_sid) {
@@ -92,15 +105,7 @@ std::pair<std::vector<JaNode>, int64_t> ja_convert(const ustr& kana, const JaDic
         int pin = pin_at[begin];
         if (pin >= 0) {
             const JaPin& p = pins[pin];
-            int sid = -1;
-            if (bigram) {  // (a pin's word number: the first entry of its reading written as it)
-                auto [first, last] = d.lookup(kana.substr(begin, p.end - begin));
-                for (uint32_t e = first; e < last; ++e)
-                    if (d.surface(e) == p.surface) {
-                        sid = bigram->sid(e);
-                        break;
-                    }
-            }
+            int sid = bigram ? pin_sid(d, *bigram, kana.substr(begin, p.end - begin), p.surface) : -1;
             starting.push_back({begin, p.end, p.lid, p.rid, 0, PINNED, 0, -1, 0, sid});
         } else {
             int kmax = std::min(d.max_reading_len, reach[begin] - begin);

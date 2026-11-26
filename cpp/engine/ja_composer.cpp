@@ -64,8 +64,8 @@ ustr ja_to_half_katakana(const ustr& s) {
     return out;
 }
 
-JaComposer::JaComposer(const RomajiTable& table, const JaDict& d, const Config& config)
-    : table_(table), d_(d), config_(config) {
+JaComposer::JaComposer(const RomajiTable& table, const JaDict& d, const Config& config, const JaBigram* bigram)
+    : table_(table), d_(d), config_(config), bigram_(bigram) {
     reset();
 }
 
@@ -87,7 +87,7 @@ void JaComposer::convert_now() {
         cuts.push_back(b);
         cuts.push_back(e);
     }
-    path_ = kana_.empty() ? std::vector<JaNode>() : ja_convert(kana_, d_, pins, cuts).first;
+    path_ = kana_.empty() ? std::vector<JaNode>() : ja_convert(kana_, d_, pins, cuts, bigram_, context_sid_).first;
 }
 
 std::vector<JaSegment> JaComposer::segments() const {
@@ -383,6 +383,11 @@ ustr JaComposer::flush() {
     finish_pending();
     render();
     ustr out = composition;
+    // (what is sent is the next conversion's context: its last word; none after a sentence end or kana as typed)
+    bool ends = !out.empty() && (out.back() == U'。' || out.back() == U'？' || out.back() == U'！');
+    context_sid_ = !path_.empty() && kana_lock == "auto" && !out.empty() && !ends
+                       ? ja_word_sid(d_, bigram_, path_.back())
+                       : -1;
     std::string lock = kana_lock;
     reset();
     kana_lock = lock;
@@ -458,6 +463,7 @@ bool JaComposer::key_special(const std::string& special) {
         std::string lock = kana_lock;
         reset();
         kana_lock = lock;
+        forget_context();
     } else if (special == "BACK") {
         if (!pending_.empty()) {
             pending_.pop_back();

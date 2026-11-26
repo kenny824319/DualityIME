@@ -224,5 +224,87 @@ class ConvertTest(unittest.TestCase):
         self.assertTrue(self.words("かわにはしゎ", bigram=Stub(self.d, surfaces={("に", "橋"): 10})))
 
 
+class ContextTest(unittest.TestCase):
+    """Task 7: the last Japanese word sent is the next conversion's context (a stub bonus を → 箸)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.d, cls.table = JaDict.load(), RomajiTable.load()
+        cls.stub = Stub(cls.d, surfaces={("を", "箸"): 5000})
+
+    def composer(self):
+        from engine.config import Config
+        from engine.ja_composer import JaComposer
+        cfg = Config()
+        cfg.values["ja_enabled"] = True
+        return JaComposer(self.table, self.d, cfg, bigram=self.stub)
+
+    def typed(self, c, keys):
+        for ch in keys:
+            c.key(ch)
+        return c.composition
+
+    def test_context_after_commit(self):
+        c = self.composer()
+        self.assertNotEqual(self.typed(c, "hasi"), "箸")  # (no context: the stub's pair does not apply)
+        c.key(special="ESC")
+        self.typed(c, "gohanwo")
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "ご飯を")
+        self.assertEqual(self.typed(c, "hasi"), "箸")
+
+    def test_context_reset(self):
+        c = self.composer()
+        self.typed(c, "gohanwo")
+        c.key(special="ENTER")
+        c.forget_context()  # (the IME's reset: the field changed)
+        self.assertNotEqual(self.typed(c, "hasi"), "箸")
+
+    def test_sentence_end_resets(self):
+        c = self.composer()
+        self.typed(c, "gohanwo.")
+        c.key(special="ENTER")
+        self.assertNotEqual(self.typed(c, "hasi"), "箸")
+
+    def test_esc_resets(self):
+        c = self.composer()
+        self.typed(c, "gohanwo")
+        c.key(special="ENTER")
+        self.typed(c, "a")
+        c.key(special="ESC")
+        self.assertNotEqual(self.typed(c, "hasi"), "箸")
+
+    def test_mixed_context(self):
+        from engine import create_composer
+        from engine.ja_mixed import JaMixed
+        import tempfile as tf
+        ja = JaMixed.load()
+        old = getattr(ja, "bigram", None)
+        ja.bigram = self.stub
+        tmp = tf.TemporaryDirectory()
+        try:
+            c = create_composer(os.path.join(tmp.name, "user.json"))
+            c.set_japanese(ja)
+            for ch in "gohanwo":
+                c.key(ch)
+            c.key(special="ENTER")
+            for ch in "hasi":
+                c.key(ch)
+            self.assertEqual(c.composition, "箸")  # (the last Japanese word sent)
+            c.key(special="ESC")
+            from tests.test_engine import keys
+            for ch in "gohanwo":
+                c.key(ch)
+            c.key(special="ENTER")
+            for ch in keys("ㄨㄛˇ") + "hasi":  # (a Chinese syllable between: no Japanese context)
+                c.key(ch)
+            self.assertFalse(c.composition.endswith("箸"), c.composition)
+            c.reset()
+            c.set_japanese(None)
+        finally:
+            ja.bigram = old
+            tmp.cleanup()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -60,10 +60,11 @@ std::vector<sz::ustr> tokens(const sz::ustr& script) {
     return out;
 }
 
-void run_script(const sz::ustr& script, const sz::RomajiTable& table, const sz::JaDict& dict, bool timing) {
+void run_script(const sz::ustr& script, const sz::RomajiTable& table, const sz::JaDict& dict, bool timing,
+                const sz::JaBigram* bigram = nullptr) {
     sz::Config cfg;
     cfg.set("ja_enabled", sz::Json(true));
-    sz::JaComposer c(table, dict, cfg);
+    sz::JaComposer c(table, dict, cfg, bigram);
     std::vector<long long> times;
     for (auto& tok : tokens(script)) {
         std::string t = sz::to_utf8(tok);
@@ -153,7 +154,7 @@ int wmain(int argc, wchar_t** argv) {
         }
         sz::ustr input = sz::from_utf8(line);
         if (keys) {
-            run_script(input, *table, *dict, timing);
+            run_script(input, *table, *dict, timing, bigram.get());
             continue;
         }
         auto [kana, pending] = table->to_kana(input);

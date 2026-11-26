@@ -14,6 +14,8 @@ bool JaData::ready() {
             dict.reset();
         } else {
             mixed = std::make_unique<JaMixed>(*table, *dict);
+            bigram = JaBigram::load(dir, *dict);  // (none: conversion as without it)
+            mixed->bigram = bigram.get();
         }
     }
     return table && dict;
@@ -81,7 +83,7 @@ Json JaSession::handle(const Json& req, JaData& data, const Config& config) {
         o["ja_off"] = Json(true);
         return o;
     }
-    if (!c_) c_ = std::make_unique<JaComposer>(*data.table, *data.dict, config);
+    if (!c_) c_ = std::make_unique<JaComposer>(*data.table, *data.dict, config, data.bigram.get());
     JaComposer& c = *c_;
     bool handled = true;
     ustr commit;

@@ -24,7 +24,9 @@ ustr ja_to_half_katakana(const ustr& s);
 
 class JaComposer {
 public:
-    JaComposer(const RomajiTable& table, const JaDict& d, const Config& config);
+    // bigram (plan 5, may be null): its bonuses, the last word sent being the next conversion's context
+    JaComposer(const RomajiTable& table, const JaDict& d, const Config& config, const JaBigram* bigram = nullptr);
+    void forget_context() { context_sid_ = -1; }  // the field changed (the IME's reset), Esc, a sentence end
 
     // ch: a printable character typed, or special: BACK DEL ENTER ESC LEFT RIGHT HOME END UP DOWN PGUP PGDN TAB STAB
     // F6 F7 F8 SLEFT SRIGHT. Returns true if the key was used.
@@ -55,6 +57,8 @@ private:
     const RomajiTable& table_;
     const JaDict& d_;
     const Config& config_;
+    const JaBigram* bigram_ = nullptr;
+    int context_sid_ = -1;  // the last word sent (its bigram number), -1 none
     ustr kana_, pending_;
     int caret_ = -1;  // kana offset; -1 = the end
     std::vector<std::pair<int, int>> spans_;  // 文節 set with Shift+← →

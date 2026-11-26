@@ -121,13 +121,15 @@ def main():
             lines = [f"{rng.choice([-1, rng.randrange(500)])}\t{line}" for line in lines]
         py = run([sys.executable, convert] + extra, lines)
         cpp = run([a.exe, data] + extra, lines)
+        keys = [line.rstrip("\r\n") for line in open(a.scripts, encoding="utf-8")] if a.scripts else scripts()
+        # (with a bigram the composer's commits give the next conversion its context: the scripts have ENTERs)
+        py_k = groups(run([sys.executable, convert, "--keys"] + extra, keys))
+        cpp_k = groups(run([a.exe, data, "--keys"] + extra, keys))
     if len(py) != len(lines) or len(cpp) != len(lines):
         sys.exit(f"DIFFERENT: {len(lines)} lines in, Python {len(py)} out, C++ {len(cpp)} out")
     diff = [(r, p, c) for r, p, c in zip(lines, py, cpp) if p != c]
     for r, p, c in diff[:50]:
         print(f"{r}\n  py:  {p}\n  cpp: {c}")
-    keys = [line.rstrip("\r\n") for line in open(a.scripts, encoding="utf-8")] if a.scripts else scripts()
-    py_k, cpp_k = groups(run([sys.executable, convert, "--keys"], keys)), groups(run([a.exe, data, "--keys"], keys))
     if len(py_k) != len(keys) or len(cpp_k) != len(keys):
         sys.exit(f"DIFFERENT: {len(keys)} scripts in, Python {len(py_k)} out, C++ {len(cpp_k)} out")
     kdiff = [(s, p, c) for s, p, c in zip(keys, py_k, cpp_k) if p != c]

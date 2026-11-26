@@ -70,6 +70,14 @@ def _pin_sid(d, bigram, reading, surface):
     return -1
 
 
+def word_sid(d, bigram, node):
+    """A path node's word number in the bigram (its entry's; a pin or fallback: its reading's entry written as it), -1
+    none - the context the next conversion starts from (plan 5)."""
+    if bigram is None or node is None:
+        return -1
+    return bigram.sid(node.entry) if node.entry >= 0 else _pin_sid(d, bigram, node.reading, node.surface)
+
+
 def convert(kana, d, pins=(), cuts=(), bigram=None, prev_sid=-1):
     """(the cheapest path as Nodes, its cost): BOS and EOS are id 0; cost = sum of node cost + connection cost
     (- the bigram's bonuses). pins: spans whose text is fixed (begin, end, surface, lid, rid - ja_composer.Pin): the
@@ -136,10 +144,10 @@ def convert(kana, d, pins=(), cuts=(), bigram=None, prev_sid=-1):
     return path, best_total
 
 
-def convert_romaji(romaji, table, d, finished=False):
+def convert_romaji(romaji, table, d, finished=False, bigram=None):
     """What a romaji string shows: the converted kana, then the letters still pending (none once finished)."""
     if finished:
         kana, pending = table.finish(romaji), ""
     else:
         kana, pending = table.to_kana(romaji)
-    return "".join(node.surface for node in convert(kana, d)[0]) + pending
+    return "".join(node.surface for node in convert(kana, d, bigram=bigram)[0]) + pending

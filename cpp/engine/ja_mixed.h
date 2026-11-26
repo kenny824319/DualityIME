@@ -6,6 +6,9 @@
 
 #include "ja_dict.h"
 #include "ja_romaji.h"
+namespace sz {
+class JaBigram;
+}
 
 namespace sz {
 
@@ -22,6 +25,7 @@ public:
     double space_cost = RJ_SPACE;
     const RomajiTable& table;
     const JaDict& d;
+    const JaBigram* bigram = nullptr;  // (plan 5: what the composer shows its pieces with; piece_cost never uses it)
 
 private:
     double cost_of(const std::string& piece, bool at_end) const;

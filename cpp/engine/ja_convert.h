@@ -28,6 +28,9 @@ struct JaPin {
 constexpr int JA_FALLBACK_COST = 20000;
 
 // the cheapest path (BOS and EOS are id 0) and its cost: sum of node cost + connection cost;
+// a path node's word number in the bigram (its entry's; a pin or fallback: its reading's first entry written as it),
+// -1 none or no bigram - the context the next conversion starts from (engine/ja_convert.py word_sid)
+int ja_word_sid(const JaDict& d, const JaBigram* bigram, const JaNode& node);
 // pins: fixed spans (not overlapping); cuts: kana offsets no word crosses; bigram (plan 5, may be null): its bonuses
 // between neighbouring words, prev_sid its word number of the word before (the context)
 std::pair<std::vector<JaNode>, int64_t> ja_convert(const ustr& kana, const JaDict& d,

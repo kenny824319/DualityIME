@@ -2825,6 +2825,7 @@ Composer::Composer(SyllableTable& table, const Lexicon& lexicon, const English& 
 
 void Composer::reset() {
     context_word_.reset();
+    ja_context_ = -1;  // (中日混打, plan 5)
     lm_context_.clear();
     lm_units_.clear();
     after_english_ = false;
@@ -2992,7 +2993,31 @@ std::vector<JaPin> Composer::ja_pins_of(const Token& t, const ustr& kana) const 
 std::vector<JaNode> Composer::ja_path(const Token& t, ustr& kana, ustr& pending, ustr& spaces) const {
     ja_piece(t, kana, pending, spaces);
     if (kana.empty()) return {};
-    return ja_convert(kana, ja_->d, ja_pins_of(t, kana)).first;
+    int prev = ja_->bigram ? ja_prev_sid(t) : -1;
+    return ja_convert(kana, ja_->d, ja_pins_of(t, kana), {}, ja_->bigram, prev).first;
+}
+
+int Composer::ja_prev_sid(const Token& t) const {
+    // the last word of the Japanese token right before it in this text, or - first in the text - the last Japanese
+    // word sent; none after anything else (a Chinese syllable, a mark)
+    size_t i = 0;
+    while (i < tokens.size() && tokens[i].start != t.start) ++i;
+    if (i == 0 || i == tokens.size()) return ja_context_;
+    const Token& before = tokens[i - 1];
+    if (!is_romaji(before)) return -1;
+    ustr kana, pending, spaces;
+    auto path = ja_path(before, kana, pending, spaces);
+    return path.empty() ? -1 : ja_word_sid(ja_->d, ja_->bigram, path.back());
+}
+
+int Composer::ja_context_after(const Token* last) const {
+    if (!ja_ || !ja_->bigram || !last || !is_romaji(*last) || ja_lock_ != "auto") return -1;
+    ustr kana, pending, spaces;
+    auto path = ja_path(*last, kana, pending, spaces);
+    if (path.empty()) return -1;
+    const ustr& s = path.back().surface;
+    if (!s.empty() && (s.back() == U'。' || s.back() == U'？' || s.back() == U'！')) return -1;
+    return ja_word_sid(ja_->d, ja_->bigram, path.back());
 }
 
 bool Composer::set_ja_lock(const std::string& lock) {
@@ -5645,6 +5670,7 @@ void Composer::type_symbol(const ustr& sym, bool stay, bool join) {
         if (stay) std::tie(symbol_page, symbol_cursor) = keep;  // (sending clears the input, the keyboard with it)
     }
     context_word_.reset();
+    ja_context_ = -1;
     after_english_ = false;
     sent({sym});  // (its Chinese, if any, is what is right before the caret now: #37)
     commit = before + sym;
@@ -6762,6 +6788,7 @@ void Composer::do_commit() {
     after_english_ = false;
     if (last && last->kind == Kind::Zh && !segments_.empty()) context_word_ = segments_.back().phrase;
     else context_word_.reset();
+    ja_context_ = ja_context_after(last);  // (中日混打, plan 5)
     {  // (接續前文選字, #37)
         std::vector<ustr> phrases;
         for (auto& seg : segments_) phrases.push_back(seg.phrase);
@@ -7452,6 +7479,12 @@ void Composer::commit_head() {
         for (auto& [x, v] : pending_)
             if (x >= tok_start) pending[x - tok_start] = v;
         pending_ = std::move(pending);
+        if (ja_) {  // (中日混打, plan 5: what stays starts after the last token sent - its picks still on)
+            const Token* before = nullptr;
+            for (auto& x : tokens)
+                if (x.start < tok_start) before = &x;
+            ja_context_ = ja_context_after(before);
+        }
         std::map<int, std::pair<ustr, std::vector<JaPin>>> ja_pins;  // (中日混打's picks move too - findings #165)
         for (auto& [x, v] : ja_pins_)
             if (x >= tok_start) ja_pins[x - tok_start] = v;
@@ -7515,6 +7548,7 @@ bool Composer::key(std::optional<char32_t> ch, const std::string& special, bool 
         ustr text = lit_text(p != PUNCT().end() ? p->second : ustr(1, *ch), std::string(1, c));
         commit = config.flag("full_width") && p == PUNCT().end() ? to_full_width(text) : text;
         context_word_.reset();
+        ja_context_ = -1;
         after_english_ = false;
         return true;
     }

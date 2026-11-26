@@ -7,6 +7,7 @@
 #include <string>
 
 #include "config.h"
+#include "ja_bigram.h"
 #include "ja_composer.h"
 #include "ja_dict.h"
 #include "ja_mixed.h"
@@ -21,6 +22,7 @@ struct JaData {
     std::unique_ptr<RomajiTable> table;
     std::unique_ptr<JaDict> dict;
     std::unique_ptr<JaMixed> mixed;  // 中日混打's romaji cost over them (the Chinese composers share it)
+    std::unique_ptr<JaBigram> bigram;  // plan 5: data\ja_bigram.bin when it is there and for this dictionary
     bool tried = false;
     bool ready();  // loads on the first call; false when the files cannot be read
 };
@@ -41,7 +43,10 @@ public:
     static Mixed mixed(const Json& req, JaData& data, const Config& config);
     bool active() const { return c_ != nullptr; }
     void reset() {  // the IME left the field (op "reset"): what was typed goes, as the Chinese side's
-        if (c_) c_->reset();
+        if (c_) {
+            c_->reset();
+            c_->forget_context();  // (plan 5: nothing sent before counts in another field)
+        }
     }
 
 private:
