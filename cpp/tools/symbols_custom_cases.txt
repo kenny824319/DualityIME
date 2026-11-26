@@ -9,3 +9,5 @@ su3``{ENTER} => 你♪
 su3`s{ESC}{ENTER} => 你
 su3`{TAB}{TAB}8{ENTER} => 你✓
 su3`d{ENTER} => 你👩‍💻
+# #82: a custom key's ★ is in no row - ↓ lists nothing, so ↓↓ Enter sends it as it is
+`{TAB}a{LEFT}{DOWN}{DOWN}{ENTER} => ★

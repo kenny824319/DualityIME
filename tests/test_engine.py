@@ -639,11 +639,12 @@ class SymbolKeyboardTest(Base):
         self.assertEqual(c.composition, "、")
         self.press("ENTER")
         self.assertEqual(c.commit, "、")
+        self.press("`", "x", "LEFT", "DOWN")  # (？ on the first page's x key: its full-width row, the user 2026-11-26)
+        self.assertEqual(c.candidates, ["？", "！", "。", "⁇"])
+        c.key(special="ESC"); c.key(special="ESC")
         self.press("`", "ENTER")  # (the arrows' cursor: Enter picks it, the same)
         self.assertEqual((c.commit, c.composition), ("", "1"))
         c.key(special="ESC")
-        self.press("`", " ")  # (the keyboard's Space - a space, not a symbol - goes out as before)
-        self.assertNotEqual(c.composition, " ")
 
     def test_tilde_types_a_tilde(self):
         # Shift+` is ~, as any other symbol key (users: it could not be typed at all); ` alone opens the keyboard
@@ -997,6 +998,19 @@ class CustomSymbolKeyboardTest(Base):
         c.key("`")
         c.key("a")
         self.assertEqual(c.composition, "★")  # (#82: held until Enter)
+        c.key(special="LEFT")
+        c.key(special="DOWN")  # (★ is in no row: no list, the user 2026-11-26)
+        self.assertEqual((c.candidates, c.composition), ([], "★"))
+
+    def test_a_moved_mark_still_lists_its_row(self):
+        # (#82, the user 2026-11-26: the mark itself is recognised, not its key - ？ moved to q still swaps)
+        self.write([self.page(0, q="？"), self.page(1), self.page(2)])
+        c = self.c
+        for k in ("`", "q"):
+            c.key(k)
+        c.key(special="LEFT")
+        c.key(special="DOWN")
+        self.assertEqual(c.candidates, ["？", "！", "。", "⁇"])
 
     def test_two_keys_swapped(self):
         self.write([self.page(0, a="（", q="※"), self.page(1), self.page(2)])
@@ -3187,6 +3201,8 @@ class QuickFillTest(unittest.TestCase):
         c.config.values = dict(DEFAULTS)
         for k in ("`", "`"):
             c.key(k)
+        self.assertEqual((c.commit, c.composition), ("", "`"))  # (#82: held until Enter)
+        c.key(special="ENTER")
         self.assertEqual(c.commit, "`")
 
     SAMPLES = ["email", "name1", "name2", "name3", "phone", "id", "birth", "addr", "tks", "em1", "em2", "em3", "em4"]
@@ -5630,7 +5646,7 @@ class PunctuationSwapTest(Base):
     def test_the_row_of_the_mark_before_the_caret(self):
         c = self.c
         self.press("s", "u", "3"); c.type_full_punct(","); self.press("LEFT", "DOWN")
-        self.assertEqual(c.candidates, ["，", "、", "；", "：", ","])
+        self.assertEqual(c.candidates, ["，", "、", "；", "："])  # (full width only, the user 2026-11-26)
         self.press("DOWN", "ENTER")
         self.assertEqual((c.composition, c.candidates), ("你、", []))
         self.press("ENTER")
@@ -5639,9 +5655,27 @@ class PunctuationSwapTest(Base):
     def test_half_width_mark_row_starts_with_itself(self):
         c = self.c  # (punctuation "half" as it comes: , shown as typed)
         self.press("s", "u", "3", ",", "c", "l", "3", "LEFT", "LEFT", "DOWN")
-        self.assertEqual(c.candidates, [",", "，", "、", "；", "："])
+        self.assertEqual(c.candidates, [",", ";", ":"])  # (half width only: the half-width marks of its row)
         self.press("2")
-        self.assertEqual(c.composition, "你，好")
+        self.assertEqual(c.composition, "你;好")
+
+    def test_each_width_lists_only_its_own_width(self):
+        # (the user 2026-11-26: 「符號還是分全半形比較好」 - typed ？ lists only full-width marks, ? only half-width ones;
+        # a half-width mark whose row has no other half-width mark lists nothing, as a mark in no row)
+        c = self.c
+        self.press(*"su3?cl3", "LEFT", "LEFT", "DOWN")
+        self.assertEqual(c.candidates, ["?", "!", "."])
+        self.press("2")
+        self.assertEqual(c.composition, "你!好")
+        c.reset()
+        self.press(*"su3"); c.type_full_punct("?"); self.press("LEFT", "DOWN")
+        self.assertEqual(c.candidates, ["？", "！", "。", "⁇"])
+        c.reset()
+        self.press(*"su3(", "LEFT", "DOWN")  # (( has only full-width marks beside it)
+        self.assertEqual((c.candidates, c.composition), ([], "你("))
+        c.reset()
+        self.press(*"su3\\", "LEFT", "DOWN")  # (＼／\ : / is ／'s half-width mark)
+        self.assertEqual(c.candidates, ["\\", "/"])
 
     def test_full_width_typed_mark(self):
         self.c.config.set(punctuation="full")
@@ -5703,7 +5737,7 @@ class PunctuationSwapTest(Base):
         c.user.set_simplified(True)
         try:
             self.press("s", "u", "3"); c.type_full_punct(","); self.press("LEFT", "DOWN")
-            self.assertEqual(c.candidates, ["，", "、", "；", "：", ","])
+            self.assertEqual(c.candidates, ["，", "、", "；", "："])
         finally:
             c.user.set_simplified(False)
 
@@ -5736,14 +5770,14 @@ class PunctuationSwapTest(Base):
         self.press("s", "u", "3"); c.type_full_punct("["); self.press(*"cl3", "LEFT", "LEFT", "DOWN", "4")
         self.assertEqual(c.composition, "你【好")
         self.press("LEFT", "DOWN")  # (the pick left the caret before 好: one step back is 【)
-        self.assertEqual(c.candidates, ["【", "「", "『", "（", "《", "〈", "“", "〔", "("])
+        self.assertEqual(c.candidates, ["【", "「", "『", "（", "《", "〈", "“", "〔"])
         self.press("2")
         self.assertEqual(c.composition, "你「好")
         c.reset()
         self.press("s", "u", "3"); c.type_full_punct("^"); self.press("LEFT", "DOWN", "2")
         self.assertEqual(c.composition, "你…")
         self.press("LEFT", "DOWN")
-        self.assertEqual(c.candidates, ["…", "。", "！", "？", ".", "……", "⋯⋯", "‥", "——"])
+        self.assertEqual(c.candidates, ["…", "。", "！", "？", "……", "⋯⋯", "‥", "——"])
 
     def test_a_mark_before_a_replacement_bar_pick_stays_a_mark(self):
         # (findings #115, there since #52: a pick from the replacement bar is a fix too, and the , before it went out as
@@ -5767,7 +5801,8 @@ class PunctuationSwapTest(Base):
                 self.press("s", "u", "3")
                 self.assertTrue(c.type_full_punct(key))
                 self.press("LEFT", "DOWN")
-                self.assertEqual(c.candidates, list(PUNCT_SWAPS[mark]))
+                full = [m for m in PUNCT_SWAPS[mark] if not m.isascii()]  # (full width only, the user 2026-11-26)
+                self.assertEqual(c.candidates, full)
                 self.press("2")
                 self.assertEqual(c.composition, "你" + PUNCT_SWAPS[mark][1])
         self.assertEqual({m for k, m in list(PUNCT_KEYS.items()) + list(PUNCT.items())}, set(PUNCT_SWAPS))

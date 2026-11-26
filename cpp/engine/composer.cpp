@@ -3671,20 +3671,36 @@ int Composer::caret_index() const {
     return c;
 }
 
+static bool is_ascii(const ustr& s) {
+    for (char32_t ch : s)
+        if (ch >= 128) return false;
+    return true;
+}
+
+static ustr half_of(const ustr& mark) {
+    // a mark's half-width form: itself when ASCII, HALF_WIDTH's (。 is .), a full-width form's (／ is /); else empty
+    if (is_ascii(mark)) return mark;
+    auto h = HALF_WIDTH().find(mark);
+    if (h != HALF_WIDTH().end()) return h->second;
+    if (mark.size() == 1 && mark[0] >= 0xFF01 && mark[0] <= 0xFF5E) return ustr(1, static_cast<char32_t>(mark[0] - 0xFEE0));
+    return {};
+}
+
 static std::vector<ustr> punct_choices(const ustr& shown) {
     // the marks a mark shown so can become (#53), itself first; empty when it is in no row. A half-width one (a value
     // of HALF_WIDTH: , . ? ...) takes its full-width mark's row with itself first; one with no row of its own (【 … ⁇,
     // picked from a row) every row holding it, merged in the table's order, itself first - whichever row it came from,
     // the way back is there (findings #110, #113: … is in 。's row and in ……'s)
-    auto it = PUNCT_SWAPS().find(shown);
-    if (it != PUNCT_SWAPS().end()) return it->second;
     std::vector<const std::vector<ustr>*> rows;
-    for (auto& [full, half] : HALF_WIDTH())
-        if (half == shown) {
-            auto r = PUNCT_SWAPS().find(full);
-            if (r != PUNCT_SWAPS().end()) rows.push_back(&r->second);
-            break;
-        }
+    auto it = PUNCT_SWAPS().find(shown);
+    if (it != PUNCT_SWAPS().end()) rows.push_back(&it->second);
+    if (rows.empty())
+        for (auto& [full, half] : HALF_WIDTH())
+            if (half == shown) {
+                auto r = PUNCT_SWAPS().find(full);
+                if (r != PUNCT_SWAPS().end()) rows.push_back(&r->second);
+                break;
+            }
     if (rows.empty())
         for (auto& key : PUNCT_ROW_ORDER()) {
             auto& r = PUNCT_SWAPS().at(key);
@@ -3695,7 +3711,20 @@ static std::vector<ustr> punct_choices(const ustr& shown) {
     for (auto* row : rows)
         for (auto& m : *row)
             if (std::find(out.begin(), out.end(), m) == out.end()) out.push_back(m);
-    return out;
+    // (each width its own, the user 2026-11-26: a full-width mark lists the full-width marks of its rows, a half-width
+    // one their half-width marks; nothing when nothing else is left)
+    std::vector<ustr> kept;
+    if (is_ascii(shown)) {
+        for (auto& m : out) {
+            ustr h = half_of(m);
+            if (!h.empty() && std::find(kept.begin(), kept.end(), h) == kept.end()) kept.push_back(h);
+        }
+    } else {
+        for (auto& m : out)
+            if (!is_ascii(m)) kept.push_back(m);
+    }
+    if (kept.size() < 2) return {};
+    return kept;
 }
 
 static std::optional<ustr> bracket_partner_text(const ustr& /*old_text*/, const ustr& new_text) {

@@ -21,3 +21,6 @@ ji3{^.}{LEFT}{DOWN}2{ENTER} => 我！
 # it swaps it, more can be typed after it, Enter sends it
 `,{LEFT}{DOWN}2{ENTER}{ENTER} => 、
 `,su3{ENTER} => ，你
+# #82: the keyboard's ？ (x) lists the full-width marks of its row only, a half-width ? the half-width ones
+`x{LEFT}{DOWN}2{ENTER}{ENTER} => ！
+su3?cl3{LEFT}{LEFT}{DOWN}2{ENTER}{ENTER} => 你!好

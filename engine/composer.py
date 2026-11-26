@@ -55,13 +55,36 @@ def punct_choices(shown):
     picked from a row) every row holding it, merged in the table's order, itself first - whichever row it came from,
     the way back is there (findings #110, #113: \u2026 is in \u3002's row and in \u2026\u2026's)."""
     if shown in PUNCT_SWAPS:
-        return list(PUNCT_SWAPS[shown])
-    full = next((f for f, h in HALF_WIDTH.items() if h == shown), None)
-    rows = [PUNCT_SWAPS[full]] if full in PUNCT_SWAPS else [r for r in PUNCT_SWAPS.values() if shown in r]
+        rows = [PUNCT_SWAPS[shown]]
+    else:
+        full = next((f for f, h in HALF_WIDTH.items() if h == shown), None)
+        rows = [PUNCT_SWAPS[full]] if full in PUNCT_SWAPS else [r for r in PUNCT_SWAPS.values() if shown in r]
     out = [shown] if rows else []
     for row in rows:
         out += [m for m in row if m not in out]
-    return out
+    # (each width its own, the user 2026-11-26 「符號還是分全半形比較好」: a full-width mark lists the full-width marks of
+    # its rows, a half-width one their half-width marks; nothing when nothing else is left)
+    if shown.isascii():
+        halves = []
+        for m in out:
+            h = _half_of(m)
+            if h is not None and h not in halves:
+                halves.append(h)
+        out = halves
+    else:
+        out = [m for m in out if not m.isascii()]
+    return out if len(out) > 1 else []
+
+
+def _half_of(mark):
+    """A mark's half-width form: itself when ASCII, HALF_WIDTH's (。 is .), a full-width form's (／ is /); else None."""
+    if mark.isascii():
+        return mark
+    if mark in HALF_WIDTH:
+        return HALF_WIDTH[mark]
+    if len(mark) == 1 and 0xFF01 <= ord(mark) <= 0xFF5E:
+        return chr(ord(mark) - 0xFEE0)
+    return None
 
 
 def bracket_partner_text(old, new):

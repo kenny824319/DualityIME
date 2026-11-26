@@ -50,14 +50,15 @@ CASES = [
     # bracket's partner follows; at the end, as before; a mark in no row (<, the symbol keyboard's ●) nothing; the swap
     # stays through typing and Backspace; a mark typed right before a swapped one stays a mark (findings #108, full
     # width), or before a pick from the replacement bar (#115); brackets pair by kind (#109); a mark with no row of its
-    # own lists every row holding it (#110, #113: … back to ……). {RESET} after them: what they send is no context for
+    # own lists every row holding it (#110, #113: … back to ……); each width lists its own width (? its half-width row, ( none,
+    # \ the half-width /: the user 2026-11-26). {RESET} after them: what they send is no context for
     # the cases after
     "su3{^^}{LEFT}{DOWN}2{LEFT}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}", "su3,cl3{LEFT}{UP}{ENTER}{ENTER}",
     "su3{^,}{LEFT}{DOWN}{DOWN}{ENTER}{ENTER}", "su3,cl3{LEFT}{LEFT}{DOWN}2{ENTER}", "su3{^.}{LEFT}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}",
     "ji3[su3cl3.]{HOME}{RIGHT}{DOWN}2{ENTER}", "su3{^[}cl3:){^]}{HOME}{RIGHT}{DOWN}2{ENTER}",
     "su3{^[}cl3{LEFT}{LEFT}{DOWN}4{LEFT}{DOWN}2{ENTER}",
     "su3{^[}cl3{^[}ji3{^]}{^]}{HOME}{RIGHT}{DOWN}2{ENTER}", "su3{^[}cl3{LEFT}{LEFT}{DOWN}3{ENTER}", "su3{^,}{DOWN}{ESC}{ENTER}",
-    "su3<{LEFT}{DOWN}{ENTER}", "su3`f{LEFT}{DOWN}{ENTER}",
+    "su3<{LEFT}{DOWN}{ENTER}", "su3`f{LEFT}{DOWN}{ENTER}?cl3{LEFT}{LEFT}{DOWN}2{ENTER}(\\{LEFT}{DOWN}2{ENTER}{ENTER}",
     # (the fifteenth goes on after its {RESET} with 中日混打's keys, #36 - so --cases 15 types them; English in the other
     # settings): a Japanese sentence, Chinese then Japanese, a mark after Japanese, a Japanese 文節 picked from ↓ then
     # more typed, Backspace in it, a pending n sent; numbers and capitals as typed (findings #162, #169), also inside
