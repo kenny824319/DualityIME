@@ -77,14 +77,11 @@ def punct_choices(shown):
 
 
 def _half_of(mark):
-    """A mark's half-width form: itself when ASCII, HALF_WIDTH's (。 is .), a full-width form's (／ is /); else None."""
+    """A mark's half-width form: itself when ASCII, HALF_WIDTH's (。 is .); else None. (Only HALF_WIDTH: ／ as / would be
+    a mark in no row, with no way back - findings #182.)"""
     if mark.isascii():
         return mark
-    if mark in HALF_WIDTH:
-        return HALF_WIDTH[mark]
-    if len(mark) == 1 and 0xFF01 <= ord(mark) <= 0xFF5E:
-        return chr(ord(mark) - 0xFEE0)
-    return None
+    return HALF_WIDTH.get(mark)
 
 
 def bracket_partner_text(old, new):

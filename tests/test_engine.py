@@ -5674,8 +5674,8 @@ class PunctuationSwapTest(Base):
         self.press(*"su3(", "LEFT", "DOWN")  # (( has only full-width marks beside it)
         self.assertEqual((c.candidates, c.composition), ([], "你("))
         c.reset()
-        self.press(*"su3\\", "LEFT", "DOWN")  # (＼／\ : / is ／'s half-width mark)
-        self.assertEqual(c.candidates, ["\\", "/"])
+        self.press(*"su3\\", "LEFT", "DOWN")  # (＼／\ : no other half-width mark - / would have no way back, #182)
+        self.assertEqual((c.candidates, c.composition), ([], "你\\"))
 
     def test_full_width_typed_mark(self):
         self.c.config.set(punctuation="full")

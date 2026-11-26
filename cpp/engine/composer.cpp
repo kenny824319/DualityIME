@@ -3678,12 +3678,11 @@ static bool is_ascii(const ustr& s) {
 }
 
 static ustr half_of(const ustr& mark) {
-    // a mark's half-width form: itself when ASCII, HALF_WIDTH's (。 is .), a full-width form's (／ is /); else empty
+    // a mark's half-width form: itself when ASCII, HALF_WIDTH's (。 is .); else empty. (Only HALF_WIDTH: ／ as / would be
+    // a mark in no row, with no way back - findings #182.)
     if (is_ascii(mark)) return mark;
     auto h = HALF_WIDTH().find(mark);
-    if (h != HALF_WIDTH().end()) return h->second;
-    if (mark.size() == 1 && mark[0] >= 0xFF01 && mark[0] <= 0xFF5E) return ustr(1, static_cast<char32_t>(mark[0] - 0xFEE0));
-    return {};
+    return h != HALF_WIDTH().end() ? h->second : ustr{};
 }
 
 static std::vector<ustr> punct_choices(const ustr& shown) {

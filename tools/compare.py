@@ -51,7 +51,7 @@ CASES = [
     # stays through typing and Backspace; a mark typed right before a swapped one stays a mark (findings #108, full
     # width), or before a pick from the replacement bar (#115); brackets pair by kind (#109); a mark with no row of its
     # own lists every row holding it (#110, #113: … back to ……); each width lists its own width (? its half-width row, ( none,
-    # \ the half-width /: the user 2026-11-26). {RESET} after them: what they send is no context for
+    # \ none either, findings #182: the user 2026-11-26). {RESET} after them: what they send is no context for
     # the cases after
     "su3{^^}{LEFT}{DOWN}2{LEFT}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}", "su3,cl3{LEFT}{UP}{ENTER}{ENTER}",
     "su3{^,}{LEFT}{DOWN}{DOWN}{ENTER}{ENTER}", "su3,cl3{LEFT}{LEFT}{DOWN}2{ENTER}", "su3{^.}{LEFT}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}",
