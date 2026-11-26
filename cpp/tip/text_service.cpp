@@ -1023,6 +1023,8 @@ bool TextService::key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
     }
     wchar_t ch = char_of(vk, lp);
     if (pure_ja()) {  // 純日文 (#36): to the engine's Japanese composer
+        // (a new sentence: is what was sent still before the caret? else its context goes - #37, findings #177)
+        if (state_.composition.empty()) check_context(ctx);
         req["op"] = Json("key");
         req["ja"] = Json(true);
         bool shift = down(VK_SHIFT);

@@ -15,6 +15,28 @@ from .lexicon import DATA_DIR
 HEADER = struct.Struct("<4sIIIIHHI")
 
 
+def _valid(entry, sid, a, b, dict_entries, n_map):
+    """What both readers require of a file (cpp/engine/ja_bigram.cpp the same, findings #178): entries strictly ascending
+    and inside the dictionary; word numbers - of entries and of pairs - below n_map (they are compact, every word has an
+    entry); pairs strictly ascending by (a, b)."""
+    try:
+        import numpy as np
+    except ImportError:
+        np = None
+    if np is not None:
+        e, s = np.frombuffer(entry, np.uint32), np.frombuffer(sid, np.uint32)
+        x, y = np.frombuffer(a, np.uint32).astype(np.int64), np.frombuffer(b, np.uint32).astype(np.int64)
+        key = (x << 32) | y
+        return bool((e.size == 0 or (np.all(e[1:] > e[:-1]) and e[-1] < dict_entries))
+                    and np.all(s < n_map) and np.all(x < n_map) and np.all(y < n_map)
+                    and np.all(key[1:] > key[:-1]))
+    if any(entry[i] >= entry[i + 1] for i in range(len(entry) - 1)) or (len(entry) and entry[-1] >= dict_entries):
+        return False
+    if any(v >= n_map for v in sid) or any(v >= n_map for v in a) or any(v >= n_map for v in b):
+        return False
+    return all((a[i], b[i]) < (a[i + 1], b[i + 1]) for i in range(len(a) - 1))
+
+
 class JaBigram:
     def __init__(self, data):
         magic, self.dict_entries, self.dict_crc32, n_map, n_pairs, self.w, self.max_bonus, self.min_count = \
@@ -35,6 +57,8 @@ class JaBigram:
         pos += 4 * n_pairs
         self._bonus = mv[pos:pos + 2 * n_pairs].cast("H")
         self.n_pairs = n_pairs
+        if not _valid(self._entry, self._sid, self._a, self._b, self.dict_entries, n_map):
+            raise ValueError("a damaged Japanese bigram file")
 
     @classmethod
     def load(cls, d, path=None):

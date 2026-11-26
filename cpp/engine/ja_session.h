@@ -42,6 +42,9 @@ public:
     };
     static Mixed mixed(const Json& req, JaData& data, const Config& config);
     bool active() const { return c_ != nullptr; }
+    void context_lost() {  // #37's check: the text before the caret is not what was sent (op "context_lost")
+        if (c_) c_->forget_context();
+    }
     void reset() {  // the IME left the field (op "reset"): what was typed goes, as the Chinese side's
         if (c_) {
             c_->reset();

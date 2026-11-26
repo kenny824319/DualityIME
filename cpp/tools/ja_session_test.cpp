@@ -38,6 +38,9 @@ int wmain(int argc, wchar_t** argv) {
         } else if (const sz::Json* set = req.get("set")) {
             for (auto& [k, v] : set->members()) config.set(k, v);
             out["set"] = sz::Json(true);
+        } else if (req.get("context_lost")) {  // ({"context_lost": true}: the engine's op context_lost, #37)
+            session.context_lost();
+            out["context_lost"] = sz::Json(true);
         } else if (const sz::Json* m = req.get("mixed")) {  // ({"mixed": <a Chinese request>}: its 中日混打 flag)
             auto r = sz::JaSession::mixed(*m, data, config);
             sz::Json o = sz::Json::object();

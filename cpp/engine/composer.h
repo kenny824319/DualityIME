@@ -257,6 +257,8 @@ private:
         ustr lm_context;  // what 接續前文選字 read before this commit (#37)
         ustr lm_units;    // ...as units (#41)
         std::vector<std::pair<int, std::string>> syllables;  // the syllables the picks are numbered by: offset, keys
+        int ja_context = -1;  // (中日混打: the context it was typed after and its picks - findings #175)
+        std::map<int, std::pair<ustr, std::vector<JaPin>>> ja_pins;
     };
 
     void clear_input();
@@ -267,6 +269,8 @@ private:
     int ja_prev_sid(const Token& t) const;          // a romaji token's context (plan 5, engine/composer.py)
     int ja_context_after(const Token* last) const;  // ...after sending a text ending in `last`
     int ja_context_ = -1;  // the last Japanese word sent (its bigram number), -1 none
+    mutable std::map<int, std::vector<JaNode>> ja_memo_;  // token start -> its path, during one render (#176)
+    bool ja_memo_on_ = false;
     ustr ja_text(const Token& t) const;
     bool is_romaji(const Token& t) const;      // shown as Japanese: it has a lowercase letter (#162)
     // its keys' kana: digits and a capital's word kept as typed inside it (#169, #172); pending only when pending_ok
@@ -299,6 +303,7 @@ private:
     size_t context_len() const;     // (the characters before a run the model reads, for the tier)  // (#42: what the model reads before a run)
     const LmScorer* lm() const;  // the language model's scorer while 長句選字加強 is on, else nullptr
     void render();
+    void render_text();  // (render without the 中日混打 memo set up)
     ustr as_typed(int start, const std::string& keys) const;
     ustr lit_text(const ustr& value, const std::string& key) const;
     int syl_offset(int c) const;

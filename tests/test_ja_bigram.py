@@ -84,6 +84,36 @@ class FileTest(unittest.TestCase):
             self.assertIsNone(JaBigram.load(self.d, path))
             self.assertIsNone(JaBigram.load(self.d, os.path.join(tmp, "missing.bin")))
 
+    def test_damaged_files_refused_alike(self):
+        # (findings #178: both readers refuse the same damaged files - an entry outside the dictionary, entries out of
+        # order, a pair's word beyond the words mapped - instead of each reading them its own way)
+        import subprocess
+        exe = os.path.join(ROOT, "cpp", "build", "x64-Release", "sz_ja.exe")
+        with tempfile.TemporaryDirectory() as tmp:
+            good = bytearray(open(build(tmp, CORPUS), "rb").read())
+            n_map, n_pairs = struct.unpack_from("<II", good, 12)
+            entries, a_at = 28, 28 + 8 * n_map
+            cases = {"good": bytes(good)}
+            bad = bytearray(good)
+            struct.pack_into("<I", bad, entries + 4 * (n_map - 1), self.d.n_entries + 5)
+            cases["entry outside"] = bytes(bad)
+            bad = bytearray(good)
+            first, second = struct.unpack_from("<II", bad, entries)
+            struct.pack_into("<II", bad, entries, second, first)
+            cases["entries out of order"] = bytes(bad)
+            bad = bytearray(good)
+            struct.pack_into("<I", bad, a_at + 4 * (n_pairs - 1), 4_000_000_000)
+            cases["pair word beyond"] = bytes(bad)
+            for name, data in cases.items():
+                path = os.path.join(tmp, name.replace(" ", "_") + ".bin")
+                with open(path, "wb") as f:
+                    f.write(data)
+                py_ok = JaBigram.load(self.d, path) is not None
+                self.assertEqual(py_ok, name == "good", name)
+                if os.path.exists(exe):
+                    r = subprocess.run([exe, os.path.join(ROOT, "data"), "--bigram", path], input=b"", capture_output=True)
+                    self.assertEqual(r.returncode == 0, name == "good", name)
+
     def test_jobs_same_file(self):
         # (the real build runs in several processes: the same file as one process, whatever order chunks finish in)
         old = build_ja_bigram.CHUNK
@@ -299,6 +329,79 @@ class ContextTest(unittest.TestCase):
             for ch in keys("ㄨㄛˇ") + "hasi":  # (a Chinese syllable between: no Japanese context)
                 c.key(ch)
             self.assertFalse(c.composition.endswith("箸"), c.composition)
+            c.reset()
+            c.set_japanese(None)
+        finally:
+            ja.bigram = old
+            tmp.cleanup()
+
+    def test_mixed_converts_each_piece_once(self):
+        # (findings #176: a romaji piece's context is the piece before it - the conversions of one key grow with the
+        # pieces, not with their square: 45 pieces were 1035 conversions, 614 ms)
+        from engine import create_composer
+        from engine.ja_mixed import JaMixed
+        import engine.ja_convert as jc
+        import tempfile as tf
+        ja = JaMixed.load()
+        old, orig = getattr(ja, "bigram", None), jc.convert
+        ja.bigram = self.stub
+        calls = [0]
+
+        def counting(*a, **k):
+            calls[0] += 1
+            return orig(*a, **k)
+        tmp = tf.TemporaryDirectory()
+        try:
+            c = create_composer(os.path.join(tmp.name, "user.json"))
+            c.set_japanese(ja)
+            text = "kyou ha ii tenki desu ne ashita mo hare masu you ni negai masu yo " * 3
+            for ch in text[:-1]:
+                c.key(ch)
+            jc.convert = counting
+            c.key("a")
+            pieces = sum(1 for t in c.tokens if t.kind == "en")
+            self.assertGreaterEqual(pieces, 30)
+            self.assertLessEqual(calls[0], 2 * pieces, (calls[0], pieces))
+            c.reset()
+            c.set_japanese(None)
+        finally:
+            jc.convert = orig
+            ja.bigram = old
+            tmp.cleanup()
+
+    def test_mixed_undo(self):
+        # (findings #175: 拿回重選 after sending brings back what was sent - its context and its picks with it)
+        from engine import create_composer
+        from engine.ja_mixed import JaMixed
+        import tempfile as tf
+        ja = JaMixed.load()
+        old = getattr(ja, "bigram", None)
+        ja.bigram = self.stub
+        tmp = tf.TemporaryDirectory()
+        try:
+            c = create_composer(os.path.join(tmp.name, "user.json"))
+            c.set_japanese(ja)
+            for ch in "gohanwo":
+                c.key(ch)
+            c.key(special="ENTER")
+            for ch in "hasi":
+                c.key(ch)
+            c.key(special="ENTER")
+            self.assertEqual(c.commit, "箸")
+            c.undo_commit()
+            self.assertEqual(c.composition, "箸")  # (as sent: the context ご飯を still behind it)
+            c.key(special="ESC")
+            c.reset()
+            for ch in "kami":  # (a 文節 picked from ↓, then sent: back as picked)
+                c.key(ch)
+            c.key(special="DOWN")
+            pick = c.candidates[2]
+            c.cand_index = 2
+            c.key(special="ENTER")
+            c.key(special="ENTER")
+            self.assertEqual(c.commit, pick)
+            c.undo_commit()
+            self.assertEqual(c.composition, pick)
             c.reset()
             c.set_japanese(None)
         finally:

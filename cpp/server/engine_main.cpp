@@ -309,6 +309,7 @@ Json handle(Session& s, const Json& req) {
         s.ja.reset();  // (日文 #36: the Japanese side's too)
     } else if (op == "context_lost") {  // 接續前文選字 (#37): what is before the caret is not what was sent
         c.context_lost();
+        s.ja.context_lost();  // (純日文's context too - findings #177)
     } else if (op == "forget_undo") {
         c.forget_undo();
     } else if (op == "close_symbols") {  // (the symbol keyboard, or 快速填入 opened from it)

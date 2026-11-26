@@ -2303,6 +2303,15 @@ class Composer:
         return [p for p in pins if kana[:p.end] == kept[:p.end]]
 
     def _ja_path(self, t):
+        memo = getattr(self, "_ja_memo", None)  # (during one _render: a piece converted once)
+        if memo is not None and t.start in memo:
+            return memo[t.start]
+        out = self._ja_path_now(t)
+        if memo is not None:
+            memo[t.start] = out
+        return out
+
+    def _ja_path_now(self, t):
         from .ja_convert import convert as ja_convert  # (this module's convert is the Chinese one)
         kana, pending, spaces = self._ja_piece(t)
         bigram = getattr(self.ja, "bigram", None)
@@ -2731,6 +2740,14 @@ class Composer:
         return {sp: v for sp, v in self.overrides.items() if sp not in give} if give else self.overrides
 
     def _render(self):
+        # (中日混打: each romaji piece converted once per update - its context is the piece before it, findings #176)
+        self._ja_memo = {}
+        try:
+            self._render_text()
+        finally:
+            self._ja_memo = None
+
+    def _render_text(self):
         chars = {}
         self._plain_chars = {}  # syllable -> its character as chosen, Traditional (_suggest matches the dictionary)
         hidden = set()  # syllables a shorter Mainland word leaves with nothing shown (位元組 as 字节: 組)
@@ -4887,7 +4904,9 @@ class Composer:
                     literal=set(self.literal), caps=set(self.caps), overrides=dict(self.overrides),
                     digits_as_zhuyin=self.digits_as_zhuyin,
                     context_word=self.context_word, after_english=self.after_english, lm_context=self.lm_context,
-                    lm_units=self.lm_units, syllables=[(t.start, t.raw) for t in self.tokens if t.kind == "zh"])
+                    lm_units=self.lm_units, syllables=[(t.start, t.raw) for t in self.tokens if t.kind == "zh"],
+                    # (中日混打: the context it was typed after and its picks - findings #175)
+                    _ja_context=self._ja_context, _ja_pins={k: (v[0], list(v[1])) for k, v in self._ja_pins.items()})
         learned = []  # what this commit taught, as it was before: for undo_commit to put back
         self.user.simp_dropped = []  # (what a pick in Traditional mode takes of Simplified mode's memory, #32)
         terms = self._learn_terms(save=False)  # (saved with the picks below: one save a commit, #32)

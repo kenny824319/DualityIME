@@ -53,15 +53,19 @@ std::unique_ptr<JaBigram> JaBigram::load_file(const std::wstring& path, const Ja
     b->a_ = b->sid_ + b->n_map_;
     b->b_ = b->a_ + b->n_pairs_;
     b->bonus_ = reinterpret_cast<const uint16_t*>(b->b_ + b->n_pairs_);
-    // (the lookups the conversion makes per node and per predecessor, as arrays: no search while typing)
-    uint32_t n_sid = 0;
-    b->sid_of_.assign(d.n_entries(), -1);
-    for (uint32_t i = 0; i < b->n_map_; ++i) {
-        if (b->entry_[i] >= d.n_entries()) return nullptr;
-        b->sid_of_[b->entry_[i]] = static_cast<int32_t>(b->sid_[i]);
-        n_sid = std::max(n_sid, b->sid_[i] + 1);
+    // what both readers require (engine/ja_bigram.py _valid, findings #178): entries strictly ascending and inside the
+    // dictionary, word numbers below n_map, pairs strictly ascending by (a, b) - a damaged file is refused, never read
+    const uint32_t n = b->n_map_;
+    for (uint32_t i = 0; i < n; ++i)
+        if (b->entry_[i] >= d.n_entries() || (i && b->entry_[i] <= b->entry_[i - 1]) || b->sid_[i] >= n) return nullptr;
+    for (uint32_t i = 0; i < b->n_pairs_; ++i) {
+        if (b->a_[i] >= n || b->b_[i] >= n) return nullptr;
+        if (i && (b->a_[i] < b->a_[i - 1] || (b->a_[i] == b->a_[i - 1] && b->b_[i] <= b->b_[i - 1]))) return nullptr;
     }
-    for (uint32_t i = 0; i < b->n_pairs_; ++i) n_sid = std::max(n_sid, b->a_[i] + 1);
+    // (the lookups the conversion makes per node and per predecessor, as arrays: no search while typing)
+    uint32_t n_sid = n;  // (word numbers are below it: checked above)
+    b->sid_of_.assign(d.n_entries(), -1);
+    for (uint32_t i = 0; i < n; ++i) b->sid_of_[b->entry_[i]] = static_cast<int32_t>(b->sid_[i]);
     b->first_.assign(n_sid + 1, 0);
     for (uint32_t i = 0; i < b->n_pairs_; ++i) ++b->first_[b->a_[i] + 1];
     for (uint32_t s = 0; s < n_sid; ++s) b->first_[s + 1] += b->first_[s];

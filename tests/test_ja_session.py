@@ -103,6 +103,12 @@ class JaSessionTest(unittest.TestCase):
             out = run([ON] + keys("kaimononi") + [flush] + keys("itteirutokorodesu."))
             self.assertEqual(out[-1]["reply"]["composition"], "言っているところです。", flush)
 
+    def test_context_lost_forgets(self):
+        # (findings #177: #37's check - the caret moved, a message sent - forgets 純日文's context too, as 中日混打's)
+        enter = {"op": "key", "special": "ENTER", "ja": True}
+        out = run([ON] + keys("kaimononi") + [enter, {"context_lost": True}] + keys("itteirutokorodesu."))
+        self.assertEqual(out[-1]["reply"]["composition"], "言っているところです。")
+
     def test_disabled_goes_back(self):
         out = run([ON] + keys("kyou") + [{"set": {"ja_enabled": False}}, {"op": "key", "ch": "a", "ja": True}])
         r = out[-1]["reply"]

@@ -2993,8 +2993,14 @@ std::vector<JaPin> Composer::ja_pins_of(const Token& t, const ustr& kana) const 
 std::vector<JaNode> Composer::ja_path(const Token& t, ustr& kana, ustr& pending, ustr& spaces) const {
     ja_piece(t, kana, pending, spaces);
     if (kana.empty()) return {};
+    if (ja_memo_on_) {  // (during one render: a piece converted once)
+        auto it = ja_memo_.find(t.start);
+        if (it != ja_memo_.end()) return it->second;
+    }
     int prev = ja_->bigram ? ja_prev_sid(t) : -1;
-    return ja_convert(kana, ja_->d, ja_pins_of(t, kana), {}, ja_->bigram, prev).first;
+    auto path = ja_convert(kana, ja_->d, ja_pins_of(t, kana), {}, ja_->bigram, prev).first;
+    if (ja_memo_on_) ja_memo_[t.start] = path;
+    return path;
 }
 
 int Composer::ja_prev_sid(const Token& t) const {
@@ -3495,6 +3501,20 @@ const Token* Composer::english_before(size_t k) const {
 }
 
 void Composer::render() {
+    // (中日混打: each romaji piece converted once per update - its context is the piece before it, findings #176)
+    ja_memo_.clear();
+    ja_memo_on_ = true;
+    struct Off {
+        Composer* c;
+        ~Off() {
+            c->ja_memo_on_ = false;
+            c->ja_memo_.clear();
+        }
+    } off{this};
+    render_text();
+}
+
+void Composer::render_text() {
     std::map<int, ustr> chars;
     plain_chars_.clear();
     std::set<int> hidden;  // syllables a shorter Mainland word leaves with nothing shown (位元組 as 字节: 組)
@@ -6745,6 +6765,8 @@ void Composer::do_commit() {
     undo.exact = exact_;
     undo.lm_context = lm_context_;
     undo.lm_units = lm_units_;
+    undo.ja_context = ja_context_;
+    undo.ja_pins = ja_pins_;
     for (auto& t : tokens)
         if (t.kind == Kind::Zh) undo.syllables.push_back({t.start, t.raw});
     undo.taken = taken_;
@@ -7116,6 +7138,8 @@ ustr Composer::undo_commit() {
     context_word_ = undo.context_word;
     lm_context_ = undo.lm_context;
     lm_units_ = undo.lm_units;
+    ja_context_ = undo.ja_context;
+    ja_pins_ = undo.ja_pins;
     after_english_ = undo.after_english;
     term_picks_ = undo.term_picks;
     if (!undo.learned.empty() || !undo.dropped.empty()) {  // picked by mistake: nothing learned or forgotten after all
