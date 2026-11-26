@@ -76,6 +76,12 @@ foreach ($f in @("lexicon.txt", "names.txt", "bigram.bin", "lm.bin", "english.tx
                   "ja_dict.bin", "ja_conn.bin", "ja_seg.bin", "ja_romaji.tsv", "LICENSE-Mozc.txt",
                   # ...and its word bigram (plan 5, tools/build_ja_bigram.py: counted from Wikipedia and CC-100 ja)
                   "ja_bigram.bin",
+                  # ...and its rescoring model (plan 5b, tools/lm: trained on the same text)
+                  "ja_lm.bin",
+                  # ...and its phrase table for the prediction (plan 6, tools/build_ja_predict.py: the same text)
+                  "ja_predict.bin",
+                  # ...and SudachiDict's licence and notices (plan 8: its nouns merged into ja_dict.bin)
+                  "LICENSE-SudachiDict.txt", "LEGAL-SudachiDict.txt",
                   # 簡體輸出 (#32): OpenCC's tables (tools/build_opencc.py) and their licence
                   "opencc\TSPhrases.txt", "opencc\TSCharacters.txt", "opencc\TWVariantsRev.txt", "opencc\TWVariantsRevPhrases.txt",
                   "opencc\TWPhrasesRev.txt", "opencc\TWPhrases.txt", "opencc\mainland_words.txt", "LICENSE-OpenCC.txt")) {

@@ -26,5 +26,9 @@ inline void DllRelease() { InterlockedDecrement(&g_refs); }
 constexpr int IDI_PROFILE = 100;  // first icon: the input method's own
 constexpr int IDI_ZH = 101;
 constexpr int IDI_EN = 102;
+constexpr int IDI_JA = 103;       // 日文 (#36): 純日文 (あ)
+constexpr int IDI_JA_KATA = 104;  // ...with katakana locked (ア)
+constexpr int IDI_JA_MIXED = 105;       // 中日混打 (中あ)
+constexpr int IDI_JA_MIXED_KATA = 106;  // ...with katakana locked (中ア)
 
 }  // namespace sz

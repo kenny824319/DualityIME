@@ -9,6 +9,7 @@
 #include "config.h"
 #include "ja_convert.h"
 #include "ja_dict.h"
+#include "ja_predict.h"
 #include "ja_romaji.h"
 #include "util.h"
 
@@ -31,8 +32,10 @@ class JaComposer {
 public:
     // bigram (plan 5, may be null): its bonuses, the last word sent being the next conversion's context
     // lm (plan 5b, may be null): the Japanese model rescoring the lattice's best sentences, lm_weight its W
+    // predictor (plan 6, may be null): the phrase table; phrases (may be null): the user's phrases, learned at a send
     JaComposer(const RomajiTable& table, const JaDict& d, const Config& config, const JaBigram* bigram = nullptr,
-               const LmScorer* lm = nullptr, int64_t lm_weight = 0);
+               const LmScorer* lm = nullptr, int64_t lm_weight = 0, const JaPredict* predictor = nullptr,
+               CorrectionMemory* phrases = nullptr);
     void forget_context() {  // the field changed (the IME's reset), Esc, a sentence end
         context_sid_ = -1;
         lm_context_.clear();
@@ -62,8 +65,24 @@ public:
     int cand_index = 0;
     std::string kana_lock = "auto";
     std::vector<JaPin> pins;
+    std::vector<ustr> suggestions;  // plan 6: the hint (one at most): the word being typed as predicted
+    ustr shown(const JaPhrase& p) const;  // a prediction as the kana lock shows it (中日混打's hint too)
 
 private:
+    const JaPredict* predictor_ = nullptr;
+    CorrectionMemory* phrases_ = nullptr;
+    bool has_sugg_ = false;           // ...the hint's 文節 and predictions, for Tab
+    JaSegment sugg_seg_{0, 0, {}};
+    std::vector<JaPhrase> sugg_preds_;
+    struct Predicted {                // ...what Tab took: its kana span and the predictions, for ↓
+        int begin, end;
+        std::vector<JaPhrase> preds;
+    };
+    std::optional<Predicted> predicted_;
+    std::vector<int> cand_alt_;       // per candidate: the index of another prediction in predicted_, or -1
+    void suggest(const std::vector<JaSegment>& segs);
+    void put_phrase(int b, int e, const JaPhrase& p, const std::vector<JaPhrase>& preds);
+    void learn(const std::vector<JaSegment>& segs);
     const RomajiTable& table_;
     const JaDict& d_;
     const Config& config_;

@@ -69,14 +69,26 @@ CASES = [
     "kyouk{BACK}{ENTER}kon{ENTER}ji33.5{ENTER}su32026-11-26{ENTER}Tokyo{ENTER}watasiha20sai{ENTER}3jini{ENTER}"
     "a1,000{ENTER}kyouTokyo{ENTER}kyouhaiitenki{LEFT}x{ENTER}kyoukonn{LEFT}{LEFT}{DOWN}{ENTER}{ENTER}"
     "kyouhaiitenki{HOME}{RIGHT}{RIGHT}{RIGHT}{RIGHT}x{ENTER}kyouhaiitenkin{LEFT}{LEFT}{ENTER}"
+    "ji3arigatou,{CTRL_BACK}{CTRL_BACK}{ENTER}"  # (#86: kana stops Ctrl+Backspace, then it is Backspace)
     "ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3"
-    "hasi{DOWN}{DOWN}{ENTER}su3cl3su3cl3{ENTER}{RESET}",
+    "hasi{DOWN}{DOWN}{ENTER}su3cl3su3cl3{ENTER}"
+    # (plan 6: the Japanese hint taken with Tab, after Chinese and alone; a phrase sent twice predicted first - ja_phrases)
+    "ji3arig{TAB}{ENTER}tabe{TAB}{ENTER}yorosikune{ENTER}yorosikune{ENTER}yoro{TAB}{ENTER}"
+    "ji3tabe{TAB}{LEFT}{DOWN}{ENTER}{ENTER}ji3tabe{TAB}su3{LEFT}{LEFT}{DOWN}{ENTER}{ENTER}ji3tabe{TAB}k{DOWN}{ENTER}{ENTER}{RESET}",
     # 符號鍵盤自訂 (#69, sixteenth to twentieth: --cases 20 runs them; the setting with custom_symbols types from
     # SYMBOLS, the others from the built-in pages): a key, a page of one's own first, `` its ` key, Tab through the pages
     # shown (數學 hidden), an empty key typing nothing, an emoji key whole, Enter at the arrows' cursor; a symbol picked
     # with nothing typed held in the text being typed, swapped with ↓, Backspace taking one back (#82, Issue #11)
     "`a{ENTER}", "`{TAB}a{TAB}{ENTER}", "``{ENTER}", "`{TAB}{TAB}{TAB}8{ENTER}",
-    "su3`s{ESC}`d{ENTER}`{DOWN}{RIGHT}{ENTER}{ENTER}{RESET}`,{LEFT}{DOWN}2{ENTER}{ENTER}`g`a{BACK}{ENTER}{RESET}",
+    "su3`s{ESC}`d{ENTER}`{DOWN}{RIGHT}{ENTER}{ENTER}{RESET}`,{LEFT}{DOWN}2{ENTER}{ENTER}`g`a{BACK}{ENTER}{RESET}"
+    # 標點記憶 (#83): 「 swapped for 『 and sent twice - Ctrl + [, [ and the keyboard's 「 then type 『, Ctrl + ] 』; picked
+    # back twice, 「 again; a pair swapped together counts once
+    "su3{^[}{LEFT}{DOWN}2{ENTER}{ENTER}su3{^[}cl3{^]}{HOME}{RIGHT}{DOWN}2{ENTER}{ENTER}su3{^[}cl3{^]}{ENTER}"
+    "su3[cl3]{ENTER}`g{ENTER}"
+    # (中日混打's Japanese side - Ctrl + a mark after romaji, swapped there, a mark after Japanese ending in ？ and one
+    # alone after it - neither holds nor learns, findings #186, #189; English in the other settings)
+    "watasiha{^[}{LEFT}{DOWN}2{ENTER}{ENTER}watasiha?{ENTER}{^[}watasisu3{ENTER}{^[}"
+    "su3{^[}{LEFT}{DOWN}2{ENTER}{ENTER}su3{^[}{LEFT}{DOWN}2{ENTER}{ENTER}su3{^[}{ENTER}{RESET}",
     # 英文補字 (#40, twenty-first to twenty-sixth: --cases 26 runs them): a word past data/english.txt from
     # english_complete.txt, right after Chinese (我accel), a prefix the everyday list answers, in capitals; a remembered
     # word right after Chinese where the reading splits it (acc + ㄍㄠ: memory looked up only "el")
@@ -90,6 +102,15 @@ CASES = [
     # 用tab補 and 用google找; win10 的, iphone15 很貴, tab1, MP5k (a capital before: a code) stay English
     "m/4tab1j3y4{ENTER}m/4google5l3{ENTER}", "win102k7{ENTER}iphone15cp3ejo4{ENTER}tab1{ENTER}",
     "MP5k {ENTER}g3m/4tab12k7{ENTER}{RESET}",
+    # Ctrl+Backspace (#86, thirty-fourth: --cases 34 runs it): English back to the Chinese, words and spaces, a mark, unfinished zhuyin, the caret in the
+    # middle (the text after stays), a Chinese character before the caret (as Backspace), a pick before the cut kept,
+    # the symbol keyboard open (as Backspace), all of it English
+    "ji3ul4m/4python{CTRL_BACK}{ENTER}ji3m/4hello world{CTRL_BACK}{ENTER}cl3,python{CTRL_BACK}{ENTER}"
+    "ji3ul4gj{CTRL_BACK}{ENTER}t python su3cl3{LEFT}{LEFT}{CTRL_BACK}{ENTER}ji3ul4m/4{CTRL_BACK}{ENTER}"
+    "ji3ul4{LEFT}{DOWN}2{END}python{CTRL_BACK}{ENTER}ji3`{CTRL_BACK}{ENTER}python{CTRL_BACK}{CTRL_BACK}x{ENTER}"
+    # (a pick after the caret stays, also after a joined mark: findings #206)
+    "t python su3cl3{LEFT}{LEFT}{DOWN}2{END}{LEFT}{LEFT}{CTRL_BACK}{ENTER}"
+    "su3cl3{^,}su3cl3{LEFT}{LEFT}{DOWN}2{END}{LEFT}{LEFT}{CTRL_BACK}{ENTER}",
     # 接續前文選字 (#37): 我們先去吃飯 sent, then ㄗㄞˋ去看電影 read after it; after {CL} (the caret moved) and after
     # English at the buffer's start, without it; three sentences in a row; undo puts the context back
     "ji3ap7vu0 fm4t z04{ENTER}y94fm4d042u04u/3{ENTER}ji3ap7vu0 fm4t z04{ENTER}{CL}y94fm4d042u04u/3{ENTER}",
@@ -502,7 +523,7 @@ def random_case(rng, pool, english):
             parts.append(rng.choice(["{DOWN}", "{DOWN}{DOWN}", "{UP}"]) + rng.choice(["1", "2", "3", " ", "{ENTER}",
                                                                                  "{ESC}", "{RIGHT}2", "{PGDN}1"]))
         elif r < 0.89:
-            parts.append(rng.choice(["{TAB}", "{RIGHT}", "{LEFT}", "{HOME}", "{END}", "{BACK}", "{STAB}", "{DEL}",
+            parts.append(rng.choice(["{TAB}", "{RIGHT}", "{LEFT}", "{HOME}", "{END}", "{BACK}", "{STAB}", "{DEL}", "{CTRL_BACK}",
                                      "{LEFT}{UP}{ENTER}", "{LEFT}{UP}{RIGHT}{ENTER}", "{UP}{RIGHT}{ENTER}", "{UP}{RIGHT}{RIGHT}{RIGHT} ", "{LEFT}{LEFT}{UP}{RIGHT}{RIGHT} "]))
         elif r < 0.91:
             parts.append(rng.choice(["{ENTER}{UNDO}", "{ENTER}", "{ESC}", "{CAPS}", "{FW}", "{RESET}",
@@ -570,9 +591,10 @@ QUICK_FILL = {"format": 1, "items": [["sample@example.com", "email"], ["王小�
 
 # 校正記憶 and 代碼記憶 (keys.json), for every setting: si3 is 你, 817 and qu0  as typed (注音自動校正 on);
 # mp3 English (on or off); an "eten" part is read by neither and dropped
+# (used 10 days before the tools' day 20000: under FORGET_DAYS, so they count as ever, and #78 renews what is used)
 AUTOCORRECT = {"format": 1, "standard": {"picks": {"si3": {"ㄋㄧˇ": 3}, "817": {"": 2}, "qu0 ": {"": 2}, "mp3": {"en": 2}},
-                                         "used": {"si3": {"ㄋㄧˇ": 20000}, "817": {"": 20000}, "qu0 ": {"": 20000},
-                                                  "mp3": {"en": 20000}}},
+                                         "used": {"si3": {"ㄋㄧˇ": 19990}, "817": {"": 19990}, "qu0 ": {"": 19990},
+                                                  "mp3": {"en": 19990}}},
                "eten": {"picks": {"cl3": {"": 5}}, "used": {"cl3": {"": 20000}}}}
 
 # (字 and 像 written for good: repick may not put them into 自由, 現象 - variant_is_written, VARIANT_PAIR)
@@ -589,10 +611,15 @@ IMPORTED = {"phrases": {"ㄊㄞˊ-ㄨㄢ": {"臺灣": 30}, "ㄋㄧˇ-ㄏㄠˇ": 
 
 
 # 記憶清單 (#65): the memory the forget_list setting deletes from (user.json; keys.json is AUTOCORRECT as always)
+# 標點記憶 (#83) for every setting: 「 types 『 from the start, whatever the hand cases swap (fifty picks: their swaps back
+# do not undo it), so 中日混打's Japanese side - where it must not hold, findings #186, #189, #191 - is compared with it on;
+# used 10 days before the tools' day: renewed when used (#78)
+PUNCT_MEMORY = {"format": 1, "picks": {"「": {"『": 50}}, "used": {"「": {"『": 19990}}}
+
 SEEDED_USER = {"phrases": {"ㄋㄧˇ": {"妳": 10}, "ㄕˋ-ㄩㄥˋ": {"適用": 8}}, "english": ["mp3", "up"],
                "words": {"python": 5, "refactor": 3}, "emails": {"kazumasan@example.com": 3, "a@example.com": 1},
                "forgot": 0, "forgot_emails": 0,
-               "used": {"phrases": {"ㄋㄧˇ": {"妳": 20000}, "ㄕˋ-ㄩㄥˋ": {"適用": 20000}},
+               "used": {"phrases": {"ㄋㄧˇ": {"妳": 19990}, "ㄕˋ-ㄩㄥˋ": {"適用": 19990}},  # (#78: as AUTOCORRECT's)
                         "words": {"python": 20000, "refactor": 20000},
                         "emails": {"kazumasan@example.com": 20000, "a@example.com": 20000}}}
 
@@ -630,7 +657,8 @@ def compare(cases, config, tmp):
         f.write("\n".join(cases) + "\n")
     for side in ("py", "cpp"):  # each its own files: 全形 on/off is saved in config.json
         os.makedirs(os.path.join(tmp, side), exist_ok=True)
-        for name in ("user.json", "keys.json", "custom_picks.json", "user_simplified.json", "forgot.json"):
+        for name in ("user.json", "keys.json", "custom_picks.json", "user_simplified.json", "forgot.json", "punct.json",
+                     "ja_phrases.json"):
             if os.path.exists(os.path.join(tmp, side, name)):
                 os.remove(os.path.join(tmp, side, name))
         settings = {k: v for k, v in config.items() if k not in ("no_quick_fill", "seed_user", "custom_symbols")}
@@ -649,6 +677,7 @@ def compare(cases, config, tmp):
         if config.get("import_memory"):
             files.append(("import-memory.json", IMPORTED))
         files.append(("keys.json", AUTOCORRECT))
+        files.append(("punct.json", PUNCT_MEMORY))
         for name, data in files:
             with open(os.path.join(tmp, side, name), "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False)
@@ -671,7 +700,7 @@ def compare(cases, config, tmp):
         sys.exit(f"DIFFERENT number of lines: python {len(py)}, c++ {len(cc)}")
     # both learned the same things, 校正記憶 and 代碼記憶 too (keys.json) - a file neither wrote (a sample of a few
     # hand-written cases, --cases, may learn nothing) is the same on both sides, one only one side wrote is not
-    for name in ("user.json", "keys.json"):
+    for name in ("user.json", "keys.json", "punct.json", "ja_phrases.json"):  # (標點記憶 #83, 日文 phrases plan 6)
         learned = []
         for side in ("py", "cpp"):
             path = os.path.join(tmp, side, name)

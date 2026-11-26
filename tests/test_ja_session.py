@@ -89,25 +89,25 @@ class JaSessionTest(unittest.TestCase):
         self.assertEqual(last["mixed"], {"on": False, "ja_off": True})
 
     def test_context_in_engine(self):
-        # (plan 5: the engine process's 純日文 reads the word bigram, the last word sent being the context - real data:
-        # いって after 買い物に is 行って, alone 言って)
+        # (plan 5: the engine process's 純日文 reads the context, the last word sent - real data: きく after 薬が is 効く,
+        # alone 聞く; since plan 5b's model いって is 行って alone too, so the example moved)
         enter = {"op": "key", "special": "ENTER", "ja": True}
-        fresh = run([ON] + keys("itteirutokorodesu."))[-1]["reply"]["composition"]
-        after = run([ON] + keys("kaimononi") + [enter] + keys("itteirutokorodesu."))[-1]["reply"]["composition"]
-        self.assertEqual((fresh, after), ("言っているところです。", "行っているところです。"))
+        fresh = run([ON] + keys("kiku"))[-1]["reply"]["composition"]
+        after = run([ON] + keys("kusuriga") + [enter] + keys("kiku"))[-1]["reply"]["composition"]
+        self.assertEqual((fresh, after), ("聞く", "効く"))
 
     def test_switching_forgets_context(self):
         # (leaving 純日文 - Ctrl+F2 to Chinese, Shift to 中日混打 - sends what is typed and forgets the context: what is
         # typed meanwhile is not 純日文's)
         for flush in ({"op": "ja_flush"}, {"op": "ja_flush", "keep_lock": True}):
-            out = run([ON] + keys("kaimononi") + [flush] + keys("itteirutokorodesu."))
-            self.assertEqual(out[-1]["reply"]["composition"], "言っているところです。", flush)
+            out = run([ON] + keys("kusuriga") + [flush] + keys("kiku"))
+            self.assertEqual(out[-1]["reply"]["composition"], "聞く", flush)
 
     def test_context_lost_forgets(self):
         # (findings #177: #37's check - the caret moved, a message sent - forgets 純日文's context too, as 中日混打's)
         enter = {"op": "key", "special": "ENTER", "ja": True}
-        out = run([ON] + keys("kaimononi") + [enter, {"context_lost": True}] + keys("itteirutokorodesu."))
-        self.assertEqual(out[-1]["reply"]["composition"], "言っているところです。")
+        out = run([ON] + keys("kusuriga") + [enter, {"context_lost": True}] + keys("kiku"))
+        self.assertEqual(out[-1]["reply"]["composition"], "聞く")
 
     def test_disabled_goes_back(self):
         out = run([ON] + keys("kyou") + [{"set": {"ja_enabled": False}}, {"op": "key", "ch": "a", "ja": True}])

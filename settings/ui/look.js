@@ -118,11 +118,13 @@ function lookCard() {
       save();
       draw();
     });
-    const remove = h("button", { class: "btn", type: "button", disabled: !own }, "移除");
+    // (a window's 移除: it has no photo then, its own or 全部's - "" is "none" to the IME too, cpp/tip/appearance.cpp;
+    // 跟隨全部 brings 全部's back - #87, the user 2026-11-26)
+    const remove = h("button", { class: "btn", type: "button", disabled: !(own ? look.image : tab !== "all" && A.all.image) }, "移除");
     remove.addEventListener("click", async () => {
-      await api("removeImage", { slot: tab }).catch(() => null);
+      if (own) await api("removeImage", { slot: tab }).catch(() => null);
       if (tab === "all") Object.assign(A.all, { image: "", name: "" });
-      else { delete A.windows[tab].image; delete A.windows[tab].name; }
+      else Object.assign(editing(), { image: "", name: "" });
       save();
       draw();
     });
@@ -261,7 +263,9 @@ function lookCard() {
       const look = lookOf(key), file = imageOf(key);
       const size = file ? await photoSize(file) : null;
       if (n !== drawing) return;
-      const win = h("div", { class: "lp-win" + (key === "keyboard" ? " lp-keyboard" : "") + (tab === key || (tab === "all" && !A.windows[key]) ? " lp-cur" : ""),
+      // (framed: what this tab changes - on 全部, a window following its photo or its settings, #88)
+      const follows = !A.windows[key] || typeof A.windows[key].image !== "string";
+      const win = h("div", { class: "lp-win" + (key === "keyboard" ? " lp-keyboard" : "") + (tab === key || (tab === "all" && follows) ? " lp-cur" : ""),
         style: `width:${w * f}px;height:${h0 * f}px;background:${key === "keyboard" ? th.bg : th.bg};color:${th.text};border-color:${th.border}` });
       win.style.setProperty("--key", size ? "rgba(255,255,255," + (lookLuminance(A.text) > 0.5 ? 0.14 : 0.55) + ")" : th.key);
       // (the keys' border over a photo as the IME draws it: grey under light text, white under dark)

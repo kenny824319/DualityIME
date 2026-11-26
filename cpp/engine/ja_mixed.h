@@ -7,6 +7,10 @@
 
 #include "ja_dict.h"
 #include "ja_romaji.h"
+
+namespace sz {
+class JaPredict;
+}
 namespace sz {
 class JaBigram;
 class LmScorer;
@@ -29,6 +33,7 @@ public:
     const JaDict& d;
     const JaBigram* bigram = nullptr;  // (plan 5: what the composer shows its pieces with; piece_cost never uses it)
     const LmScorer* lm = nullptr;      // (plan 5b: the Japanese model rescoring them; piece_cost never uses it)
+    const JaPredict* predict = nullptr;  // (plan 6: the phrase table the composer predicts from)
     int64_t lm_weight = 0;             // ...its W (the model file's weight field)
 
 private:

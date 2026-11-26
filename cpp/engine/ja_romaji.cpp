@@ -5,6 +5,86 @@
 
 namespace sz {
 
+std::optional<ustr> RomajiTable::to_romaji(const ustr& reading) const {
+    if (spelling_.empty()) {  // (romaji_table: spellings without c q x l v first, then the shortest, then alphabetical)
+        auto worse = [](const ustr& a, const ustr& b) {  // a's key > b's key
+            auto odd = [](const ustr& s) {
+                for (char32_t c : s)
+                    if (c == U'c' || c == U'q' || c == U'x' || c == U'l' || c == U'v') return true;
+                return false;
+            };
+            if (odd(a) != odd(b)) return odd(a);
+            if (a.size() != b.size()) return a.size() > b.size();
+            return a > b;
+        };
+        for (auto& [inp, rule] : rules_) {
+            const ustr& out = rule.first;
+            bool letters = !inp.empty();
+            for (char32_t c : inp)
+                if (c < U'a' || c > U'z') letters = false;
+            if (!rule.second.empty() || !letters || out == U"ん" || out == U"っ") continue;
+            auto it = spelling_.find(out);
+            if (it == spelling_.end() || worse(it->second, inp)) spelling_[out] = inp;
+        }
+    }
+    static const std::vector<std::pair<char32_t, char32_t>> punct = {
+        {U'。', U'.'}, {U'、', U','}, {U'？', U'?'}, {U'！', U'!'}, {U'ー', U'-'}};
+    ustr out;
+    size_t i = 0;
+    while (i < reading.size()) {
+        char32_t c = reading[i];
+        if (c == U'ん') {
+            out += U"nn";
+            ++i;
+            continue;
+        }
+        if (c == U'っ') {
+            const ustr* nxt = nullptr;
+            for (size_t k : {2, 1}) {
+                if (i + 1 + k > reading.size()) continue;
+                auto it = spelling_.find(reading.substr(i + 1, k));
+                if (it != spelling_.end()) {
+                    nxt = &it->second;
+                    break;
+                }
+            }
+            if (nxt && ustr(U"aiueon").find((*nxt)[0]) == ustr::npos) out += (*nxt)[0];
+            else out += U"xtu";
+            ++i;
+            continue;
+        }
+        bool done = false;
+        for (auto& [k, v] : punct)
+            if (c == k) {
+                out += v;
+                ++i;
+                done = true;
+                break;
+            }
+        if (done) continue;
+        for (size_t k : {2, 1}) {
+            if (i + k > reading.size()) continue;
+            auto it = spelling_.find(reading.substr(i, k));
+            if (it != spelling_.end()) {
+                out += it->second;
+                i += k;
+                done = true;
+                break;
+            }
+        }
+        if (!done) return std::nullopt;
+    }
+    return out;
+}
+
+std::set<char32_t> RomajiTable::next_kana(const ustr& pending) const {
+    std::set<char32_t> out;
+    for (auto& [key, rule] : rules_)
+        if (key.compare(0, pending.size(), pending) == 0 && key.size() >= pending.size() && !rule.first.empty())
+            out.insert(rule.first[0]);
+    return out;
+}
+
 static bool read_all(const std::wstring& path, std::string& out) {
     FILE* f = _wfopen(path.c_str(), L"rb");
     if (!f) return false;

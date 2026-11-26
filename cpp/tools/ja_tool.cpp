@@ -2,6 +2,9 @@
 // the two).
 //   sz_ja <data dir> [--time] [--bigram <file>] < romaji lines   (with --bigram: "<context sid>\t<romaji>" lines)
 //   sz_ja <data dir> --keys [--time] < key scripts
+//   sz_ja <data dir> --predict <ja_predict.bin> [--memory <ja_phrases.json>] [--bigram <file>] < queries
+//     (plan 6: "prefix<TAB>pending<TAB>prev sid" lines -> the ranked predictions' surfaces joined by |; the memory's day
+//     is 20000, as the tools')
 // Romaji lines: each UTF-8 line in gives one line out:
 //   kana<TAB>pending<TAB>surface|surface|...<TAB>cost<TAB>finished<TAB>boundaries
 // (boundaries: for each two neighbouring words of the path, 1 when they are in different 文節, else 0).
@@ -25,7 +28,9 @@
 #include "ja_composer.h"
 #include "ja_convert.h"
 #include "ja_dict.h"
+#include "ja_predict.h"
 #include "ja_romaji.h"
+#include "lexicon.h"
 #include "util.h"
 
 namespace {
@@ -62,10 +67,11 @@ std::vector<sz::ustr> tokens(const sz::ustr& script) {
 }
 
 void run_script(const sz::ustr& script, const sz::RomajiTable& table, const sz::JaDict& dict, bool timing,
-                const sz::JaBigram* bigram = nullptr, const sz::LmScorer* lm = nullptr) {
+                const sz::JaBigram* bigram = nullptr, const sz::LmScorer* lm = nullptr,
+                const sz::JaPredict* predictor = nullptr, sz::CorrectionMemory* phrases = nullptr) {
     sz::Config cfg;
     cfg.set("ja_enabled", sz::Json(true));
-    sz::JaComposer c(table, dict, cfg, bigram, lm, lm ? sz::ja_lm_weight(*lm) : 0);
+    sz::JaComposer c(table, dict, cfg, bigram, lm, lm ? sz::ja_lm_weight(*lm) : 0, predictor, phrases);
     std::vector<long long> times;
     for (auto& tok : tokens(script)) {
         std::string t = sz::to_utf8(tok);
@@ -101,7 +107,8 @@ void run_script(const sz::ustr& script, const sz::RomajiTable& table, const sz::
         }
         put(std::string(used ? "1" : "0") + "\t" + sz::to_utf8(c.composition) + "\t" + std::to_string(c.cursor) + "\t" +
             sz::to_utf8(c.commit) + "\t" + sz::to_utf8(joined) + "\t" + std::to_string(at) + "\t" +
-            std::to_string(c.candidates.size()) + "\n");
+            std::to_string(c.candidates.size()) + "\t" + (c.suggestions.empty() ? "" : sz::to_utf8(c.suggestions[0])) +
+            "\n");
     }
     if (timing) {
         std::sort(times.begin(), times.end());
@@ -121,13 +128,15 @@ int wmain(int argc, wchar_t** argv) {
         return 2;
     }
     bool timing = false, keys = false, nbest = false;
-    std::wstring bigram_path, lm_path;
+    std::wstring bigram_path, lm_path, predict_path, memory_path;
     for (int i = 2; i < argc; ++i) {
         timing = timing || std::wstring(argv[i]) == L"--time";
         keys = keys || std::wstring(argv[i]) == L"--keys";
         nbest = nbest || std::wstring(argv[i]) == L"--nbest";  // (plan 5b: "cost:text|cost:text..." per line)
         if (std::wstring(argv[i]) == L"--bigram" && i + 1 < argc) bigram_path = argv[++i];
         if (std::wstring(argv[i]) == L"--lm" && i + 1 < argc) lm_path = argv[++i];  // (plan 5b: the Japanese model)
+        if (std::wstring(argv[i]) == L"--predict" && i + 1 < argc) predict_path = argv[++i];  // (plan 6)
+        if (std::wstring(argv[i]) == L"--memory" && i + 1 < argc) memory_path = argv[++i];
     }
     auto t0 = clock_t_::now();
     auto table = sz::RomajiTable::load(argv[1]);
@@ -152,6 +161,38 @@ int wmain(int argc, wchar_t** argv) {
         lm = std::make_unique<sz::LmScorer>(*lm_model);
     }
     std::ios::sync_with_stdio(false);
+    std::unique_ptr<sz::JaPredict> key_table;  // (plan 6: --keys with --predict / --memory)
+    std::unique_ptr<sz::CorrectionMemory> key_memory;
+    if (keys) {
+        if (!predict_path.empty() && !(key_table = sz::JaPredict::load_file(predict_path, *dict))) {
+            std::fprintf(stderr, "could not read the phrase table (or it is for another ja_dict.bin)\n");
+            return 1;
+        }
+        if (!memory_path.empty())
+            key_memory = std::make_unique<sz::CorrectionMemory>(memory_path, [] { return 20000; }, true);
+    }
+    if (!keys && !predict_path.empty()) {
+        auto ptable = sz::JaPredict::load_file(predict_path, *dict);
+        if (!ptable) {
+            std::fprintf(stderr, "could not read the phrase table (or it is for another ja_dict.bin)\n");
+            return 1;
+        }
+        std::unique_ptr<sz::CorrectionMemory> memory;
+        if (!memory_path.empty()) memory = std::make_unique<sz::CorrectionMemory>(memory_path, [] { return 20000; }, true);
+        std::string q;
+        while (std::getline(std::cin, q)) {
+            while (!q.empty() && (q.back() == '\r' || q.back() == '\n')) q.pop_back();
+            size_t a = q.find('\t'), b = a == std::string::npos ? a : q.find('\t', a + 1);
+            if (b == std::string::npos) continue;
+            auto got = sz::ja_predict(ptable.get(), memory.get(), sz::from_utf8(q.substr(0, a)),
+                                      sz::from_utf8(q.substr(a + 1, b - a - 1)), *table, *dict, bigram.get(),
+                                      std::atoi(q.substr(b + 1).c_str()));
+            std::string out;
+            for (size_t i = 0; i < got.size(); ++i) out += (i ? "|" : "") + sz::to_utf8(got[i].surface);
+            put(out + "\n");
+        }
+        return 0;
+    }
     if (timing) put("load " + std::to_string(micros(t0, t1) / 1000) + " ms\n");
     std::string line;
     while (std::getline(std::cin, line)) {
@@ -166,7 +207,7 @@ int wmain(int argc, wchar_t** argv) {
         }
         sz::ustr input = sz::from_utf8(line);
         if (keys) {
-            run_script(input, *table, *dict, timing, bigram.get(), lm.get());
+            run_script(input, *table, *dict, timing, bigram.get(), lm.get(), key_table.get(), key_memory.get());
             continue;
         }
         auto [kana, pending] = table->to_kana(input);

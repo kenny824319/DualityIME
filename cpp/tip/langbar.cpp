@@ -57,7 +57,9 @@ STDMETHODIMP LangBarButton::GetStatus(DWORD* status) {
 
 STDMETHODIMP LangBarButton::GetTooltipString(BSTR* tip) {
     if (!tip) return E_INVALIDARG;
-    *tip = SysAllocString(L"兩儀輸入法：左鍵切換中／英，右鍵設定");
+    // (日文 #36: on the Japanese side the left click goes back to Chinese - findings #160)
+    *tip = SysAllocString(service_ && service_->japanese_mode() ? L"兩儀輸入法：左鍵回到中文，右鍵設定"
+                                                                 : L"兩儀輸入法：左鍵切換中／英，右鍵設定");
     return *tip ? S_OK : E_OUTOFMEMORY;
 }
 
@@ -73,18 +75,23 @@ STDMETHODIMP LangBarButton::OnClick(TfLBIClick click, POINT pt, const RECT*) {
 
 STDMETHODIMP LangBarButton::GetIcon(HICON* icon) {
     if (!icon) return E_INVALIDARG;
-    // (日文 #36: the Chinese icon on the Japanese side until its own icons come - plan 3 Task 8)
-    bool english = service_ && service_->english_mode() && !service_->japanese_mode();
+    // (日文 #36: あ on the Japanese side, ア while katakana is locked there)
+    int id = !service_                  ? IDI_ZH
+             : service_->ja_mixed_mode() ? (service_->katakana_locked() ? IDI_JA_MIXED_KATA : IDI_JA_MIXED)
+             : service_->japanese_mode() ? (service_->katakana_locked() ? IDI_JA_KATA : IDI_JA)
+             : service_->english_mode()  ? IDI_EN
+                                         : IDI_ZH;
     // a fresh copy each time: the caller destroys it
-    *icon = static_cast<HICON>(LoadImageW(g_module, MAKEINTRESOURCEW(english ? IDI_EN : IDI_ZH), IMAGE_ICON,
+    *icon = static_cast<HICON>(LoadImageW(g_module, MAKEINTRESOURCEW(id), IMAGE_ICON,
                                           GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0));
     return *icon ? S_OK : E_FAIL;
 }
 
 STDMETHODIMP LangBarButton::GetText(BSTR* text) {
     if (!text) return E_INVALIDARG;
-    *text = SysAllocString(!service_                  ? L"中"
-                           : service_->japanese_mode() ? L"日"   // 日文 (#36)
+    *text = SysAllocString(!service_                   ? L"中"
+                           : service_->ja_mixed_mode() ? L"中日"  // 日文 (#36)
+                           : service_->japanese_mode() ? L"日"
                            : service_->english_mode()  ? L"英"
                                                        : L"中");
     return *text ? S_OK : E_OUTOFMEMORY;

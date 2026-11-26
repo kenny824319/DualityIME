@@ -65,11 +65,15 @@ const api = (() => {
       mem("correction", "CP→56", "ㄓˊ", "CP 56", "ㄓˊ", 3, [11, 22], "英文後面的 56 讀成這個音"),
       mem("correction", "xi3", "ㄌㄧˇ", "xi3", "ㄌㄧˇ", 2, [11, 21], "打錯時照這個改（注音自動校正）"),
       mem("english", "mp3", "", "mp3", "", 2, [11, 19], "照打成英文"), mem("english", "gpt4", "", "gpt4", "", null, null, "照打成英文")],
+    // (#83 標點記憶: the mark as typed, what it types now)
+    punct: [mem("punct", "「", "『", "「", "『", 3, [11, 26], ""), mem("punct", "，", "、", "，", "、", 2, [11, 25], ""),
+      mem("punct", "？", "！", "？", "！", 2, [11, 20], "")],
     simplified: [mem("simp_pick", "ㄓㄜˋ", "這", "這", "ㄓㄜˋ", 6, [11, 24], "簡體選字"),
       mem("simp_term", "軟體", "軟件", "軟體", "軟件", 3, [11, 23], "大陸用詞")]
   };
   const remembered = () => ({ remembered: memory.picks.length + memory.words.length + memory.keys.length,
     rememberedEmails: memory.emails.length, rememberedSimplified: memory.simplified ? memory.simplified.length : null });
+  const rememberedAll = () => { const r = remembered(); r.remembered += memory.punct.length; return r; };  // (#83)
   // 符號鍵盤自訂 (#69): the table as settings.exe keeps it (symbols.json), the built-in pages as engine/symbols.py PAGES
   const BUILTIN_SYMBOL_NAMES = ["一般", "數學", "特殊"];
   const BUILTIN_SYMBOL_KEYS = ["`1234567890-=《》〈〉“”【】（）〔〕＼※＊○●「」『』：；、！？…‥—｛｝，。／",
@@ -83,10 +87,11 @@ const api = (() => {
   return async (op, args = {}) => {
     switch (op) {
       case "state": return { config, version: "2.1.0", dataDir: "C:\\Users\\you\\AppData\\Roaming\\DualityIME",
-        ...remembered(), words: dict.words.length, shortcuts: dict.shortcuts.length, quickFill: quickFill.length, beta: false, canUpdate: true, hasPime: false, dark: false };
+        ...rememberedAll(), words: dict.words.length, shortcuts: dict.shortcuts.length, quickFill: quickFill.length, beta: false, canUpdate: true, hasPime: false, dark: false };
       case "setConfig": config[args.key] = args.value; return config;
       case "forgetWords":  // (全部清除: the typing memory, the e-mails when ticked)
         for (const k of ["picks", "words", "keys"]) memory[k] = [];
+        memory.punct = [];  // (#83 標點記憶)
         if (memory.simplified) memory.simplified = [];
         if (args.emails) memory.emails = [];
         return 0;

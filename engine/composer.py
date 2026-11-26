@@ -47,6 +47,12 @@ PUNCT_SWAPS = {
     "\uff3c": ("\uff3c", "\uff0f", "\\"), "\uff5c": ("\uff5c", "\ufe31", "|"),
 }
 BRACKETS = {"\u300c": "\u300d", "\u300e": "\u300f", "\uff08": "\uff09", "\u3010": "\u3011", "\u300a": "\u300b", "\u3008": "\u3009", "\u201c": "\u201d", "\u3014": "\u3015", "(": ")"}
+CLOSERS = {c: o for o, c in BRACKETS.items()}  # (標點記憶, #83: a pair is remembered by its opening bracket)
+
+
+def opener(mark):
+    """The mark 標點記憶 keeps a mark under (#83): a closing bracket's opening one, any other mark itself."""
+    return CLOSERS.get(mark, mark)
 
 
 def punct_choices(shown):
@@ -2245,6 +2251,7 @@ class Composer:
         if ja is not self.ja:
             self.ja = ja
             self._ja_pins = {}
+            self._ja_predicted = {}
             self._refresh()
 
     # ---- 中日混打 (#36): an "en" token is a romaji piece, shown as plan 2's conversion of its kana ----
@@ -2432,10 +2439,28 @@ class Composer:
             at = len(self._ja_kana(t.raw.rstrip(" ")[:max(0, self.caret - t.start)], True)[0])  # (as _ja_offset)
             seg = next((s for s in segs if s.begin <= at < s.end), segs[-1])
         pairs = jc.candidates_for(Segment(seg.begin, seg.end, seg.surface))
-        return [text for text, _ in pairs], [("ja", t.start, kana, pin) for _, pin in pairs]
+        labels, actions = [], []
+        p = self._ja_predicted.get(t.start)  # (on what Tab took, its pin still there: the other predictions first, #196)
+        # (...while it is still the end of the text, as Tab took it: a pick rewrites only the keys at the end - in the
+        # middle the marks after it would fall on other keys, findings #201; nor with letters pending after it, #203)
+        if p is not None and p[:2] == (seg.begin, seg.end) and p[1] == len(kana) and not pending and \
+                t is self.tokens[-1] and any((x.begin, x.end) == p[:2] for x in self._ja_pins_of(t, kana)):
+            for ph in p[2]:
+                text = jc._shown(ph)
+                if text != seg.surface and text not in labels:
+                    labels.append(text)
+                    actions.append(("ja", t.start, kana, None, (seg.begin, seg.end, ph, p[2])))
+        for text, pin in pairs:
+            if text not in labels:
+                labels.append(text)
+                actions.append(("ja", t.start, kana, pin))
+        return labels, actions
 
     def _pick_ja(self, action):
         """A Japanese candidate picked: its 文節 shows it from now on (kept while the kana up to it stays)."""
+        if len(action) > 4:  # (another prediction over what Tab took, #196)
+            self._pick_ja_alt(action)
+            return
         _, start, kana, pin = action
         kept, pins = self._ja_pins.get(start, (kana, []))
         pins = [p for p in pins if (p.end <= pin.begin or p.begin >= pin.end) and kana[:p.end] == kept[:p.end]]
@@ -2448,6 +2473,7 @@ class Composer:
         """Forget everything, including what was typed before (focus change)."""
         self.context_word = None    # last Chinese phrase committed, for the bigram
         self._ja_context = -1       # 中日混打 (#36 plan 5): the last Japanese word sent (its bigram number), -1 none
+        self._ja_sent = False       # ...what was sent last ended in Japanese: a mark alone is the Japanese side (#186, #189)
         self._ja_lm_context = ""    # ...the units of the last Japanese sent, the model's context (plan 5b)
         self.lm_context = ""        # 接續前文選字 (#37): the Chinese just sent (Traditional, the last LM_CONTEXT_MAX)
         self._run_contexts = {}     # run start -> what the model read before it, as shown (_convert_all; #51)
@@ -2464,6 +2490,7 @@ class Composer:
         self.lm_context = ""
         self.lm_units = ""
         self._ja_context = -1  # (中日混打's Japanese context too)
+        self._ja_sent = False
         self._ja_lm_context = ""
 
     def _sent(self, phrases, units=None):
@@ -2502,6 +2529,7 @@ class Composer:
     def _clear_input(self):
         self.raw = ""
         self._ja_pins = {}          # 中日混打 (#36): romaji token start -> (its kana when picked, [ja_composer.Pin])
+        self._ja_predicted = {}     # ...romaji token start -> (kana begin, end, the predictions) of what Tab took (#196)
         self._ja_finishing = False  # ...True while being sent: the pending letters made kana (n: ん)
         self.overrides = {}     # (syl start, length) -> (readings tuple, phrase[, KEPT, span of the pick])
         self.term_picks = {}    # 簡體輸出 (#32): (syl start, length) -> (Taiwan phrase, what was picked to show for it)
@@ -2520,6 +2548,9 @@ class Composer:
         self.fixed = {}         # start -> (end, text): keys shown as picked from the replacement bar
         self.taken = {}         # start -> (end, reading): keys read as a syllable picked from the list (注音自動校正)
         self.pending = {}       # start -> (keys, choice): 校正記憶 picks, learned once sent ("" = as typed)
+        # 標點記憶 (#83): start -> (end, the mark's default, what it showed before the user's first swap, "mem" typed
+        # as remembered | "swap" swapped from its row | "partner" swapped as the other bracket of a pair)
+        self.mark_from = {}
         self.replacements = []  # the bar above the text while the caret is before a character
         self._repl_actions = []
         self.repl_index = -1    # -1 = the bar is only shown; >= 0: in it (↑), this one highlighted
@@ -2832,7 +2863,7 @@ class Composer:
                 # unfinished syllable: the keys typed (su), or ㄋㄧ if preferred
                 text.append(t.value if self.config.preview == "zhuyin" else self._as_typed(t.start, t.raw))
             elif t.kind == "lit":
-                text.append(self._lit_text(t.value, t.raw))
+                text.append(self._lit_shown(t))
             elif t.kind == "fix":
                 text.append(t.value)
             elif self._is_romaji(t):  # 中日混打 (#36): a romaji piece shown as Japanese
@@ -2847,7 +2878,8 @@ class Composer:
                              if t.kind == "zh" and t.start < self.caret and t.start not in self._term_hidden)
         self.cursor = len(self.composition) if self.caret is None else self._tok_offset(self.caret)
         self._suggest()
-        if self.user.simplified:  # (shown in Simplified characters; what Tab takes is in _sugg_actions)
+        if self.user.simplified and not (self._sugg_actions and self._sugg_actions[0][0] == "ja"):
+            # (shown in Simplified characters; what Tab takes is in _sugg_actions - not a Japanese hint, plan 6)
             self.suggestions = [self.lexicon.script.to_simplified(s) for s in self.suggestions]
             last = self.segments[-1] if self.segments else None
             if last and self._shown_phrase(*last) != self.lexicon.script.to_simplified(last[2]):
@@ -2870,7 +2902,24 @@ class Composer:
         return "".join(ch.swapcase() if start + k in self.caps else ch for k, ch in enumerate(keys))
 
     def _lit_text(self, value, key):
-        """Punctuation and spaces in the width the user chose (key: what was typed)."""
+        """Punctuation and spaces in the width the user chose (key: what was typed), a mark as 標點記憶 has it (#83)."""
+        return self._remembered(self._lit_base(value, key))
+
+    def _remembered(self, mark):
+        """What a mark types by 標點記憶 (#83): the choice in effect for it (a closing bracket: the closing one of the
+        choice for its opening one); itself when there is none, or for a space."""
+        if not mark or mark.isspace():
+            return mark
+        o = opener(mark)
+        choice = self.user.punct.choice(o)
+        if choice is None or choice == o:
+            return mark
+        if o != mark:
+            return BRACKETS.get(choice, mark)
+        return choice
+
+    def _lit_base(self, value, key):
+        """Punctuation and spaces in the width the user chose, before 標點記憶."""
         if value == " ":
             return FULL_SPACE if self.config.space == "full" or self.config.full_width else " "
         if self.config.full_width:
@@ -2912,7 +2961,7 @@ class Composer:
         if t.kind == "partial" and self.config.preview != "zhuyin":
             return len(t.raw)
         if t.kind == "lit":
-            return len(self._lit_text(t.value, t.raw))  # (_ is —— in full width, _ in half)
+            return len(self._lit_shown(t))  # (_ is —— in full width, _ in half)
         if self._is_romaji(t):  # (中日混打: as Japanese, _render)
             return getattr(self, "_wide", {}).get(t.start, len(t.value))
         return len(t.value)
@@ -2967,6 +3016,8 @@ class Composer:
         self.fixed = fixed
         self.taken = {a if b <= p else a + d: (b if b <= p else b + d, r) for a, (b, r) in self.taken.items()
                       if b <= p or a >= q}
+        self.mark_from = {a if v[0] <= p else a + d: (v[0] if v[0] <= p else v[0] + d,) + v[1:]
+                          for a, v in self.mark_from.items() if v[0] <= p or a >= q}
         self.pending = {x if x < p else x + d: v for x, v in self.pending.items() if not p <= x < q}
         self.raw = self.raw[:p] + text + self.raw[q:]
         self.forced, self.chinese, self.breaks = move(self.forced), move(self.chinese), move(self.breaks)
@@ -2990,7 +3041,11 @@ class Composer:
         of a remembered e-mail / English word, or the next Chinese character."""
         self.suggestions, self._sugg_actions, self.sugg_index = [], [], 0
         if self.ja is not None and self.tokens and self.tokens[-1].kind == "en":
-            return  # (中日混打: no English completion after romaji; Japanese prediction is a later plan, #36)
+            # (中日混打: no English completion after romaji; the Japanese piece at the end gets 純日文's prediction, #36 plan 6)
+            if self._is_romaji(self.tokens[-1]) and not self.candidates and self.fill is None and \
+                    self.symbol_page is None and self.caret is None:
+                self._ja_suggest(self.tokens[-1])
+            return
         # (nor while the symbol keyboard is up - kept open, #49: Tab and → are its own then, nothing to take it with)
         if not self.config.completion or self.candidates or not self.raw or self.fill is not None or \
                 self.symbol_page is not None:
@@ -3312,9 +3367,138 @@ class Composer:
         self._take_units(start, units, name_typed=typed)
         self.user.custom_picks.record(written)
 
+    def _ja_state(self, t):
+        """A romaji token's (kana, pending, path, JaComposer holding them) - its 文節 as 純日文 shows them."""
+        from .ja_composer import JaComposer
+        kana, pending, spaces, path = self._ja_path(t)
+        jc = JaComposer(self.ja.table, self.ja.d, self.config)
+        jc.kana, jc._path, jc.pins, jc.kana_lock = kana, path, self._ja_pins_of(t, kana), self.ja_lock
+        return kana, pending, spaces, path, jc
+
+    def _ja_suggest(self, t):
+        """中日混打 (plan 6): the hint of the Japanese word being typed at the end (the token's last 文節), as 純日文's
+        (ja_composer._suggest): 2 kana or more, not decided (pinned), 預測提示 on."""
+        from .ja_convert import word_sid
+        from .ja_predict import predict
+        table, memory = getattr(self.ja, "predict", None), self.user.ja_phrases
+        if not self.config.ja_predict:
+            return
+        kana, pending, spaces, path, jc = self._ja_state(t)
+        if spaces or not path:
+            return
+        segs = jc.segments()
+        last = segs[-1]
+        if any(p.end > last.begin for p in jc.pins):
+            return
+        reading = kana[last.begin:]
+        if len(reading) < 2:
+            return
+        bigram = getattr(self.ja, "bigram", None)
+        before = [n for n in path if n.end <= last.begin]
+        prev_sid = word_sid(self.ja.d, bigram, before[-1]) if before else (self._ja_prev_sid(t) if bigram else -1)
+        preds = predict(table, memory, reading, pending, self.ja.table, self.ja.d, bigram, prev_sid)
+        if preds:
+            self.suggestions = [jc._shown(preds[0])]
+            self._sugg_actions = [("ja", t.start, last.begin, preds)]
+
+    def _take_ja(self, action):
+        """Tab on 中日混打's hint: the rest of the phrase's reading typed as romaji after the token's keys (its pending
+        letters replaced), the 文節 kept as the phrase (a pin, as a pick from ↓)."""
+        from .ja_composer import Pin
+        from .ja_romaji import romaji_table, to_romaji
+        _, start, b, preds = action
+        t = next((x for x in self.tokens if x.start == start), None)
+        if t is None:
+            return
+        kana, pending, spaces, path, jc = self._ja_state(t)
+        p = preds[0]
+        if getattr(self, "_ja_inv", None) is None:
+            self._ja_inv = romaji_table(self.ja.table)
+        keys = to_romaji(p.reading[len(kana) - b:], self._ja_inv)
+        if keys is None or not p.reading.startswith(kana[b:]):
+            return
+        nodes = [n for n in path if n.begin >= b]
+        lid = p.lid if p.lid >= 0 else (nodes[0].lid if nodes else self.ja.d.unknown_id)
+        rid = p.rid if p.rid >= 0 else (nodes[-1].rid if nodes else self.ja.d.unknown_id)
+        self.raw = self.raw[:len(self.raw) - len(pending)] + keys
+        new_kana = kana[:b] + p.reading
+        kept, pins = self._ja_pins.get(start, (kana, []))
+        pins = [x for x in pins if x.end <= b and kana[:x.end] == kept[:x.end]]
+        self._ja_pins[start] = (new_kana, pins + [Pin(b, len(new_kana), jc._shown(p), lid, rid)])
+        self._ja_predicted[start] = (b, len(new_kana), preds)  # (for ↓ on it: the other predictions, #196)
+
+    def _ja_cut(self, t, kana, offset):
+        """The raw offset of a romaji token's keys whose kana is kana[:offset] with nothing pending (the token's end for
+        all of it), or None."""
+        core = t.raw.rstrip(" ")
+        if offset >= len(kana):
+            return t.start + len(core)
+        for k in range(len(core) + 1):
+            formed, pending = self._ja_kana(core[:k], True)
+            if not pending and formed == kana[:offset]:
+                return t.start + k
+        return None
+
+    def _pick_ja_alt(self, action):
+        """Another prediction over what Tab took in 中日混打: its reading's keys in place of those of the 文節, kept as
+        the phrase."""
+        from .ja_composer import Pin
+        from .ja_romaji import romaji_table, to_romaji
+        _, start, kana, _, (b, e, ph, preds) = action
+        t = next((x for x in self.tokens if x.start == start), None)
+        if t is None:
+            return
+        cut_b, cut_e = self._ja_cut(t, kana, b), self._ja_cut(t, kana, e)
+        if getattr(self, "_ja_inv", None) is None:
+            self._ja_inv = romaji_table(self.ja.table)
+        keys = to_romaji(ph.reading, self._ja_inv)
+        if cut_b is None or cut_e is None or keys is None:
+            return
+        path = self._ja_path(t)[3]
+        nodes = [n for n in path if b <= n.begin and n.end <= e]
+        lid = ph.lid if ph.lid >= 0 else (nodes[0].lid if nodes else self.ja.d.unknown_id)
+        rid = ph.rid if ph.rid >= 0 else (nodes[-1].rid if nodes else self.ja.d.unknown_id)
+        self.raw = self.raw[:cut_b] + keys + self.raw[cut_e:]
+        new_kana = kana[:b] + ph.reading + kana[e:]
+        kept, pins = self._ja_pins.get(start, (kana, []))
+        pins = [x for x in pins if x.end <= b and kana[:x.end] == kept[:x.end]]
+        end = b + len(ph.reading)
+        jc = self._ja_state(t)[4]
+        self._ja_pins[start] = (new_kana, pins + [Pin(b, end, jc._shown(ph), lid, rid)])
+        self._ja_predicted[start] = (b, end, preds)
+        self._close_candidates()
+        self.caret = None
+        self._refresh()
+
+    def _ja_learn(self, upto):
+        """中日混打 (plan 6): the phrases of the romaji tokens before raw offset upto being sent into the user's phrases
+        (as 純日文's flush learns them). Returns what changed, for undo_commit."""
+        from .ja_predict import phrase_ok
+        if self.ja is None or not self.config.ja_predict:
+            return []
+        changes = []
+        for t in self.tokens:
+            if t.start >= upto:
+                break
+            if not self._is_romaji(t):
+                continue
+            kana, pending, spaces, path, jc = self._ja_state(t)
+            if not path:
+                continue
+            items = [(kana[x.begin:x.end], x.surface) for x in jc.segments()]
+            items += [(a[0] + b[0], a[1] + b[1]) for a, b in zip(items, items[1:])]
+            for reading, surface in items:
+                if phrase_ok(reading, surface):
+                    changes += self.user.ja_phrases.learn(reading, surface)
+        if changes:
+            self.user.ja_phrases.save()
+        return changes
+
     def _take_suggestion(self):
         action = self._sugg_actions[self.sugg_index]
-        if action[0] == "custom":
+        if action[0] == "ja":
+            self._take_ja(action)
+        elif action[0] == "custom":
             self._take_custom(action)
         elif action[0] == "name":
             self._take_name(action)
@@ -3464,7 +3648,7 @@ class Composer:
         if tok is None:
             return None
         if tok.kind == "lit":
-            return self._lit_text(tok.value, tok.raw)
+            return self._lit_shown(tok)
         return tok.value if tok.kind == "fix" else None
 
     def _bracket_partner(self, tok):
@@ -3509,12 +3693,177 @@ class Composer:
         """A mark picked from its row (#53): shown so from now on (fixed, as the replacement bar keeps what it puts),
         the bracket it pairs with too; the caret past it; nothing learned."""
         _, start, end, text, partner = action
+        for (a, b, _), how in zip([(start, end, text)] + ([partner] if partner else []), ("swap", "partner")):
+            self._note_swap(a, b, how)  # (標點記憶, #83: before the swap shows)
         for a, b, t in [(start, end, text)] + ([partner] if partner else []):
             self.fixed = {s: v for s, v in self.fixed.items() if v[0] <= a or s >= b}
             self.fixed[a] = (b, t)
         self.candidates, self._cand_actions = [], []
         self._refresh()
         self._caret_past(end)
+
+    def _mark_entry(self, tok):
+        """標點記憶 (#83): mark_from's entry for the mark token tok, while it still holds its keys; else None."""
+        v = self.mark_from.get(tok.start)
+        return v if v is not None and v[0] == tok.start + len(tok.raw) else None
+
+    def _note_swap(self, start, end, how):
+        """A mark at start about to be swapped (#83): its default and what it showed before the first swap kept."""
+        tok = next((t for t in self.tokens if t.start == start), None)
+        if tok is None:
+            return
+        v = self._mark_entry(tok)
+        if v is not None and v[3] == "ja":
+            return  # (the Japanese side: nothing learned, findings #186)
+        if v is not None and v[3] != "mem":
+            self.mark_from[start] = (end, v[1], v[2], how)
+            return
+        default = v[1] if v is not None else self._lit_base(tok.value, tok.raw) if tok.kind == "lit" else tok.value
+        self.mark_from[start] = (end, default, self._shown_mark(tok), how)
+
+    def _japanese_side(self):
+        """中日混打 (#36): a mark typed here is Japanese - after a romaji token, or with nothing typed right after Japanese
+        was sent - where 標點記憶 does not hold (#83, the user 2026-11-26; findings #186)."""
+        if self.ja is None:
+            return False
+        at = len(self.raw) if self.caret is None else self.caret
+        before = None
+        for t in self.tokens:
+            if t.start >= at:
+                break
+            before = t
+        if before is not None:
+            return self._is_romaji(before)
+        return self._ja_sent  # (kept at the send: the context is cleared after 。 and with the katakana lock, #189)
+
+    def _ends_japanese(self, last):
+        """中日混打: a text ending in token last ends in Japanese - a romaji token, or a mark on the Japanese side."""
+        if self.ja is None or last is None:
+            return False
+        mark = last.kind == "lit" or (last.kind == "fix" and last.raw == NAME_MARK_KEY)
+        return self._is_romaji(last) or (mark and self._japanese_mark(last))  # (only a mark by those before it, #191)
+
+    def _japanese_mark(self, tok):
+        """中日混打: the mark token tok is on the Japanese side (標點記憶 neither holds nor learns, #186 / #189) - typed
+        so (mark_from "ja"), or after Japanese with only marks between (？ of 私は？ is a token of its own); at the
+        start, as what was sent last."""
+        if self.ja is None:
+            return False
+        v = self._mark_entry(tok)
+        if v is not None and v[3] == "ja":
+            return True
+        k = self.tokens.index(tok) if tok in self.tokens else -1
+        while k > 0:
+            k -= 1
+            t = self.tokens[k]
+            if t.kind == "lit" or (t.kind == "fix" and t.raw == NAME_MARK_KEY):
+                continue
+            return self._is_romaji(t)
+        return self._ja_sent
+
+    def _lit_shown(self, tok):
+        """A typed punctuation key as shown: in the width chosen, as 標點記憶 has it unless on the Japanese side."""
+        base = self._lit_base(tok.value, tok.raw)
+        return base if self._japanese_mark(tok) else self._remembered(base)
+
+    def _touch_mark(self, default, shown):
+        """A mark sent as 標點記憶 had it (#83 with #78): used today."""
+        if shown and default != shown and shown == self._remembered(default):
+            if self.user.punct.touch(opener(default), opener(shown)):
+                self.user.punct.save()
+
+    def _learn_marks(self, upto):
+        """標點記憶 (#83), the marks before raw offset upto being sent: a mark swapped from its row to another than it
+        showed is one pick of what it became (its default picked back too); one typed as remembered and sent unchanged
+        is used (#78); the other bracket of a pair swapped along counts nothing (its pair did). Returns what changed,
+        for undo_commit."""
+        memory = self.user.punct
+        changes = []
+        for tok in self.tokens:
+            if tok.start >= upto:
+                break
+            shown = self._shown_mark(tok)
+            if not shown or shown.isspace():
+                continue
+            v = self._mark_entry(tok)
+            if v is not None:
+                default, first, how = v[1], v[2], v[3]
+            elif tok.kind == "lit" and not self._japanese_mark(tok):
+                default, first, how = self._lit_base(tok.value, tok.raw), shown, "mem"
+            else:
+                continue
+            if how == "swap" and shown != first and (shown == default or shown in punct_choices(default)):
+                changes += memory.record(opener(default), opener(shown))
+            elif how == "mem" and shown != default and shown == self._remembered(default):
+                changes += memory.touch(opener(default), opener(shown))
+        if changes:
+            memory.save()
+        return changes
+
+    def _sent_units(self, upto):
+        """#78: [(reading, character)] of the syllables before raw offset upto, as sent; None between runs."""
+        chars = {}
+        for s0, n, p in self.segments:
+            if len(p) == n:
+                for k in range(n):
+                    chars[s0 + k] = p[k]
+        units, idx = [], 0
+        for t in self.tokens:
+            if t.start >= upto:
+                break
+            if t.kind == "zh":
+                ch = chars.get(idx)
+                units.append((self.readings[idx], ch) if ch else None)
+                idx += 1
+            elif units and units[-1] is not None:
+                units.append(None)
+        return units
+
+    def _touch_corrections(self, upto):
+        """#78: 校正記憶 and 代碼記憶 used as remembered in what is sent before raw offset upto - a code read as
+        English, a syllable read as its remembered correction (or as typed), one right after English - get today's
+        day, their count as it stands. Returns what changed, for undo_commit."""
+        memory = self.user.corrections
+        if not memory.loaded:
+            return []
+        changes = []
+        codes = memory.codes()
+        for k, t in enumerate(self.tokens):
+            if t.start >= upto:
+                break
+            keys = t.raw.rstrip(" ")
+            if t.kind == "en":
+                if t.start not in self.exact and keys in codes:
+                    changes += memory.touch(keys, AS_ENGLISH)
+                    continue
+                # (as typed, no syllable there: 817 a number - findings #184 - and digits right after English, CP56)
+                if (self.table.autocorrect or is_code(keys)) and memory.choice(keys) == "":
+                    changes += memory.touch(keys, "")
+                for i in range(1, len(keys)):
+                    if _letters(keys[:i]) and not keys[i].isalpha():
+                        split = split_keys(keys[:i], keys[i:])
+                        if memory.choice(split) == "":
+                            changes += memory.touch(split, "")
+                        break
+                continue
+            if t.kind != "zh":
+                continue
+            before = self._english_before(k)
+            if before is not None:
+                split = split_keys(before.raw, keys)
+                choice = memory.choice(split) if split else None
+                if choice and t.value == choice:
+                    changes += memory.touch(split, choice)
+            if not (self.table.autocorrect or is_code(keys)) or t.start in self.exact:
+                continue
+            choice = memory.choice(keys)
+            if choice is None or choice == AS_ENGLISH:
+                continue
+            if (choice == "" and not t.corrected) or (choice and t.value == choice):
+                changes += memory.touch(keys, choice)
+        if changes:
+            memory.save()
+        return changes
 
     def _open_list(self):
         self.cand_expanded, self.cand_first = False, 0
@@ -4209,12 +4558,16 @@ class Composer:
         symbol joins it instead (_join_symbol); hold (a symbol picked from the symbol keyboard, #82 / Issue #11): with
         nothing typed too - it stays in the text being typed as a punctuation key's mark does, ↓ swaps it, Enter sends it."""
         self.fill = None
+        default = sym
+        japanese = join and self._japanese_side()
+        if join and not japanese:  # (標點記憶, #83: the symbol keyboard's marks and Ctrl + a mark as remembered)
+            sym = self._remembered(sym)
         if not stay:
             self.close_symbols()
         else:  # (something went out: no longer new, Space is a space - not 快速填入 - code-reviewer)
             self.symbol_fresh = False
         if join and (self.raw or hold):
-            self._join_symbol(sym)
+            self._join_symbol(sym, default, japanese)
             return
         before = ""
         if self.raw:
@@ -4226,10 +4579,12 @@ class Composer:
         self.context_word, self.after_english = None, False
         self._ja_context = -1
         self._ja_lm_context = ""
+        self._ja_sent = japanese  # (a Japanese-side mark: what follows is still that side, findings #189)
         self._sent([sym])  # (its Chinese, if any, is what is right before the caret now: #37)
         self.commit = before + sym
+        self._touch_mark(default, sym)  # (sent as remembered: used, #78)
 
-    def _join_symbol(self, sym):
+    def _join_symbol(self, sym, default=None, japanese=False):
         """A symbol into the text being typed, at the caret, as a mark typed there (#52, a user 2026-11-17: it sent
         what was before it, fixing its words): a NAME_MARK_KEY shown as it - no syllable, so the picks stay; what is
         before it can still be picked, what is typed after goes with it, Enter sends all, Backspace right after takes
@@ -4242,6 +4597,10 @@ class Composer:
         def put():
             self._insert_key(NAME_MARK_KEY)
             self.fixed[at] = (at + len(NAME_MARK_KEY), sym)
+            if japanese:  # (中日混打's Japanese side: 標點記憶 neither holds nor learns, findings #186)
+                self.mark_from[at] = (at + len(NAME_MARK_KEY), sym, sym, "ja")
+            elif default is not None and default != sym:  # (標點記憶, #83: typed as remembered)
+                self.mark_from[at] = (at + len(NAME_MARK_KEY), default, sym, "mem")
         self._keep_picks_around(at, put)
         self._auto_commit()
 
@@ -4958,17 +5317,19 @@ class Composer:
     def _do_commit(self):
         undo = dict(raw=self.raw, forced=set(self.forced), chinese=set(self.chinese), breaks=set(self.breaks),
                     exact=set(self.exact), term_picks=dict(self.term_picks),
-                    fixed=dict(self.fixed), taken=dict(self.taken), pending=dict(self.pending),
+                    fixed=dict(self.fixed), taken=dict(self.taken), pending=dict(self.pending), mark_from=dict(self.mark_from),
                     literal=set(self.literal), caps=set(self.caps), overrides=dict(self.overrides),
                     digits_as_zhuyin=self.digits_as_zhuyin,
                     context_word=self.context_word, after_english=self.after_english, lm_context=self.lm_context,
                     lm_units=self.lm_units, syllables=[(t.start, t.raw) for t in self.tokens if t.kind == "zh"],
                     # (中日混打: the context it was typed after and its picks - findings #175)
-                    _ja_context=self._ja_context, _ja_lm_context=self._ja_lm_context, _ja_pins={k: (v[0], list(v[1])) for k, v in self._ja_pins.items()})
+                    _ja_context=self._ja_context, _ja_lm_context=self._ja_lm_context, _ja_sent=self._ja_sent, _ja_predicted=dict(self._ja_predicted), _ja_pins={k: (v[0], list(v[1])) for k, v in self._ja_pins.items()})
         learned = []  # what this commit taught, as it was before: for undo_commit to put back
         self.user.simp_dropped = []  # (what a pick in Traditional mode takes of Simplified mode's memory, #32)
         terms = self._learn_terms(save=False)  # (saved with the picks below: one save a commit, #32)
-        if terms and not self.overrides:
+        # (#78: what is sent as the memory had it is used - before the picks below learn, so undo puts back in turn)
+        touched = self.user.touch_phrases(self._sent_units(len(self.raw)))
+        if (terms or touched) and not self.overrides:
             self.user.save()
         if self.overrides:
             before = (copy.deepcopy(self.user.phrases), copy.deepcopy(self.user.phrase_used))
@@ -4998,12 +5359,15 @@ class Composer:
         self.after_english = False
         self.context_word = self.segments[-1][2] if last and last.kind == "zh" and self.segments else None
         self._ja_context = self._ja_context_after(last) if self.ja is not None else -1  # (中日混打, plan 5)
+        self._ja_sent = self._ends_japanese(last)
         self._ja_lm_context = self._ja_lm_after(last) if self.ja is not None else ""  # (plan 5b)
         self._sent((p for _, _, p in self.segments), self._token_units())  # (接續前文選字, #37)
-        corrected = self._learn_corrections(len(self.raw))
+        corrected = self._touch_corrections(len(self.raw)) + self._learn_corrections(len(self.raw))
+        marks = self._learn_marks(len(self.raw))  # (標點記憶, #83)
+        ja_learned = self._ja_learn(len(self.raw))  # (中日混打's phrases, #36 plan 6)
         self._clear_input()
         self.commit = text
-        self.last_commit = (text, undo, learned, corrected, terms, self.user.simp_dropped)
+        self.last_commit = (text, undo, learned, corrected, terms, self.user.simp_dropped, touched, marks, ja_learned)
 
     def _learn_terms(self, save=True, end=None):
         """簡體輸出 (#32): each Mainland word picked here is learned for its Taiwan phrase; the Taiwan phrase picked
@@ -5276,13 +5640,14 @@ class Composer:
         for its last word open."""
         if self.raw or not self.last_commit:
             return ""
-        text, undo, learned, corrected, terms, dropped = self.last_commit
+        text, undo, learned, corrected, terms, dropped, touched, marks, ja_learned = self.last_commit
         self.last_commit = None
         syllables = undo.pop("syllables")  # (the syllables the picks are numbered by)
         for name, value in undo.items():
             setattr(self, name, value)
-        if learned or dropped:  # picked by mistake: nothing of it learned or forgotten after all
+        if learned or dropped or touched:  # picked by mistake: nothing of it learned or forgotten after all
             self.user.restore_phrases(learned)
+            self.user.restore_touched(touched)  # (#78: the renewal before the picks, put back after them)
             self.user.restore_simplified(dropped)  # (nor taken of Simplified mode's memory, #32)
             self.user.save()
         if terms:  # (the Mainland words of 簡體輸出 the same, #32)
@@ -5295,6 +5660,10 @@ class Composer:
             self.user.save()
         if corrected:  # (校正記憶 the same)
             self.user.corrections.restore(corrected)
+        if marks:  # (標點記憶, #83)
+            self.user.punct.restore(marks)
+        if ja_learned:  # (中日混打's phrases, #36 plan 6)
+            self.user.ja_phrases.restore(ja_learned)
         self.caret = None
         self.commit = ""
         self._refresh(syllables)
@@ -5497,7 +5866,12 @@ class Composer:
                           for (s, l), v in self.overrides.items() if s >= b}
         self.replaced = {}
         self._drop_orphans()
+        if self.user.touch_phrases(self._sent_units(tok.start)):  # (#78)
+            self.user.save()
+        self._touch_corrections(tok.start)
         self._learn_corrections(tok.start)  # (what is sent of them, while the marks are where they were)
+        self._learn_marks(tok.start)  # (標點記憶, #83)
+        self._ja_learn(tok.start)  # (中日混打's phrases, #36 plan 6)
         self.forced = {i - tok.start for i in self.forced if i >= tok.start}
         self.chinese = {i - tok.start for i in self.chinese if i >= tok.start}
         self.breaks = {i - tok.start for i in self.breaks if i >= tok.start}
@@ -5506,12 +5880,15 @@ class Composer:
         self.caps = {i - tok.start for i in self.caps if i >= tok.start}
         self.fixed = {a - tok.start: (b - tok.start, t) for a, (b, t) in self.fixed.items() if a >= tok.start}
         self.taken = {a - tok.start: (b - tok.start, r) for a, (b, r) in self.taken.items() if a >= tok.start}
+        self.mark_from = {a - tok.start: (v[0] - tok.start,) + v[1:] for a, v in self.mark_from.items() if a >= tok.start}
         self.pending = {x - tok.start: v for x, v in self.pending.items() if x >= tok.start}
         if self.ja is not None:  # (中日混打, plan 5: what stays starts after the last token sent - its picks still on)
             before_tok = next((x for x in reversed(self.tokens) if x.start < tok.start), None)
             self._ja_context = self._ja_context_after(before_tok)
             self._ja_lm_context = self._ja_lm_after(before_tok)
+            self._ja_sent = self._ends_japanese(before_tok)
         self._ja_pins = {x - tok.start: v for x, v in self._ja_pins.items() if x >= tok.start}  # (findings #165)
+        self._ja_predicted = {x - tok.start: v for x, v in self._ja_predicted.items() if x >= tok.start}
         self.context_word = next(p for s, l, p in self.segments if s + l == b)
         self._sent((p for s, l, p in self.segments if s + l <= b), self._token_units(tok.start))  # (#37)
         self.after_english = False
@@ -5527,7 +5904,7 @@ class Composer:
     # ---- key entry point ---------------------------------------------------
     def key(self, ch=None, special=None, caps=False):
         """ch: printable character typed (already shifted), or special: one of
-        BACK DEL ENTER ESC LEFT RIGHT UP DOWN HOME END PGUP PGDN TAB STAB.
+        BACK DEL ENTER ESC LEFT RIGHT UP DOWN HOME END PGUP PGDN TAB STAB, CTRL_BACK (Ctrl+Backspace, #86).
         caps: Caps Lock is on (ch is then in upper case unless Shift is held;
         only Shift makes a letter surely English).
         ` opens the symbol keyboard (see symbol_page); ~ is typed as any other symbol key.
@@ -5539,6 +5916,9 @@ class Composer:
             self._refresh()
         if ch is not None:  # (special keys carry no Caps Lock state)
             self.caps_lock = caps
+        if special == "CTRL_BACK" and (self.fill is not None or self.symbol_page is not None or self.candidates or
+                                       self.repl_index >= 0):
+            special = "BACK"  # (#86: a box open takes it as Backspace)
         if self.fill is not None:
             return self._key_fill(ch, special)
         if self.symbol_page is not None:
@@ -5559,11 +5939,15 @@ class Composer:
         if not self.raw and not ch.isalnum() and ch not in self.table.keymap and ch not in symbols.OPEN_KEYS:
             # nothing being typed, and a key that is neither zhuyin nor English ([ ' = ?):
             # out right away, like the ASUS IME (in a sentence it stays, to go with it)
-            text = self._lit_text(PUNCT.get(ch, ch), ch)
+            base = self._lit_base(PUNCT.get(ch, ch), ch)
+            japanese = self._japanese_side()
+            text = base if japanese else self._remembered(base)  # (findings #186)
             self.commit = to_full_width(text) if self.config.full_width and ch not in PUNCT else text
+            self._touch_mark(base, text)  # (標點記憶 used, #83 / #78)
             self.context_word = None
             self._ja_context = -1
             self._ja_lm_context = ""
+            self._ja_sent = japanese  # (findings #189)
             self.after_english = False
             return True
         if ch in symbols.OPEN_KEYS:  # (` opens it anywhere, `` types a `)
@@ -5627,6 +6011,8 @@ class Composer:
             self._do_commit()
         elif special == "ESC":
             self._clear_input()
+        elif special == "CTRL_BACK":
+            self._ctrl_back()
         elif special in ("BACK", "DEL") and self.caret is not None:
             # in the middle: the key (or Chinese character) before / after the caret
             at = self.caret if special == "DEL" else self.caret - 1
@@ -5682,6 +6068,37 @@ class Composer:
         else:
             return True
         return True
+
+    def _shows_chinese(self, t):
+        """Whether token t shows Chinese (or Japanese) characters: a syllable, a romaji piece shown as kana in 中日混打,
+        a joined symbol or literal that is a CJK character or kana - not a mark (、 。 are no characters), letters, digits."""
+        if t.kind == "zh" or self._is_romaji(t):
+            return True
+        return t.kind in ("fix", "lit") and any(
+            "\u3041" <= ch <= "\u30ff" or "\u3400" <= ch <= "\u9fff" or "\uf900" <= ch <= "\ufaff" for ch in t.value)
+
+    def _ctrl_back(self):
+        """Ctrl+Backspace (#86, a user's request; the user's boundaries 2026-11-26): the run of tokens before the caret
+        that show no Chinese - English, digits, marks, spaces, unfinished zhuyin, symbols - goes, back to the Chinese (or
+        the start); the text after the caret stays. A Chinese character (or kana) right before the caret: as Backspace.
+        The picks after the cut stay, following their keys (_keep_picks_around: no syllable in the run)."""
+        end = len(self.raw) if self.caret is None else self.caret
+        p = end
+        for t in sorted((t for t in self.tokens if t.start < end), key=lambda t: t.start, reverse=True):
+            if self._shows_chinese(t):
+                break
+            p = t.start
+        if p == end:
+            self._key_special("BACK")
+            return
+        had_caret = self.caret is not None
+
+        def take():
+            self._splice(p, end)
+            self.caret = p if had_caret and p < len(self.raw) else None
+        # (no syllable in the run: the picks after it stay, following their keys - as Backspace on a joined mark;
+        # _splice alone dropped them, findings #206)
+        self._keep_picks_around(p, take)
 
     def page_size(self):
         """Candidates on a page: as many as the candidate keys (#23)."""

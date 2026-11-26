@@ -22,6 +22,7 @@ import unicodedata
 
 from . import candlayout
 from .ja_convert import convert, ja_units, nbest, rescore, word_sid
+from .ja_predict import phrase_ok, predict
 
 NBEST_K, NBEST_N = 5, 10  # plan 5b: the partial paths a node keeps, the sentences the model rescores
 LM_CONTEXT = 32  # ...the units of Japanese sent before that the model reads
@@ -64,8 +65,10 @@ def to_half_katakana(s):
 
 
 class JaComposer:
-    def __init__(self, table, d, config, bigram=None, lm=None, lm_weight=0):
+    def __init__(self, table, d, config, bigram=None, lm=None, lm_weight=0, predictor=None, phrases=None):
         self.table, self.d, self.config = table, d, config
+        self.predictor = predictor  # plan 6: engine/ja_predict.JaPredict (the phrase table), or None
+        self.phrases = phrases      # ...the user's phrases (lexicon.JaPhraseMemory), or None: nothing learned
         self.bigram = bigram        # plan 5: engine/ja_bigram.JaBigram, or None
         self.context_sid = -1       # ...the last word sent (the next conversion's context), -1 none
         self.lm, self.lm_weight = lm, lm_weight  # plan 5b: the Japanese model's Scorer (or None) and its weight
@@ -93,6 +96,9 @@ class JaComposer:
         self._cand_seg = None
         self.cand_index = 0
         self._path = []
+        self.suggestions = []   # plan 6: the hint (one at most): the word being typed as predicted
+        self._sugg = None       # ...(its 文節, the predictions) for Tab
+        self.predicted = None   # ...what Tab took: (kana begin, end, the predictions) for ↓'s other predictions
         self._render()
 
     def _setting(self, name, default):
@@ -149,6 +155,57 @@ class JaComposer:
         self.cursor = at + len(self.pending) if not self._empty() else 0
         if self._empty():
             self.composition = ""
+        self._suggest(segs)
+
+    # ---- prediction (plan 6) ----
+
+    def _shown(self, phrase):
+        """A prediction as the kana lock shows it."""
+        if self.kana_lock == "hira":
+            return phrase.reading
+        if self.kana_lock == "kata":
+            return to_katakana(phrase.reading)
+        return phrase.surface
+
+    def _suggest(self, segs):
+        """The hint: the word being typed (the last 文節, the caret at the end, 2 kana or more, not decided - pinned)
+        as predicted (engine/ja_predict.predict), with 預測提示 on and nothing listed."""
+        self.suggestions, self._sugg = [], None
+        if not self._setting("ja_predict", True) or (self.predictor is None and self.phrases is None) or \
+                self.caret is not None or self.candidates or not segs:
+            return
+        last = segs[-1]
+        if any(p.begin < len(self.kana) and p.end > last.begin for p in self.pins):
+            return
+        reading = self.kana[last.begin:]
+        if len(reading) < 2:
+            return
+        before = [n for n in self._path if n.end <= last.begin]
+        prev_sid = word_sid(self.d, self.bigram, before[-1]) if before else self.context_sid
+        preds = predict(self.predictor, self.phrases, reading, self.pending, self.table, self.d, self.bigram, prev_sid)
+        if preds:
+            self._sugg = (last, preds)
+            self.suggestions = [self._shown(preds[0])]
+
+    def _put_phrase(self, b, e, phrase, preds):
+        """phrase written over the kana b..e (its reading in their place, the 文節 pinned to it), the caret after it."""
+        nodes = [n for n in self._path if b <= n.begin and n.end <= e]
+        lid = phrase.lid if phrase.lid >= 0 else (nodes[0].lid if nodes else self.d.unknown_id)
+        rid = phrase.rid if phrase.rid >= 0 else (nodes[-1].rid if nodes else self.d.unknown_id)
+        k = len(phrase.reading) - (e - b)
+        self.kana = self.kana[:b] + phrase.reading + self.kana[e:]
+        self.pins = [p if p.end <= b else p._replace(begin=p.begin + k, end=p.end + k)
+                     for p in self.pins if p.end <= b or p.begin >= e]
+        self.spans = [(x, y) if y <= b else (x + k, y + k) for x, y in self.spans if y <= b or x >= e]
+        end = b + len(phrase.reading)
+        self._pin(Pin(b, end, self._shown(phrase), lid, rid))
+        self.predicted = (b, end, preds)
+
+    def _take_hint(self):
+        """Tab: the hint replaces the word being typed (the pending letters go with it)."""
+        seg, preds = self._sugg
+        self.pending = ""
+        self._put_phrase(seg.begin, len(self.kana), preds[0], preds)
 
     def _seg_at_caret(self):
         """The 文節 at the caret: the one starting there or holding it; the last one at the end."""
@@ -174,6 +231,9 @@ class JaComposer:
         self.pins = [p if p.end <= at else p._replace(begin=p.begin + k, end=p.end + k)
                      for p in self.pins if not (p.begin < at < p.end)]
         self.spans = [(b, e) if e <= at else (b + k, e + k) for b, e in self.spans if not (b < at < e)]
+        if self.predicted is not None:  # (what Tab took moves along; typed inside it, it is no longer that - #198)
+            b, e, preds = self.predicted
+            self.predicted = None if b < at < e else (self.predicted if e <= at else (b + k, e + k, preds))
         if self.caret is not None:
             self.caret += k
 
@@ -187,6 +247,9 @@ class JaComposer:
         self.pins = [p._replace(begin=shift(p.begin, p.end)[0], end=shift(p.begin, p.end)[1])
                      for p in self.pins if not (p.begin <= at < p.end)]
         self.spans = [shift(b, e) for b, e in self.spans if not (b <= at < e)]
+        if self.predicted is not None:  # (findings #198)
+            b, e, preds = self.predicted
+            self.predicted = None if b <= at < e else shift(b, e) + (preds,)
         if self.caret is not None:
             if self.caret > at:
                 self.caret -= 1
@@ -267,6 +330,11 @@ class JaComposer:
         if seg is None:
             return False
         pairs = self.candidates_for(seg)
+        p = self.predicted  # (on what Tab took, its pin still there: the other predictions first - plan 6)
+        if p is not None and any((x.begin, x.end) == (p[0], p[1]) for x in self.pins) and (seg.begin, seg.end) == p[:2]:
+            alts = [(self._shown(ph), ("alt", ph)) for ph in p[2] if self._shown(ph) != seg.surface]
+            texts = {t for t, _ in alts}
+            pairs = alts + [(t, pin) for t, pin in pairs if t not in texts]
         self.candidates = [t for t, _ in pairs]
         self._cand_pins = [p for _, p in pairs]
         self._cand_seg = seg
@@ -286,7 +354,11 @@ class JaComposer:
     def _pick(self, i):
         pin = self._cand_pins[i]
         self._close_candidates()
-        self._pin(pin)
+        if isinstance(pin, tuple) and pin[0] == "alt":  # (another prediction over what Tab took)
+            b, e, preds = self.predicted
+            self._put_phrase(b, e, pin[1], preds)
+        else:
+            self._pin(pin)
         self._render()
         return True
 
@@ -340,6 +412,7 @@ class JaComposer:
         self._finish_pending()
         self._render()
         out = self.composition
+        self._learn(self.segments())
         # (what is sent is the next conversion's context: its last word; none after a sentence end or kana as typed)
         last = self._path[-1] if self._path and self.kana_lock == "auto" and out and out[-1] not in "。？！" else None
         self.context_sid = word_sid(self.d, self.bigram, last)
@@ -348,6 +421,21 @@ class JaComposer:
         self.reset()
         self.kana_lock = lock
         return out
+
+    def _learn(self, segs):
+        """Plan 6: the phrases sent (each 文節 and each two adjacent ones, a reading of 3 kana or more, Japanese only - as
+        tools/build_ja_predict.py counts) into the user's phrases, with 預測提示 on."""
+        if self.phrases is None or not self._setting("ja_predict", True) or not segs:
+            return
+        items = [(self.kana[x.begin:x.end], x.surface) for x in segs]
+        items += [(a[0] + b[0], a[1] + b[1]) for a, b in zip(items, items[1:])]
+        learned = False
+        for reading, surface in items:
+            if phrase_ok(reading, surface):
+                self.phrases.learn(reading, surface)
+                learned = True
+        if learned:
+            self.phrases.save()
 
     def key(self, ch=None, special=None):
         """ch: a printable character typed, or special: BACK DEL ENTER ESC LEFT RIGHT HOME END UP DOWN PGUP PGDN TAB
@@ -385,11 +473,15 @@ class JaComposer:
     def _key_special(self, special):
         if self._empty():
             return False
+        if special == "TAB" and self._sugg is not None:
+            self._take_hint()
+            return True
         if special in ("TAB", "STAB"):
             return True
         if special == "ENTER":
             self.commit = self.flush()
         elif special == "ESC":
+            self.predicted = None
             lock = self.kana_lock
             self.reset()
             self.kana_lock = lock

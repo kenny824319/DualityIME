@@ -175,7 +175,9 @@ class Json;
 // engine/lexicon.py CorrectionMemory.
 class CorrectionMemory {
 public:
-    CorrectionMemory(std::wstring path, std::function<int()> today);
+    // flat: 標點記憶 (#83, engine/lexicon.py PunctMemory) - punct.json, {"format", "picks", "used"}, read at once
+    // keep: the key strings kept (the most counted, then the most recently used - findings #194)
+    CorrectionMemory(std::wstring path, std::function<int()> today, bool flat = false, size_t keep = KEEP_CORRECTIONS);
     void enable(bool on);  // the setting on (or on at start): read the file once
     double count(const std::string& keys, const ustr& choice) const;
     // what these keys do by the user's picks: "" (as typed), a reading, or none (the rules)
@@ -192,11 +194,20 @@ public:
     // (keys, choice, count, day) as it was: for restore (undo)
     using Change = std::tuple<std::string, ustr, std::optional<double>, std::optional<int>>;
     std::vector<Change> record(const std::string& keys, const ustr& choice);
-    void restore(const std::vector<Change>& changes);
+    // used as remembered and sent unchanged (#78): today's day, the count as it stands; under 1 or today already: none
+    std::vector<Change> touch(const std::string& keys, const ustr& choice);
+    void restore(const std::vector<Change>& changes);  // (in reverse: a touch, then a record of the same)
     void forget();                 // 全部清除 (on or off)
     bool forget_choice(const std::string& keys, const ustr& choice);  // 記憶清單 (#65): one choice, true if there
     void merge(const Json& raw);   // a backup restored (on or off)
     size_t size() const;
+    // the key strings with picks (plan 6: the user's phrases starting with what is typed), in key order
+    std::vector<std::string> keys() const {
+        std::vector<std::string> out;
+        for (auto& [k, v] : data_.picks)
+            if (!v.empty()) out.push_back(k);
+        return out;
+    }
     void save();
     bool loaded() const { return loaded_; }
     // never write keys.json again (UserModel::keep_files)
@@ -207,9 +218,11 @@ private:
         std::map<std::string, std::map<ustr, double>> picks;
         std::map<std::string, std::map<ustr, int>> used;
     };
-    static Part parse(const Json& raw);
+    static Part parse(const Json& raw, bool flat);
     void load();
     void prune();
+    bool flat_ = false;
+    size_t keep_ = KEEP_CORRECTIONS;
     std::wstring path_;
     std::function<int()> today_;
     bool keep_file_ = false;
@@ -273,6 +286,12 @@ public:
     std::vector<PhraseChange> phrases_changed(const OrderedMap<ustr, OrderedMap<ustr, double>>& old_phrases,
                                               const OrderedMap<ustr, OrderedMap<ustr, int>>& old_used) const;
     void restore_phrases(const std::vector<PhraseChange>& changed);
+    // #78: the syllables sent, (reading, character), none between runs - each run of them that is a remembered phrase
+    // (a character inside a longer word too) used: today's day, its count as it stands; what changed, as above
+    // (each change with whether it was the shared memory's in Simplified mode, for restore_touched - findings #188)
+    using TouchChange = std::pair<PhraseChange, bool>;
+    std::vector<TouchChange> touch_phrases(const std::vector<std::optional<std::pair<ustr, char32_t>>>& units);
+    void restore_touched(const std::vector<TouchChange>& changed);  // ...put back (Simplified mode: the shared too)
     void learn_word(const std::string& word);  // an English word or an e-mail sent (a URL is not remembered)
     void forget_words(int counter);   // 全部清除: every kind of typing memory but the e-mails
     void forget_emails(int counter);  // ...with 一併清除記住的 Email ticked
@@ -307,6 +326,8 @@ public:
         keep_files_ = true;
         corrections.keep_file();
         custom_picks.keep_file();
+        punct.keep_file();
+        ja_phrases.keep_file();
     }
 
     OrderedMap<ustr, OrderedMap<ustr, double>> phrases;
@@ -331,6 +352,8 @@ public:
     std::map<ustr, std::vector<ustr>> chinese_shortcuts;  // 映射詞彙 both ways: Chinese side as shown -> the other side(s)
     CorrectionMemory corrections;  // 注音自動校正's picks, in a file of their own (read once the setting is on)
     CustomPickMemory custom_picks;  // 自訂詞彙 taken with Tab, in a file of its own (#13)
+    CorrectionMemory punct;  // 標點記憶 (#83), in a file of its own (punct.json)
+    CorrectionMemory ja_phrases;  // 日文's phrases sent (#36 plan 6, ja_phrases.json; engine/lexicon.py JaPhraseMemory)
 
 private:
     double faded(double count, const int* day) const;
@@ -339,6 +362,7 @@ private:
     void keep_simplified();   // simp_* = where phrases / phrase_used differ from shared_*
     void save_simplified();
     void drop_simplified(const ustr& key, const ustr& phrase);  // a pick in Traditional mode: the latest
+    bool shared_entry(const ustr& key, const ustr& phrase) const;  // Simplified mode: the shared memory's, not its own
     void prune_simplified();
     bool simp_dirty_ = false;  // changed in Traditional mode: saved with user.json
     void import_memory_now(int counter);

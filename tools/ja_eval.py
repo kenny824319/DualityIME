@@ -42,10 +42,13 @@ def main(argv=None):
     ap.add_argument("--bigram")  # (a ja_bigram.bin: plan 5)
     ap.add_argument("--json")    # (writes this run's results: romaji -> what we gave)
     ap.add_argument("--before")  # (a --json of an earlier run: every right -> wrong and wrong -> right listed)
+    ap.add_argument("--data")    # (plan 8: another folder's ja_dict.bin / ja_conn.bin / ja_seg.bin - a dictionary built aside)
     a = ap.parse_args(argv)
     rows = read_tsv(a.tsv)
     fp = hashlib.sha256("\n".join(f"{r}\t{e}" for r, e in rows).encode("utf-8")).hexdigest()[:12]
-    table, d = RomajiTable.load(), JaDict.load()
+    table = RomajiTable.load()
+    d = JaDict.load(*(os.path.join(a.data, n) for n in ("ja_dict.bin", "ja_conn.bin", "ja_seg.bin"))) if a.data \
+        else JaDict.load()
     bigram = None
     if a.bigram:
         bigram = JaBigram.load(d, a.bigram)

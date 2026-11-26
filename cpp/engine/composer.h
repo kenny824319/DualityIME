@@ -130,7 +130,7 @@ public:
              const BigramModel* bigram, Config& config, const LanguageModel* lm = nullptr);
 
     // ch: printable character typed (already shifted), or special: one of
-    // BACK DEL ENTER ESC LEFT RIGHT UP DOWN HOME END PGUP PGDN TAB STAB.
+    // BACK DEL ENTER ESC LEFT RIGHT UP DOWN HOME END PGUP PGDN TAB STAB, CTRL_BACK (Ctrl+Backspace, #86).
     // Returns true if the key was consumed.
     bool key(std::optional<char32_t> ch, const std::string& special = "", bool caps = false);
     bool type_literal(char32_t ch);
@@ -145,6 +145,7 @@ public:
         lm_context_.clear();
         lm_units_.clear();
         ja_context_ = -1;  // (中日混打's Japanese context too)
+        ja_sent_ = false;
         ja_lm_context_.clear();
     }
     void keep_context(const ustr& context, const ustr& units) {  // (engine_main's flush, after reset)
@@ -233,6 +234,9 @@ private:
         ustr pair_text;                     // ...and what it becomes
         ustr ja_kana;   // "ja" (中日混打, #36): the romaji token's kana (start: the token's start) ...
         JaPin ja_pin{};  // ...and the 文節 picked
+        std::vector<JaPhrase> ja_preds;  // "japred" (plan 6): the predictions (start: the token, first: its 文節's kana)
+        bool ja_alt = false;  // "ja" with ja_alt: another prediction (ja_preds[0]) over what Tab took (first..end), #196
+        std::vector<JaPhrase> ja_all;  // ...and all the predictions, kept for the next ↓
     };
     // 簡體輸出 (#32): a Mainland word picked for a phrase: span -> (Taiwan phrase, what is shown for it)
     using TermPicks = std::map<std::pair<int, int>, std::pair<ustr, ustr>>;
@@ -261,6 +265,13 @@ private:
         int ja_context = -1;  // (中日混打: the context it was typed after and its picks - findings #175)
         ustr ja_lm_context;   // (...and the model's, plan 5b)
         std::map<int, std::pair<ustr, std::vector<JaPin>>> ja_pins;
+        // (filled after the brace list above: new members go at the end)
+        std::map<int, std::tuple<int, ustr, ustr, std::string>> mark_from;  // 標點記憶 (#83): mark_from_ as it was
+        std::vector<UserModel::TouchChange> touched;  // #78: the phrases this commit renewed, as they were
+        bool ja_sent = false;  // (中日混打: what was sent before ended in Japanese, findings #189)
+        std::map<int, std::tuple<int, int, std::vector<JaPhrase>>> ja_predicted;  // (what Tab took, findings #202)
+        std::vector<CorrectionMemory::Change> marks;    // 標點記憶 (#83): what this commit learned, as it was
+        std::vector<CorrectionMemory::Change> ja_learned;  // 中日混打's phrases (plan 6) learned, as they were
     };
 
     void clear_input();
@@ -274,10 +285,16 @@ private:
     ustr ja_lm_after(const Token* last) const;       // ...after sending a text ending in `last`
     ustr ja_lm_context_;  // the units of the last Japanese sent, the model's context (plan 5b)
     int ja_context_ = -1;  // the last Japanese word sent (its bigram number), -1 none
+    bool ja_sent_ = false;  // ...what was sent last ended in Japanese: a mark alone is the Japanese side (#186, #189)
+    bool ends_japanese(const Token* last) const;  // a text ending in last ends in Japanese (romaji, a Japanese-side mark)
+    bool japanese_mark(const Token& tok) const;   // the mark token tok is on the Japanese side (#186, #189)
+    ustr lit_shown(const Token& tok) const;       // a typed punctuation key as shown (標點記憶 unless Japanese side)
     mutable std::map<int, std::vector<JaNode>> ja_memo_;  // token start -> its path, during one render (#176)
     bool ja_memo_on_ = false;
     ustr ja_text(const Token& t) const;
     bool is_romaji(const Token& t) const;      // shown as Japanese: it has a lowercase letter (#162)
+    bool shows_chinese(const Token& t) const;  // a syllable, kana, or a CJK character joined (#86)
+    void ctrl_back();                          // Ctrl+Backspace: the run before the caret back to the Chinese (#86)
     // its keys' kana: digits and a capital's word kept as typed inside it (#169, #172); pending only when pending_ok
     void ja_kana(const std::string& core, bool pending_ok, ustr& kana, ustr& pending) const;
     int ja_offset(const Token& t, int k) const;  // characters shown for its first k keys (the caret, #164)
@@ -310,7 +327,25 @@ private:
     void render();
     void render_text();  // (render without the 中日混打 memo set up)
     ustr as_typed(int start, const std::string& keys) const;
-    ustr lit_text(const ustr& value, const std::string& key) const;
+    ustr lit_text(const ustr& value, const std::string& key) const;  // ...as 標點記憶 has it (#83)
+    ustr lit_base(const ustr& value, const std::string& key) const;  // ...before 標點記憶
+    ustr remembered(const ustr& mark) const;  // what a mark types by 標點記憶 (#83)
+    // 標點記憶 (#83, engine/composer.py): mark_from_'s entry of a mark token while it holds its keys; a swap noted;
+    // a mark sent as remembered used (#78); the marks before upto being sent learned (what changed, for undo)
+    const std::tuple<int, ustr, ustr, std::string>* mark_entry(const Token& tok) const;
+    void note_swap(int start, int end, const std::string& how);
+    void touch_mark(const ustr& def, const ustr& shown);
+    bool japanese_side() const;  // 中日混打: a mark typed here is Japanese (標點記憶 does not hold, findings #186)
+    std::vector<CorrectionMemory::Change> learn_marks(int upto);
+    // #78: the syllables before upto as sent, (reading, character), none between runs; 校正記憶 / 代碼記憶 used
+    std::vector<std::optional<std::pair<ustr, char32_t>>> sent_units(int upto) const;
+    std::vector<CorrectionMemory::Change> touch_corrections(int upto);
+    // 中日混打 (plan 6, engine/composer.py): the hint of the Japanese word at the end, Tab on it, the phrases learned
+    void ja_suggest(const Token& t);
+    void take_ja(const Action& a);
+    void pick_ja_alt(const Action& a);          // another prediction over what Tab took (findings #196)
+    int ja_cut(const Token& t, const ustr& kana, int offset) const;  // raw offset of the keys making kana[:offset], -1
+    std::vector<CorrectionMemory::Change> ja_learn(int upto);
     int syl_offset(int c) const;
     std::vector<int> stops() const;
     int caret_index() const;
@@ -358,7 +393,7 @@ private:
                 std::vector<ustr>& labels, std::vector<Action>& actions) const;
     void open_symbols();
     void type_symbol(const ustr& sym, bool stay = false, bool join = false, bool hold = false);
-    void join_symbol(const ustr& sym);
+    void join_symbol(const ustr& sym, const std::optional<ustr>& def = std::nullopt, bool japanese = false);
     void ready_for_key(bool to_end = false);
     void keep_picks_around(int at, const std::function<void()>& edit);
     void marks_before_symbols();
@@ -487,6 +522,10 @@ private:
     std::optional<int> caret_;  // raw offset of the syllable / word after the caret; none = at the end
     std::vector<Action> cand_actions_, sugg_actions_, repl_actions_;
     Fixed fixed_;
+    // 中日混打 (plan 6): romaji token start -> (kana begin, end, the predictions) of what Tab took (findings #196)
+    std::map<int, std::tuple<int, int, std::vector<JaPhrase>>> ja_predicted_;
+    // 標點記憶 (#83): start -> (end, the mark's default, what it showed before the first swap, "mem" | "swap" | "partner")
+    std::map<int, std::tuple<int, ustr, ustr, std::string>> mark_from_;
     std::vector<Segment> segments_;
     bool split_taken_ = false;  // (#55: the last refresh took a split of the model's)
     std::map<int, int> wide_;  // token start -> characters shown, where a syllable is not one (width)

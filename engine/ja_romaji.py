@@ -64,3 +64,54 @@ class RomajiTable:
         if rule:
             return kana + rule[0] + rule[1]
         return kana + pending
+
+
+# ---- reading -> romaji (plan 6: Tab in 中日混打 types the rest of a prediction's reading as keys; tools/ja_sentences.py
+# spells its sentences with it) ----
+
+ROMAJI_PUNCT = {"。": ".", "、": ",", "？": "?", "！": "!", "ー": "-"}
+
+
+def romaji_table(table):
+    """hiragana -> the romaji that gives it, from the table's rules without pending: spellings without c q x l v first
+    (ka, not ca; the letters everyday typing uses), then the shortest, then alphabetical."""
+    def key(inp):
+        return (any(ch in "cqxlv" for ch in inp), len(inp), inp)
+
+    best = {}
+    for inp, (out, pending) in table.rules.items():
+        if pending or not inp.isalpha() or not inp.islower() or out in ("ん", "っ"):
+            continue
+        cur = best.get(out)
+        if cur is None or key(inp) < key(cur):
+            best[out] = inp
+    return best
+
+
+def to_romaji(reading, inv):
+    """The keys that type reading (inv: romaji_table's), or None when a character has no spelling."""
+    out = []
+    i = 0
+    while i < len(reading):
+        c = reading[i]
+        if c == "ん":
+            out.append("nn")
+            i += 1
+            continue
+        if c == "っ":
+            nxt = next((inv[reading[i + 1:i + 1 + k]] for k in (2, 1) if reading[i + 1:i + 1 + k] in inv), None)
+            out.append(nxt[0] if nxt and nxt[0] not in "aiueon" else "xtu")
+            i += 1
+            continue
+        if c in ROMAJI_PUNCT:
+            out.append(ROMAJI_PUNCT[c])
+            i += 1
+            continue
+        for k in (2, 1):
+            if reading[i:i + k] in inv:
+                out.append(inv[reading[i:i + k]])
+                i += k
+                break
+        else:
+            return None
+    return "".join(out)

@@ -17,6 +17,8 @@ bool JaData::ready() {
             bigram = JaBigram::load(dir, *dict);  // (none: conversion as without it)
             mixed->bigram = bigram.get();
             lm_model = LmModel::load(dir + L"\\ja_lm.bin");  // (none: rescoring off, plan 5's conversion)
+            predict = JaPredict::load(dir, *dict);  // (plan 6: none, no corpus predictions - the user's still)
+            mixed->predict = predict.get();
             if (lm_model) {
                 lm = std::make_unique<LmScorer>(*lm_model);
                 mixed->lm = lm.get();
@@ -56,7 +58,8 @@ static Json reply(const JaComposer* c, const Config& config, bool handled, const
     o["cand_labels"] = Json(cand_keys(config));
     o["cand_per_line"] = Json(cand_per_line(config));
     o["cand_expanded"] = Json(false);
-    o["hint"] = Json(std::string());
+    o["hint"] = Json(c && !c->suggestions.empty() && !c->composition.empty() && c->candidates.empty()
+                         ? to_utf8(c->suggestions[0]) : std::string());  // (plan 6: the prediction)
     o["zhuyin_tip"] = Json(std::string());
     o["zhuyin_tip_at"] = Json(0);
     o["replacements"] = Json::array();
@@ -78,7 +81,7 @@ JaSession::Mixed JaSession::mixed(const Json& req, JaData& data, const Config& c
     return m;
 }
 
-Json JaSession::handle(const Json& req, JaData& data, const Config& config) {
+Json JaSession::handle(const Json& req, JaData& data, const Config& config, CorrectionMemory* phrases) {
     const Json* opv = req.get("op");
     std::string op = opv && opv->is_string() ? opv->as_string() : "";
     if (!config.flag("ja_enabled") || !data.ready()) {
@@ -91,7 +94,7 @@ Json JaSession::handle(const Json& req, JaData& data, const Config& config) {
     }
     if (!c_)
         c_ = std::make_unique<JaComposer>(*data.table, *data.dict, config, data.bigram.get(), data.lm.get(),
-                                          data.lm ? ja_lm_weight(*data.lm) : 0);
+                                          data.lm ? ja_lm_weight(*data.lm) : 0, data.predict.get(), phrases);
     JaComposer& c = *c_;
     bool handled = true;
     ustr commit;

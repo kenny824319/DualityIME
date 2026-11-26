@@ -1,0 +1,13 @@
+# #86 (a user's request; the user's boundaries 2026-11-26): Ctrl+Backspace while typing deletes the run of English,
+# digits, marks and spaces before the caret back to the Chinese ({CBACK}); the caret in the middle: only the run before
+# it; a Chinese character before the caret: as Backspace (two in a row open no lookup: a key between the Ctrl taps).
+# Insert stuck for the keyboard state (held 10 s with no key-up, #73) does not keep it the program's; the second Insert
+# line puts the box's overwrite mode back.
+ji3ul4m/4python{CBACK}{ENTER} => 我要用
+ji3m/4hello world{CBACK}{ENTER} => 我用
+t python su3cl3{LEFT}{LEFT}{CBACK}{ENTER} => 吃你好
+ji3ul4m/4{CBACK}{ENTER} => 我要
+ji3ul4m/4python{CBACK}{CBACK}{ENTER} => 我要
+su3{^,}{CBACK}{ENTER} => 你
+{+INS}{PAUSE 11}ji3python{CBACK}{-INS}{ENTER} => 我
+{+INS}{-INS}B{ENTER} => B

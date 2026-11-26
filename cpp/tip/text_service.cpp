@@ -868,6 +868,18 @@ bool TextService::test_key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
     // is the Chinese composer's: the Japanese text shown would be wiped, findings #155)
     if (is_script_key(vk) && !japanese_) return true;
     if (ja_key(vk)) return true;  // 日文 (#36): Ctrl+F2, and the kana locks on the Japanese side
+    if (vk == VK_BACK && down(VK_CONTROL) && !down(VK_MENU) && !down(VK_SHIFT) && !en() && !pure_ja() &&
+        (!state_.composition.empty() || (state_.symbol_page >= 0 && !cfg_.symbols_stay_open) || state_.fill_open)) {
+        // (with 符號鍵盤選完不關 and nothing typed, Backspace is the program's below, #49: Ctrl+Backspace too - findings #207)
+        // Ctrl+Backspace while typing (#86, a user's request): the engine deletes the run of English, digits and marks
+        // before the caret back to the Chinese - with nothing typed, in 英 mode and in 純日文 it stays the program's.
+        // Another key of a shortcut held makes it the program's, as Ctrl + a mark (lone_chord: a key stuck for the
+        // keyboard state, #73, does not; one no input method saw go down does, and is named at the caret)
+        if (lone_chord(vk)) return true;
+        notice_key_ = vk;  // (the hint stays while this key repeats, as Ctrl + a mark's - findings #208)
+        if (held_unseen_) stuck_key_hint(held_unseen_);
+        return false;
+    }
     if (down(VK_CONTROL) || down(VK_MENU)) {
         // Ctrl + , . ; ' [ ] ...: their full-width marks, if that setting is on (not in 英 mode, nor
         // where nothing can be typed); every other combination is the app's shortcut (Ctrl+C, Alt+Tab...)
@@ -921,6 +933,11 @@ bool TextService::ctrl_punct_key(ITfContext* ctx, WPARAM vk, LPARAM lp) {
     wchar_t ch = char_of(vk, lp);
     if (!ch || !wcschr(KEYS, ch)) return false;
     if (wcschr(CONTROL_KEYS, ch) && in_terminal(ctx)) return false;
+    return lone_chord(vk);
+}
+
+bool TextService::lone_chord(WPARAM vk) {
+    // (Ctrl + a mark, ctrl_punct_key, and Ctrl+Backspace while typing, #86: the one check of both)
     // only Ctrl (and Shift) with the one key: a key of a shortcut held as well (Win, Caps Lock, Esc, F1-F24,
     // the arrows...) makes it some program's shortcut (Win+Ctrl+, , Ctrl+CapsLock+.). A key of typing still
     // held - a letter, a digit, a mark, space: the one before, not let go yet when typing fast - does not:
@@ -934,6 +951,7 @@ bool TextService::ctrl_punct_key(ITfContext* ctx, WPARAM vk, LPARAM lp) {
     // than 10 s ago and never let go (stuck: a real chord is not held that long). A key no input method saw go down
     // still counts as held, as before - Win is often one, and Win+Ctrl+, stays the program's - and is named at the
     // caret, so the user knows to tap it
+    held_unseen_ = 0;
     BYTE ks[256];
     if (!GetKeyboardState(ks)) return false;
     for (int k = 0; k < 256; ++k) {
@@ -1077,7 +1095,9 @@ bool TextService::key_down(ITfContext* ctx, WPARAM vk, LPARAM lp) {
     const char* special = special_of(vk);
     req["op"] = Json("key");
     if (special) {
-        req["special"] = Json(std::string(vk == VK_TAB && down(VK_SHIFT) ? "STAB" : special));
+        req["special"] = Json(std::string(vk == VK_TAB && down(VK_SHIFT)     ? "STAB"
+                                          : vk == VK_BACK && down(VK_CONTROL) ? "CTRL_BACK"  // (#86)
+                                                                              : special));
     } else if (printable(ch)) {
         req["ch"] = Json(narrow(std::wstring(1, ch)));
         req["caps"] = Json((GetKeyState(VK_CAPITAL) & 1) != 0);

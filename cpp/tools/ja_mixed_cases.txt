@@ -17,3 +17,7 @@
 {^F2}{SHIFT}hasi{DOWN}{SHIFT}{^F2} => はし
 # switching to Chinese sends what is typed in 中日混打
 {^F2}ji3{^F2} => 我
+# plan 6: the Japanese piece at the end gets the hint; Tab types the rest of its reading and keeps the phrase
+{^F2}ji3arig{TAB}{^F2} => 我ありがとうございました
+# #86: kana counts as Chinese - Ctrl+Backspace takes the mark after it and stops
+{^F2}ji3arigatou,{CBACK}{ENTER}{^F2} => 我ありがとう

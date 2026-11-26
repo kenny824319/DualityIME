@@ -5627,7 +5627,7 @@ class ForgetListTest(unittest.TestCase):
             want = json.load(f)
         want.pop("_about")
         with tempfile.TemporaryDirectory() as d:
-            for name in ("user.json", "keys.json", "user_simplified.json"):
+            for name in ("user.json", "keys.json", "user_simplified.json", "punct.json"):  # (標點, #83)
                 shutil.copy(os.path.join(here, name), d)
             u = UserModel(os.path.join(d, "user.json"), today=lambda: 20800)
             self.assertEqual(u.memory_list(autocorrect=True), want)
@@ -5637,7 +5637,12 @@ class ForgetListTest(unittest.TestCase):
 
 class PunctuationSwapTest(Base):
     """#53: the caret before a mark in the text being typed, ↓ lists the marks of its row (the table the user chose,
-    2026-11-24), a pick replaces it, a bracket's partner follows; nothing is remembered."""
+    2026-11-24), a pick replaces it, a bracket's partner follows. What is swapped and sent goes to 標點記憶 (#83,
+    PunctMemoryTest): each test here starts without it."""
+
+    def setUp(self):
+        super().setUp()
+        self.c.user.punct.forget()
 
     def press(self, *seq):
         for k in seq:
@@ -5706,7 +5711,9 @@ class PunctuationSwapTest(Base):
         self.press("s", "u", "3", "<", "LEFT", "DOWN")  # (half-width: < shown as typed)
         self.assertEqual(c.candidates, [])
 
-    def test_nothing_learned_and_the_order_never_changes(self):
+    def test_only_punct_memory_learns_and_the_order_never_changes(self):
+        # (#53 learned nothing; #83, the user 2026-11-26: a mark swapped and sent goes to 標點記憶 alone - user.json and
+        # keys.json learn nothing of it - and a row's order never changes, whatever is remembered)
         c = self.c
         memory = lambda: copy.deepcopy((c.user.phrases, c.user.phrase_used, sorted(c.user.english),
                                         c.user.corrections.picks))  # (what user.json and keys.json save)
@@ -5715,9 +5722,11 @@ class PunctuationSwapTest(Base):
         for _ in range(3):
             self.press("s", "u", "3"); c.type_full_punct(","); self.press("LEFT", "DOWN", "3", "ENTER")
         self.assertEqual(memory()[2:], before[2:])
-        self.press("s", "u", "3"); c.type_full_punct(","); self.press("LEFT", "DOWN")
-        self.assertEqual(c.candidates[0], "，")
         self.assertFalse(any("；" in p for v in c.user.phrases.values() for p in v))
+        # (twice ； - then Ctrl+, types ；, whose row is ；：，, so the third 3 is ，: the default picked back once)
+        self.assertEqual(c.user.punct.picks, {"，": {"；": 2, "，": 1}})
+        self.press("s", "u", "3"); c.type_full_punct(","); self.press("LEFT", "DOWN")
+        self.assertEqual(c.candidates, ["；", "：", "，"])  # (；'s row as ever: the table's order)
 
     def test_the_swap_stays_through_more_typing_and_backspace(self):
         c = self.c
@@ -10234,6 +10243,450 @@ class SimplifiedTypingTest(unittest.TestCase):
         c.key(special="TAB")
         c.key(special="ENTER")
         self.assertEqual(c.commit, c.lexicon.script.to_simplified("計算" + traditional.suggestions[0]))
+
+
+class MemoryUseBase(unittest.TestCase):
+    """A composer of its own each test (its memory starts empty), today fixed (day 20000 unless moved)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.c = create_composer(os.path.join(self.tmp.name, "user.json"))
+        self.c.config.values = dict(DEFAULTS)
+        self.day = [20000]
+        self.c.user.today = lambda: self.day[0]
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def press(self, *seq):
+        for k in seq:
+            if len(k) == 1:
+                self.c.key(k)
+            else:
+                self.c.key(special=k)
+
+    def send(self, *seq):
+        """Keys, then Enter: what went out."""
+        self.press(*seq)
+        self.c.key(special="ENTER")
+        return self.c.commit
+
+    def file(self, name):
+        path = os.path.join(self.tmp.name, name)
+        if not os.path.exists(path):
+            return None
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+
+
+class PunctMemoryTest(MemoryUseBase):
+    # (#83, the user 2026-11-26: 「他都喜歡用『 就不要讓他一直去重選」 - a mark swapped and sent twice, more than any other
+    # choice, is what its key types; picked back twice, the default again; the list's order never changes)
+
+    def swap_bracket(self, pick="2"):
+        """你「 swapped from its row (pick: the digit of the list) and sent."""
+        c = self.c
+        self.press(*"su3")
+        c.type_full_punct("[")
+        self.press("LEFT", "DOWN", pick)
+        c.key(special="ENTER")
+        return c.commit
+
+    def test_twice_sent_the_key_types_it(self):
+        c = self.c
+        self.assertEqual(self.swap_bracket(), "你『")
+        self.press(*"su3"); c.type_full_punct("[")
+        self.assertEqual(c.composition, "你「")  # (once: not yet)
+        c.reset()
+        self.assertEqual(self.swap_bracket(), "你『")
+        self.press(*"su3"); c.type_full_punct("[")
+        self.assertEqual(c.composition, "你『")
+        self.press("LEFT", "DOWN")  # (the list as ever: 『's row, 「 second)
+        self.assertEqual(c.candidates[:2], ["『", "「"])
+        c.reset()
+        c.config.set(punctuation="full")  # (the [ key's mark too, and the closing one follows its opening one)
+        self.press(*"su3[cl3]")
+        self.assertEqual(c.composition, "你『好』")
+        self.assertEqual(self.file("punct.json")["picks"], {"「": {"『": 2}})
+
+    def test_picked_back_twice_the_default_again(self):
+        c = self.c
+        self.swap_bracket(); self.swap_bracket()
+        self.assertEqual(self.swap_bracket(), "你「")  # (『's row: 「 second)
+        self.press(*"su3"); c.type_full_punct("[")
+        self.assertEqual(c.composition, "你『")  # (2 against 1)
+        c.reset()
+        self.swap_bracket()
+        self.press(*"su3"); c.type_full_punct("[")
+        self.assertEqual(c.composition, "你「")  # (2 against 2: no choice wins)
+
+    def test_swapped_back_or_cancelled_before_sending_counts_nothing(self):
+        c = self.c
+        self.press(*"su3"); c.type_full_punct("[")
+        self.press("LEFT", "DOWN", "2", "LEFT", "DOWN", "2")
+        self.assertEqual(self.send(), "你「")
+        self.press(*"su3"); c.type_full_punct("[")
+        self.press("LEFT", "DOWN", "ESC")
+        self.assertEqual(self.send(), "你「")
+        self.assertIsNone(self.file("punct.json"))
+
+    def test_each_width_its_own_memory(self):
+        c = self.c
+        for _ in range(2):
+            self.press(*"su3"); c.type_full_punct(",")
+            self.press("LEFT", "DOWN", "2")
+            self.assertEqual(self.send(), "你、")
+        self.press(*"su3,")  # (punctuation "half": , as typed - not ，'s memory)
+        self.assertEqual(c.composition, "你,")
+        c.reset()
+        self.press(*"su3"); c.type_full_punct(",")
+        self.assertEqual(c.composition, "你、")
+
+    def test_a_pair_counts_once_and_a_lone_closing_one_by_its_opening_one(self):
+        c = self.c
+        self.press(*"su3"); c.type_full_punct("["); self.press(*"cl3"); c.type_full_punct("]")
+        self.press("HOME", "RIGHT", "DOWN", "2")
+        self.assertEqual(self.send(), "你『好』")
+        self.assertEqual(self.file("punct.json")["picks"], {"「": {"『": 1}})
+        self.press(*"su3"); c.type_full_punct("]")
+        self.press("LEFT", "DOWN", "2")
+        self.assertEqual(self.send(), "你』")
+        self.assertEqual(self.file("punct.json")["picks"], {"「": {"『": 2}})
+        self.press(*"su3"); c.type_full_punct("]")
+        self.assertEqual(c.composition, "你』")
+
+    def test_taken_back_right_after_nothing_learned(self):
+        c = self.c
+        self.swap_bracket()
+        self.assertTrue(c.undo_commit())  # (Backspace right after: the server's undo)
+        self.assertEqual(c.composition, "你『")
+        c.reset()
+        self.assertEqual(c.user.punct.picks, {})
+
+    def test_used_as_remembered_its_day_renewed(self):
+        # (#78's rule from the start: typed by the memory and sent unchanged, the day is today, the count as it stands -
+        # else a mark used every day would be gone 20 days after it was last picked)
+        c = self.c
+        self.swap_bracket(); self.swap_bracket()
+        self.day[0] = 20015
+        self.press(*"su3"); c.type_full_punct("[")
+        self.assertEqual(self.send(), "你『")
+        self.assertEqual(c.user.punct.used["「"]["『"], 20015)
+        self.assertEqual(c.user.punct.picks["「"]["『"], 2)
+        self.day[0] = 20030  # (without the renewal: 2 halved, 1, under the 2 it needs)
+        self.press(*"su3"); c.type_full_punct("[")
+        self.assertEqual(c.composition, "你『")
+
+    def test_the_symbol_keyboard_and_a_mark_alone(self):
+        c = self.c
+        self.swap_bracket(); self.swap_bracket()
+        self.press("`", "g")  # (「 on the first page's g key: held, as remembered)
+        self.assertEqual(c.composition, "『")
+        c.reset()
+        c.type_full_punct("[")  # (Ctrl + [ with nothing typed goes out at once: as remembered)
+        self.assertEqual(c.commit, "『")
+
+    def test_japanese_marks_as_they_are(self):
+        from engine.ja_mixed import JaMixed
+        c = self.c
+        self.swap_bracket(); self.swap_bracket()
+        c.set_japanese(JaMixed.load())
+        self.press(*"watashi[")
+        self.assertIn("「", c.composition)
+        self.assertNotIn("『", c.composition)
+        # (findings #186: Ctrl + a mark after Japanese, and a mark alone right after Japanese was sent, are the Japanese
+        # side too - the user 2026-11-26 「有道理 採納你的建議」; after Chinese 標點記憶 holds)
+        c.reset()
+        self.press(*"watashi")
+        c.type_full_punct("[")
+        self.assertEqual(c.composition[-1], "「")
+        self.press("LEFT", "DOWN", "2")  # (swapped there: not learned either)
+        c.key(special="ENTER")
+        self.assertEqual(c.user.punct.picks["「"], {"『": 2})
+        c.config.set(punctuation="full")  # (the [ key's own mark: 「, 『 by the memory after Chinese)
+        self.press(*"watashi", "ENTER", "[")
+        self.assertEqual(c.commit, "「")
+        c.config.set(punctuation="half")
+        c.reset()
+        self.press(*"su3")
+        c.type_full_punct("[")
+        self.assertEqual(c.composition, "你『")
+        # (findings #189: right after Japanese ending in a mark, or typed with the katakana lock, the Japanese side still)
+        c.reset()
+        c.config.set(punctuation="full")
+        for keys in ("watashi.", "watashiha?"):
+            self.press(*keys, "ENTER", "[")
+            self.assertEqual(c.commit, "「", keys)
+        c.set_ja_lock("kata")
+        self.press(*"watashi", "ENTER", "[")
+        self.assertEqual(c.commit, "「")
+        c.set_ja_lock("auto")
+        # (findings #191: ending in Chinese, English or a number after Japanese is not ending in Japanese)
+        for keys in ("watashisu3", "watashi su3", "watashi ABC"):
+            self.press(*keys, "ENTER", "[")
+            self.assertEqual(c.commit, "『", keys)
+        c.config.set(punctuation="half")
+
+    def test_listed_deleted_and_cleared(self):
+        c = self.c
+        self.swap_bracket(); self.swap_bracket()
+        rows = c.user.memory_list(False)["punct"]
+        self.assertEqual([(r["kind"], r["key"], r["value"], r["shown"], r["reading"], r["count"], r["day"]) for r in rows],
+                         [("punct", "「", "『", "「", "『", 2, 20000)])
+        self.assertTrue(c.user.forget_items([{"id": 1, "kind": "punct", "key": "「", "value": "『"}]))
+        self.press(*"su3"); c.type_full_punct("[")
+        self.assertEqual(c.composition, "你「")
+        c.reset()
+        self.swap_bracket(); self.swap_bracket()
+        c.user.forget_words(c.user.forgot + 1)  # (全部清除)
+        self.assertEqual(self.file("punct.json")["picks"], {})
+
+    def test_user_json_and_keys_json_untouched(self):
+        self.swap_bracket()
+        self.assertNotIn("「", json.dumps(self.file("user.json") or {}, ensure_ascii=False))
+        self.assertIsNone(self.file("keys.json"))
+
+
+class MemoryRenewedTest(MemoryUseBase):
+    # (#78, the user 2026-11-26: a word typed every day faded as it was never picked again - 照 of 照建議 went 趙; what is
+    # sent as the memory had it is used: its day is today, its count as it stands - no more, nothing faded given back)
+
+    def test_a_remembered_character_inside_a_longer_word(self):
+        c = self.c
+        c.user.learn_phrase("ㄓㄠˋ", "照"); c.user.learn_phrase("ㄓㄠˋ", "照")
+        self.day[0] = 20015
+        self.assertEqual(self.send(*"5l4ru04u4"), "照建議")
+        self.assertEqual(c.user.phrase_used["ㄓㄠˋ"]["照"], 20015)
+        self.assertEqual(c.user.phrases["ㄓㄠˋ"]["照"], 2)
+        self.day[0] = 20030  # (without it: 2 halved)
+        self.assertEqual(c.user.phrase_count("ㄓㄠˋ", "照"), 2)
+
+    def test_the_count_as_it_stands(self):
+        c = self.c
+        for _ in range(4):
+            c.user.learn_phrase("ㄓㄠˋ", "照")
+        self.day[0] = 20025  # (4 halved: 2)
+        self.send(*"5l4ru04u4")
+        self.assertEqual((c.user.phrases["ㄓㄠˋ"]["照"], c.user.phrase_used["ㄓㄠˋ"]["照"]), (2, 20025))
+        self.send(*"5l4ru04u4")  # (the same day again: nothing more)
+        self.assertEqual(c.user.phrases["ㄓㄠˋ"]["照"], 2)
+
+    def test_under_one_left_as_it_is(self):
+        c = self.c
+        c.user.learn_half("ㄓㄠˋ", "照")
+        self.day[0] = 20015
+        self.send(*"5l4ru04u4")
+        self.assertEqual((c.user.phrases["ㄓㄠˋ"]["照"], c.user.phrase_used["ㄓㄠˋ"]["照"]), (0.5, 20000))
+
+    def test_not_what_was_sent_left_as_it_is(self):
+        c = self.c
+        c.user.learn_phrase("ㄓㄠˋ", "趙"); c.user.learn_phrase("ㄓㄠˋ", "趙")
+        c.user.learn_phrase("ㄓㄠˋ", "照"); c.user.learn_phrase("ㄓㄠˋ", "照"); c.user.learn_phrase("ㄓㄠˋ", "照")
+        self.day[0] = 20015
+        self.assertEqual(self.send(*"5l4"), "照")
+        self.assertEqual(c.user.phrase_used["ㄓㄠˋ"]["趙"], 20000)
+
+    def test_taken_back_right_after_put_back(self):
+        c = self.c
+        c.user.learn_phrase("ㄓㄠˋ", "照"); c.user.learn_phrase("ㄓㄠˋ", "照")
+        self.day[0] = 20015
+        self.send(*"5l4ru04u4")
+        self.assertTrue(c.undo_commit())
+        self.assertEqual(c.user.phrase_used["ㄓㄠˋ"]["照"], 20000)
+
+    def autocorrect_memory(self, keys, choice):
+        """注音自動校正 on, keys.json holding choice for keys twice (day 20000)."""
+        c = self.c
+        c.config.set(autocorrect=True)
+        c.settings_changed()
+        memory = c.user.corrections
+        memory.enable(True)
+        memory.record(keys, choice); memory.record(keys, choice)
+        memory.save()
+        return memory
+
+    def test_a_correction_used_renewed_and_put_back_with_undo(self):
+        # (findings #187: a syllable read as its remembered correction, sent so - renewed; taken back - as it was)
+        c = self.c
+        memory = self.autocorrect_memory("si3", "ㄋㄧˇ")
+        self.day[0] = 20015
+        self.assertEqual(self.send(*"si3"), "你")
+        self.assertEqual(memory.used["si3"]["ㄋㄧˇ"], 20015)
+        self.assertTrue(c.undo_commit())
+        self.assertEqual(memory.used["si3"]["ㄋㄧˇ"], 20000)
+
+    def test_as_typed_renewed(self):
+        # (findings #184: 817 kept as typed - a number, no syllable - is the most usual 照打 memory)
+        memory = self.autocorrect_memory("817", "")
+        self.day[0] = 20015
+        self.assertEqual(self.send(*"817"), "817")
+        self.assertEqual(memory.used["817"][""], 20015)
+        self.day[0] = 20025
+        self.assertEqual(memory.choice("817"), "")
+
+    def test_digits_after_english_as_typed_renewed(self):
+        # (findings #190: CP56 kept as typed after English - split keys CP→56, no syllable there)
+        from engine.lexicon import split_keys
+        memory = self.c.user.corrections
+        memory.enable(True)
+        memory.record(split_keys("CP", "56"), ""); memory.record(split_keys("CP", "56"), "")
+        memory.save()
+        self.day[0] = 20015
+        self.assertEqual(self.send(*"CP56"), "CP56")
+        self.assertEqual(memory.used[split_keys("CP", "56")][""], 20015)
+
+    def test_simplified_mode_a_pick_and_its_renewal_taken_back(self):
+        # (findings #188: renewed and picked in one send in Simplified mode, taken back - the shared memory as it was,
+        # nothing left as Simplified mode's own)
+        c = self.c
+        for _ in range(3):
+            c.user.learn_phrase("ㄓㄠˋ", "趙")
+        c.user.learn_phrase("ㄓㄠˋ", "照"); c.user.learn_phrase("ㄓㄠˋ", "照")
+        c.user.save()
+        c.config.set(simplified=True)
+        c.settings_changed()
+        self.day[0] = 20015
+        self.press(*"5l4", "DOWN")
+        c.cand_index = c.candidates.index("照")
+        self.press("ENTER", "ENTER")
+        self.assertEqual(c.commit, "照")
+        self.assertTrue(c.undo_commit())
+        c.user.save()
+        self.assertEqual(self.file("user.json")["used"]["phrases"]["ㄓㄠˋ"], {"趙": 20000, "照": 20000})
+        self.assertNotIn("ㄓㄠˋ", (self.file("user_simplified.json") or {}).get("phrases", {}))
+
+    def test_simplified_mode_renews_the_shared_memory(self):
+        # (findings #185: renewed in Simplified mode, a shared pick stays shared - not copied as Simplified mode's own)
+        c = self.c
+        c.user.learn_phrase("ㄓㄠˋ", "照"); c.user.learn_phrase("ㄓㄠˋ", "照")
+        c.user.save()
+        c.config.set(simplified=True)
+        c.settings_changed()
+        self.day[0] = 20015
+        self.send(*"5l4ru04u4")
+        self.assertEqual(self.file("user.json")["used"]["phrases"]["ㄓㄠˋ"]["照"], 20015)
+        simp = self.file("user_simplified.json")
+        self.assertNotIn("ㄓㄠˋ", (simp or {}).get("phrases", {}))
+        self.assertTrue(c.undo_commit())
+        c.user.save()
+        self.assertEqual(self.file("user.json")["used"]["phrases"]["ㄓㄠˋ"]["照"], 20000)
+        self.assertNotIn("ㄓㄠˋ", (self.file("user_simplified.json") or {}).get("phrases", {}))
+
+    def test_a_code_read_as_english_renewed(self):
+        from engine import lexicon
+        c = self.c
+        memory = c.user.corrections
+        memory.enable(True)
+        memory.record("mp3", lexicon.AS_ENGLISH); memory.record("mp3", lexicon.AS_ENGLISH)
+        memory.save()
+        self.day[0] = 20015
+        self.assertEqual(self.send(*"mp3"), "mp3")
+        self.assertEqual(memory.used["mp3"][lexicon.AS_ENGLISH], 20015)
+        self.day[0] = 20030
+        self.assertEqual(memory.choice("mp3"), lexicon.AS_ENGLISH)
+
+
+class CtrlBackspaceTest(Base):
+    """#86 (a user's request, the user's boundaries 2026-11-26): Ctrl+Backspace in the composition deletes the run of
+    English, digits, marks, spaces and unfinished zhuyin before the caret back to the Chinese; a Chinese character before
+    the caret: as Backspace; nothing typed: the app's."""
+
+    def typed(self, raw):
+        for ch in raw:
+            self.c.key(ch)
+        return self.c.composition
+
+    def test_english_back_to_the_chinese(self):
+        self.assertEqual(self.typed(keys("ㄨㄛˇ ㄧㄠˋ ㄩㄥˋ") + "python"), "我要用python")
+        self.assertTrue(self.c.key(special="CTRL_BACK"))
+        self.assertEqual(self.c.composition, "我要用")
+        self.c.key(special="ENTER")
+        self.assertEqual(self.c.commit, "我要用")
+
+    def test_spaces_between_words_too(self):
+        self.assertEqual(self.typed(keys("ㄨㄛˇ ㄩㄥˋ") + "hello world"), "我用hello world")
+        self.c.key(special="CTRL_BACK")
+        self.assertEqual(self.c.composition, "我用")
+
+    def test_marks_too(self):
+        self.assertEqual(self.typed(keys("ㄏㄠˇ") + ",python"), "好,python")
+        self.c.key(special="CTRL_BACK")
+        self.assertEqual(self.c.composition, "好")
+
+    def test_unfinished_zhuyin_too(self):
+        self.assertEqual(self.typed(keys("ㄨㄛˇ ㄧㄠˋ") + "gj"), "我要gj")  # (ㄕㄨ not finished: shown as its keys)
+        self.assertEqual(self.c.tokens[-1].kind, "partial")
+        self.c.key(special="CTRL_BACK")
+        self.assertEqual(self.c.composition, "我要")
+
+    def test_a_chinese_character_as_backspace(self):
+        self.assertEqual(self.typed(keys("ㄨㄛˇ ㄧㄠˋ ㄩㄥˋ")), "我要用")
+        self.c.key(special="CTRL_BACK")
+        self.assertEqual(self.c.composition, "我要")
+
+    def test_caret_in_the_middle(self):
+        self.assertEqual(self.typed(keys("ㄔ") + "python" + keys("ㄋㄧˇ ㄏㄠˇ")), "吃python你好")
+        self.c.key(special="LEFT")
+        self.c.key(special="LEFT")
+        self.assertEqual(self.c.cursor, len("吃python"))
+        self.c.key(special="CTRL_BACK")
+        self.assertEqual(self.c.composition, "吃你好")
+        self.assertEqual(self.c.cursor, 1)  # (before 你: the rest stays where it was)
+
+    def test_nothing_typed_is_the_apps(self):
+        self.assertFalse(self.c.key(special="CTRL_BACK"))
+
+    def test_all_of_it_english(self):
+        self.typed("python")
+        self.c.key(special="CTRL_BACK")
+        self.assertEqual(self.c.composition, "")
+
+    def _pick_ni(self):
+        """妳 for the 你 before the caret's two steps from the end, back to the end."""
+        c = self.c
+        c.key(special="LEFT")
+        c.key(special="LEFT")
+        c.key(special="DOWN")
+        c._pick(c.candidates.index("妳"))
+        c.key(special="END")
+
+    def test_a_pick_after_the_caret_stays(self):
+        # (findings #206: _splice dropped the picks after the cut - the text after the caret must not change)
+        self.typed(keys("ㄔ") + "python" + keys("ㄋㄧˇ ㄏㄠˇ"))
+        self._pick_ni()
+        self.assertEqual(self.c.composition, "吃python妳好")
+        self.c.key(special="LEFT")
+        self.c.key(special="LEFT")
+        self.c.key(special="CTRL_BACK")
+        self.assertEqual(self.c.composition, "吃妳好")  # (not sent: 妳好 learned would change the other tests)
+        self.assertEqual(self.c.cursor, 1)
+
+    def test_a_joined_mark_as_backspace_keeps_the_picks(self):
+        # (findings #206: one mark deleted - Backspace keeps the picks after it, so does Ctrl+Backspace)
+        shown = []
+        for special in ("BACK", "CTRL_BACK"):
+            self.c.reset()
+            self.typed(keys("ㄋㄧˇ ㄏㄠˇ"))
+            self.c.type_full_punct(",")
+            self.typed(keys("ㄋㄧˇ ㄏㄠˇ"))
+            self._pick_ni()
+            self.c.key(special="LEFT")
+            self.c.key(special="LEFT")
+            self.c.key(special=special)
+            shown.append(self.c.composition)
+        self.assertEqual(shown, ["你好妳好", "你好妳好"])
+
+    def test_a_box_open_as_backspace(self):
+        results = []
+        for special in ("BACK", "CTRL_BACK"):
+            self.c.reset()
+            self.typed(keys("ㄨㄛˇ"))
+            self.c.key("`")  # (the symbol keyboard; the candidates and the bar take an unknown key as Backspace already)
+            self.assertIsNotNone(self.c.symbol_page)
+            self.c.key(special=special)
+            results.append((self.c.composition, self.c.symbol_page, self.c.cursor))
+        self.assertEqual(results[0], results[1])
+        self.assertIsNone(results[1][1])  # (closed, as Backspace closes it)
 
 
 if __name__ == "__main__":

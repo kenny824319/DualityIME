@@ -38,6 +38,7 @@
 #include "../common/anim_image.h"
 #include "../engine/composer.h"
 #include "../engine/ja_bigram.h"
+#include "../engine/ja_convert.h"
 #include "../engine/lm.h"
 #include "../engine/lm_pool.h"
 #include "../tip/photo_frame.h"
@@ -265,6 +266,9 @@ int main(int argc, char** argv) {
     std::unique_ptr<JaDict> ja_dict;
     std::unique_ptr<JaMixed> ja_mixed;
     std::unique_ptr<JaBigram> ja_bigram;  // (data\ja_bigram.bin when there, as the engine's JaData and Python's JaMixed.load)
+    std::unique_ptr<LmModel> ja_lm_model;  // (data\ja_lm.bin when there, the same: plan 5b's rescoring)
+    std::unique_ptr<JaPredict> ja_predict;  // (data\ja_predict.bin when there: plan 6's predictions)
+    std::unique_ptr<LmScorer> ja_lm;
     if (argc > 4) {
         std::string text;
         bool ok = false;
@@ -277,6 +281,14 @@ int main(int argc, char** argv) {
                 ja_mixed = std::make_unique<JaMixed>(*ja_table, *ja_dict);
                 ja_bigram = JaBigram::load(widen(argv[1]), *ja_dict);
                 ja_mixed->bigram = ja_bigram.get();
+                ja_predict = JaPredict::load(widen(argv[1]), *ja_dict);  // (plan 6: the phrase table, as the engine)
+                ja_mixed->predict = ja_predict.get();
+                ja_lm_model = LmModel::load(widen(argv[1]) + L"\\ja_lm.bin");
+                if (ja_lm_model) {
+                    ja_lm = std::make_unique<LmScorer>(*ja_lm_model);
+                    ja_mixed->lm = ja_lm.get();
+                    ja_mixed->lm_weight = ja_lm_weight(*ja_lm);
+                }
                 c.set_japanese(ja_mixed.get());
             }
         }

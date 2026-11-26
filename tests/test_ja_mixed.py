@@ -149,7 +149,8 @@ class ComposerTest(Base):
         c = self.c
         before = (set(c.user.english), dict(c.user.words) if hasattr(c.user, "words") else None)
         self.type("konbini")
-        self.assertEqual(c.suggestions, [])
+        # (no English completion: since plan 6 the hint there is the Japanese prediction - コンビニで, no letters)
+        self.assertFalse(any(ch.isascii() for s in c.suggestions for ch in s))
         c.key(special="ENTER")
         self.assertEqual((set(c.user.english), dict(c.user.words) if hasattr(c.user, "words") else None), before)
 
@@ -258,6 +259,152 @@ class PieceCostTest(Base):
 
     def test_pending_at_the_end_is_cheap(self):
         self.assertLess(self.ja.piece_cost("konbin", True), self.ja.piece_cost("konbin", False))
+
+
+class MixedPredictTest(Base):
+    """中日混打 (plan 6): the Japanese piece at the end gets 純日文's hint; Tab types the rest of its reading as romaji and
+    keeps the phrase; the phrases sent are learned (a composer of its own each test: its memory starts empty)."""
+
+    type = ComposerTest.type
+
+    def setUp(self):
+        self.tmp2 = tempfile.TemporaryDirectory()
+        self.c = create_composer(os.path.join(self.tmp2.name, "user.json"))
+        self.c.config.values = dict(DEFAULTS)
+        self.c.set_japanese(self.ja)
+        self.c.user.today = lambda: 20000
+
+    def tearDown(self):
+        self.c.set_japanese(None)
+        self.tmp2.cleanup()
+
+    def test_hint_and_tab(self):
+        c = self.c
+        self.type("ji3arig")
+        self.assertEqual(c.suggestions, ["ありがとうございました"])  # (the phrase table's first for あり + g)
+        self.assertTrue(c.key(special="TAB"))
+        self.assertEqual(c.composition, "我ありがとうございました")
+        self.assertEqual(c.raw, "ji3arigatougozaimasita")
+        self.assertEqual(c.suggestions, [])  # (taken: decided)
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "我ありがとうございました")
+
+    def test_hint_from_two_kana_at_the_end(self):
+        c = self.c
+        self.type("ji3a")
+        self.assertEqual(c.suggestions, [])
+        self.type("ri")
+        self.assertNotEqual(c.suggestions, [])
+        c.key(special="LEFT")
+        self.assertEqual(c.suggestions, [])
+
+    def test_down_lists_the_other_predictions(self):
+        # (findings #196: ↓ on what Tab took lists the other predictions first in 中日混打 too - the user's boundary)
+        c = self.c
+        self.type("ji3tabe")
+        c.key(special="TAB")
+        self.assertEqual(c.composition, "我食べる")
+        c.key(special="LEFT")
+        c.key(special="DOWN")
+        self.assertEqual(c.candidates[0], "食べて")
+        c.key(special="ENTER")
+        self.assertEqual(c.composition, "我食べて")
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "我食べて")
+
+    def test_other_predictions_only_while_it_is_the_end(self):
+        # (findings #201: with something typed after what Tab took, picking another prediction rewrote keys in the middle
+        # - the marks after it fell on other keys (我食べも★尾を=す3); only while it is still the end, as Tab itself)
+        c = self.c
+        self.type("ji3tabe")
+        c.key(special="TAB")
+        self.type("su3")
+        self.assertEqual(c.composition, "我食べる你")
+        c.key(special="LEFT")
+        c.key(special="LEFT")
+        c.key(special="DOWN")
+        self.assertEqual(c.candidates[0], "食べる")  # (the conversion's list only)
+        c.key(special="ENTER")
+        c.key(special="ENTER")
+        self.assertEqual(c.commit, "我食べる你")
+
+    def test_no_other_predictions_with_letters_pending(self):
+        # (findings #203: a letter typed after what Tab took, still pending (我食べるk) - picking another prediction
+        # rewrote the token's keys to its end and the k was gone; not offered then)
+        c = self.c
+        self.type("ji3tabe")
+        c.key(special="TAB")
+        self.type("k")
+        c.key(special="DOWN")
+        self.assertNotEqual(c.candidates[0], "食べて")
+        c.key(special="ESC")
+        self.assertTrue(c.raw.endswith("k"))
+
+    def test_other_predictions_after_undo(self):
+        # (findings #202: taken back right after the send, ↓ on what Tab took lists the other predictions as before)
+        c = self.c
+        self.type("ji3tabe")
+        c.key(special="TAB")
+        c.key(special="ENTER")
+        self.assertTrue(c.undo_commit())
+        c.key(special="LEFT")
+        c.key(special="DOWN")
+        self.assertEqual(c.candidates[0], "食べて")
+
+    def test_chinese_as_before(self):
+        c = self.c
+        self.type("su3cl3")
+        with_ja = list(c.suggestions)
+        c.reset()
+        c.set_japanese(None)
+        self.type("su3cl3")
+        self.assertEqual(with_ja, c.suggestions)
+
+    def test_learned_after_two_sends(self):
+        c = self.c
+        for _ in range(2):
+            self.type("yorosikune", enter=True)
+            self.assertEqual(c.commit, "よろしくね")
+        self.type("yoro")
+        self.assertEqual(c.suggestions, ["よろしくね"])
+
+    def test_taken_back_right_after_nothing_learned(self):
+        c = self.c
+        self.type("yorosikune", enter=True)
+        self.assertTrue(c.undo_commit())
+        self.assertEqual(c.user.ja_phrases.picks, {})
+
+    def test_setting_off(self):
+        c = self.c
+        c.config.set(ja_predict=False)
+        self.type("ji3arig")
+        self.assertEqual(c.suggestions, [])
+        self.type("atou", enter=True)  # (findings #197: a phrase on would learn - ありがとう)
+        self.assertEqual(c.user.ja_phrases.picks, {})
+        c.config.set(ja_predict=True)
+        self.type("arigatou", enter=True)
+        self.assertNotEqual(c.user.ja_phrases.picks, {})
+
+
+class CtrlBackspaceTest(Base):
+    """#86 in 中日混打 (the user 2026-11-26): kana counts as Chinese - Ctrl+Backspace stops at it."""
+
+    def setUp(self):
+        super().setUp()
+        self.c.set_japanese(self.ja)
+
+    def tearDown(self):
+        self.c.set_japanese(None)
+
+    def test_stops_at_the_kana(self):
+        for ch in keys("ㄨㄛˇ") + "arigatou,":
+            self.c.key(ch)
+        shown = self.c.composition
+        self.assertTrue(shown.endswith("、"), shown)
+        self.c.key(special="CTRL_BACK")
+        self.assertEqual(self.c.composition, shown[:-1])  # (the mark; the kana before it stays)
+        self.c.key(special="CTRL_BACK")
+        self.assertEqual(len(self.c.composition), len(shown) - 2)  # (then as Backspace, one at a time)
 
 
 if __name__ == "__main__":

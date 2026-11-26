@@ -16,6 +16,8 @@ EXPORTED = {
     "keys.json": "keys.json",                  # 校正記憶、代碼記憶 (memory["keys"])
     "user_simplified.json": "user_simplified.json",  # 簡體模式的記憶 (memory["simplified"])
     "custom_picks.json": "custom_picks.json",  # 自訂詞彙 taken with Tab (memory["custom_picks"])
+    "punct.json": "punct.json",                # 標點記憶 (#83, memory["punct"])
+    "ja_phrases.json": "ja_phrases.json",      # 日文's phrases sent (#36 plan 6, memory["ja_phrases"])
     "dictionary.json": "ReadDictionary",       # 自訂詞彙、映射詞彙 (dictionary)
     "config.json": "ReadConfig",               # 設定, 自訂外觀 in it (config; the photos: appearance_images)
     "quick_fill.json": "SavedQuickFill",       # 快速填入 (quick_fill)
@@ -27,6 +29,8 @@ RESTORED = {
     "keys.json": "import-memory.json",
     "user_simplified.json": "import-memory.json",
     "custom_picks.json": "import-memory.json",
+    "punct.json": "import-memory.json",
+    "ja_phrases.json": "import-memory.json",
     "dictionary.json": "BackupDictionary",
     "config.json": "WriteConfig",
     "quick_fill.json": "BackupQuickFill",

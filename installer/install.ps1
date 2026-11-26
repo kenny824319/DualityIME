@@ -118,6 +118,9 @@ try {
                # 日文 (#36): Mozc's dictionary, connection costs, 文節 rules, romaji table and licence
                "data\ja_dict.bin", "data\ja_conn.bin", "data\ja_seg.bin", "data\ja_romaji.tsv", "data\LICENSE-Mozc.txt",
                "data\ja_bigram.bin",  # (...and its word bigram, plan 5)
+               "data\ja_lm.bin",  # (...and its rescoring model, plan 5b)
+               "data\ja_predict.bin",  # (...and its phrase table for the prediction, plan 6)
+               "data\LICENSE-SudachiDict.txt", "data\LEGAL-SudachiDict.txt",  # (SudachiDict's nouns merged in, plan 8)
                # 簡體輸出 (#32): OpenCC's tables and their licence
                "data\opencc\TSPhrases.txt", "data\opencc\TSCharacters.txt", "data\opencc\TWVariantsRev.txt",
                "data\opencc\TWVariantsRevPhrases.txt", "data\opencc\TWPhrasesRev.txt", "data\opencc\TWPhrases.txt",

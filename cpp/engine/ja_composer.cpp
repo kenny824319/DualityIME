@@ -1,5 +1,7 @@
 #include "ja_composer.h"
 
+#include "lexicon.h"
+
 #include <algorithm>
 #include <map>
 #include <set>
@@ -66,8 +68,9 @@ ustr ja_to_half_katakana(const ustr& s) {
 }
 
 JaComposer::JaComposer(const RomajiTable& table, const JaDict& d, const Config& config, const JaBigram* bigram,
-                       const LmScorer* lm, int64_t lm_weight)
-    : table_(table), d_(d), config_(config), bigram_(bigram), lm_(lm), lm_weight_(lm_weight) {
+                       const LmScorer* lm, int64_t lm_weight, const JaPredict* predictor, CorrectionMemory* phrases)
+    : table_(table), d_(d), config_(config), bigram_(bigram), lm_(lm), lm_weight_(lm_weight), predictor_(predictor),
+      phrases_(phrases) {
     reset();
 }
 
@@ -80,6 +83,9 @@ void JaComposer::reset() {
     commit.clear();
     close_candidates();
     path_.clear();
+    suggestions.clear();
+    has_sugg_ = false;
+    predicted_.reset();
     render();
 }
 
@@ -150,10 +156,86 @@ void JaComposer::render() {
     if (empty()) {
         composition.clear();
         cursor = 0;
-        return;
+    } else {
+        composition = text.substr(0, at) + pending_ + text.substr(at);
+        cursor = static_cast<int>(at + pending_.size());
     }
-    composition = text.substr(0, at) + pending_ + text.substr(at);
-    cursor = static_cast<int>(at + pending_.size());
+    suggest(segs);
+}
+
+// ---- prediction (plan 6, engine/ja_composer.py) ----
+
+ustr JaComposer::shown(const JaPhrase& p) const {
+    if (kana_lock == "hira") return p.reading;
+    if (kana_lock == "kata") return ja_to_katakana(p.reading);
+    return p.surface;
+}
+
+void JaComposer::suggest(const std::vector<JaSegment>& segs) {
+    suggestions.clear();
+    has_sugg_ = false;
+    if (!config_.flag("ja_predict") || (!predictor_ && !phrases_) || caret_ >= 0 || !candidates.empty() || segs.empty())
+        return;
+    const JaSegment& last = segs.back();
+    for (auto& p : pins)
+        if (p.begin < static_cast<int>(kana_.size()) && p.end > last.begin) return;
+    ustr reading = kana_.substr(static_cast<size_t>(last.begin));
+    if (reading.size() < 2) return;
+    const JaNode* before = nullptr;
+    for (auto& n : path_)
+        if (n.end <= last.begin) before = &n;
+    int prev_sid = before ? ja_word_sid(d_, bigram_, *before) : context_sid_;
+    auto preds = ja_predict(predictor_, phrases_, reading, pending_, table_, d_, bigram_, prev_sid);
+    if (preds.empty()) return;
+    has_sugg_ = true;
+    sugg_seg_ = last;
+    sugg_preds_ = preds;
+    suggestions.push_back(shown(preds[0]));
+}
+
+void JaComposer::put_phrase(int b, int e, const JaPhrase& p, const std::vector<JaPhrase>& preds) {
+    std::vector<const JaNode*> nodes;
+    for (auto& n : path_)
+        if (b <= n.begin && n.end <= e) nodes.push_back(&n);
+    int lid = p.lid >= 0 ? p.lid : (nodes.empty() ? d_.unknown_id : nodes.front()->lid);
+    int rid = p.rid >= 0 ? p.rid : (nodes.empty() ? d_.unknown_id : nodes.back()->rid);
+    int k = static_cast<int>(p.reading.size()) - (e - b);
+    kana_ = kana_.substr(0, static_cast<size_t>(b)) + p.reading + kana_.substr(static_cast<size_t>(e));
+    std::vector<JaPin> kept;
+    for (auto q : pins) {
+        if (q.end <= b) kept.push_back(q);
+        else if (q.begin >= e) {
+            q.begin += k;
+            q.end += k;
+            kept.push_back(q);
+        }
+    }
+    pins = kept;
+    std::vector<std::pair<int, int>> spans;
+    for (auto s : spans_) {
+        if (s.second <= b) spans.push_back(s);
+        else if (s.first >= e) spans.push_back({s.first + k, s.second + k});
+    }
+    spans_ = spans;
+    int end = b + static_cast<int>(p.reading.size());
+    pin(JaPin{b, end, shown(p), lid, rid});
+    predicted_ = Predicted{b, end, preds};
+}
+
+void JaComposer::learn(const std::vector<JaSegment>& segs) {
+    if (!phrases_ || !config_.flag("ja_predict") || segs.empty()) return;
+    std::vector<std::pair<ustr, ustr>> items;
+    for (auto& s : segs) items.emplace_back(kana_.substr(s.begin, s.end - s.begin), s.surface);
+    size_t n = items.size();
+    for (size_t i = 0; i + 1 < n; ++i)
+        items.emplace_back(items[i].first + items[i + 1].first, items[i].second + items[i + 1].second);
+    bool learned = false;
+    for (auto& [reading, surface] : items)
+        if (ja_phrase_ok(reading, surface)) {
+            ja_learn_phrase(*phrases_, reading, surface);  // (findings #195)
+            learned = true;
+        }
+    if (learned) phrases_->save();
 }
 
 bool JaComposer::seg_at_caret(JaSegment& out) const {
@@ -197,6 +279,13 @@ void JaComposer::insert(const ustr& text) {
         spans.push_back({b, e});
     }
     spans_ = spans;
+    if (predicted_) {  // (what Tab took moves along; typed inside it, it is no longer that - findings #198)
+        if (predicted_->begin < at && at < predicted_->end) predicted_.reset();
+        else if (predicted_->end > at) {
+            predicted_->begin += k;
+            predicted_->end += k;
+        }
+    }
     if (caret_ >= 0) caret_ += k;
 }
 
@@ -220,6 +309,10 @@ void JaComposer::erase_at(int at) {
         spans.push_back({b, e});
     }
     spans_ = spans;
+    if (predicted_) {  // (findings #198)
+        if (predicted_->begin <= at && at < predicted_->end) predicted_.reset();
+        else shift(predicted_->begin, predicted_->end);
+    }
     if (caret_ >= 0) {
         if (caret_ > at) --caret_;
         if (caret_ >= static_cast<int>(kana_.size())) caret_ = -1;
@@ -332,9 +425,27 @@ bool JaComposer::open_candidates(const JaSegment* seg) {
     auto pairs = candidates_for(s);
     candidates.clear();
     cand_pins_.clear();
+    cand_alt_.clear();
+    bool on_predicted = false;  // (on what Tab took, its pin still there: the other predictions first - plan 6)
+    if (predicted_ && predicted_->begin == s.begin && predicted_->end == s.end)
+        for (auto& q : pins)
+            if (q.begin == s.begin && q.end == s.end) on_predicted = true;
+    if (on_predicted)
+        for (size_t i = 0; i < predicted_->preds.size(); ++i) {
+            ustr t = shown(predicted_->preds[i]);
+            if (t == s.surface) continue;
+            candidates.push_back(t);
+            cand_pins_.push_back(JaPin{s.begin, s.end, t, 0, 0});
+            cand_alt_.push_back(static_cast<int>(i));
+        }
+    size_t alts = candidates.size();
     for (auto& [t, p] : pairs) {
+        if (std::find(candidates.begin(), candidates.begin() + static_cast<long>(alts), t) !=
+            candidates.begin() + static_cast<long>(alts))
+            continue;
         candidates.push_back(t);
         cand_pins_.push_back(p);
+        cand_alt_.push_back(-1);
     }
     cand_index = 0;
     return true;
@@ -343,6 +454,7 @@ bool JaComposer::open_candidates(const JaSegment* seg) {
 void JaComposer::close_candidates() {
     candidates.clear();
     cand_pins_.clear();
+    cand_alt_.clear();
     cand_index = 0;
 }
 
@@ -362,8 +474,14 @@ void JaComposer::pin(const JaPin& p) {
 
 bool JaComposer::pick(int i) {
     JaPin p = cand_pins_[i];
+    int alt = i < static_cast<int>(cand_alt_.size()) ? cand_alt_[i] : -1;
     close_candidates();
-    pin(p);
+    if (alt >= 0 && predicted_) {  // (another prediction over what Tab took)
+        Predicted was = *predicted_;
+        put_phrase(was.begin, was.end, was.preds[static_cast<size_t>(alt)], was.preds);
+    } else {
+        pin(p);
+    }
     render();
     return true;
 }
@@ -392,6 +510,7 @@ ustr JaComposer::flush() {
     finish_pending();
     render();
     ustr out = composition;
+    learn(segments());
     // (what is sent is the next conversion's context: its last word; none after a sentence end or kana as typed)
     bool ends = !out.empty() && (out.back() == U'。' || out.back() == U'？' || out.back() == U'！');
     bool keep = !path_.empty() && kana_lock == "auto" && !out.empty() && !ends;
@@ -470,10 +589,17 @@ bool JaComposer::key_char(std::optional<char32_t> ch) {
 
 bool JaComposer::key_special(const std::string& special) {
     if (empty()) return false;
+    if (special == "TAB" && has_sugg_) {  // (the hint replaces the word being typed, the pending letters with it)
+        pending_.clear();
+        auto preds = sugg_preds_;
+        put_phrase(sugg_seg_.begin, static_cast<int>(kana_.size()), preds[0], preds);
+        return true;
+    }
     if (special == "TAB" || special == "STAB") return true;
     if (special == "ENTER") {
         commit = flush();
     } else if (special == "ESC") {
+        predicted_.reset();
         std::string lock = kana_lock;
         reset();
         kana_lock = lock;

@@ -43,7 +43,11 @@ STEPS: list[tuple[str, list[str], Path, str | None]] = [
     ("unittest", [PYTHON, "-m", "unittest", "tests.test_engine", "tests.test_gpu", "tests.test_longrun",
                   "tests.test_findings", "tests.test_settings_preview", "tests.test_compare_args",
                   "tests.test_installer_lists", "tests.test_backup_covers", "tests.test_build_ja_dict",
-                  "tests.test_ja"], ROOT,
+                  "tests.test_ja", "tests.test_ja_composer", "tests.test_ja_mixed", "tests.test_config_defaults",
+                  "tests.test_ja_corpus", "tests.test_ja_sentences", "tests.test_ja_eval", "tests.test_ja_bigram",
+                  "tests.test_lm_ja_prepare", "tests.test_ja_nbest", "tests.test_ja_rescore", "tests.test_ja_predict",
+                  "tests.test_ja_wiki_titles"],
+     ROOT,
      "tests/test_engine.py"),
     # The C++ engine (cpp\build.cmd: Visual Studio Build Tools with C++), then both engines
     # key by key: same output, same user.json and keys.json.
@@ -54,6 +58,13 @@ STEPS: list[tuple[str, list[str], Path, str | None]] = [
     # Pillow composites, on the build just made (skipped without Pillow)
     ("anim image", [PYTHON, "-m", "unittest", "tests.test_anim_image"], ROOT, "tests/test_anim_image.py"),
     ("compare", [PYTHON, "tools/compare.py"], ROOT, "tools/compare.py"),
+    # 日文 (#36): both engines' Japanese conversion the same on romaji lines (the sample, Tatoeba's set when
+    # DUALITYIME_CORPUS has it, 2000 random strings), on the build just made (findings #149: nothing checked it)
+    ("ja compare", [PYTHON, "tools/ja_compare.py"], ROOT, "tools/ja_compare.py"),
+    # ...and the engine process's Japanese requests (cpp/engine/ja_session.cpp through sz_jasession)
+    ("ja session", [PYTHON, "-m", "unittest", "tests.test_ja_session"], ROOT, "tests/test_ja_session.py"),
+    # ...and the prediction (#36 plan 6): both engines' predictions the same on data/ja_predict.bin
+    ("ja predict", [PYTHON, "tools/ja_compare.py", "--predict", "data/ja_predict.bin"], ROOT, "tools/ja_compare.py"),
     # The settings tool from the source (installer\src: Settings.cs, Migrate.cs) against
     # tools\settings_test.cs, in temporary folders.
     ("settings", ["powershell", "-ExecutionPolicy", "Bypass", "-File", "tools/test_settings.ps1", "-Source"],

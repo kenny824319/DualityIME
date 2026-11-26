@@ -50,11 +50,11 @@ def line_out(romaji, table, d, bigram=None, nbest=False, lm=None):
     return f"{kana}\t{pending}\t{'|'.join(n.surface for n in path)}\t{cost}\t{table.finish(romaji)}\t{cuts}"
 
 
-def run_script(script, table, d, bigram=None, lm=None):
-    """The state lines of one key script."""
+def run_script(script, table, d, bigram=None, lm=None, predictor=None, phrases=None):
+    """The state lines of one key script (plan 6: with the hint at the end)."""
     cfg = Config()
     cfg.values["ja_enabled"] = True
-    c = JaComposer(table, d, cfg, bigram, lm=lm, lm_weight=lm_weight_of(lm))
+    c = JaComposer(table, d, cfg, bigram, lm=lm, lm_weight=lm_weight_of(lm), predictor=predictor, phrases=phrases)
     out = []
     for tok in TOKEN.findall(script):
         if tok == "{SPACECONV}":
@@ -76,7 +76,7 @@ def run_script(script, table, d, bigram=None, lm=None):
             used = c.key(tok)
         page, at = c.page_candidates()
         out.append(f"{int(bool(used))}\t{c.composition}\t{c.cursor}\t{c.commit}\t{'|'.join(page)}\t{at}\t"
-                   f"{len(c.candidates)}")
+                   f"{len(c.candidates)}\t{c.suggestions[0] if c.suggestions else ''}")
     out.append("--")
     return out
 
@@ -88,6 +88,8 @@ def main():
     ap.add_argument("--bigram")
     ap.add_argument("--nbest", action="store_true")
     ap.add_argument("--lm")  # (plan 5b: the Japanese model)
+    ap.add_argument("--predict")  # (plan 6: the phrase table, key scripts only)
+    ap.add_argument("--memory")  # (...and the user's phrases, a file learned into; the day 20000)
     a = ap.parse_args()
     table = RomajiTable.load(os.path.join(a.data, "ja_romaji.tsv"))
     d = JaDict.load(os.path.join(a.data, "ja_dict.bin"))  # (ja_conn.bin, ja_seg.bin beside it)
@@ -96,6 +98,15 @@ def main():
         bigram = JaBigram.load(d, a.bigram)
         if bigram is None:
             sys.exit("STOPPED: could not read the bigram file (or it is for another ja_dict.bin)")
+    predictor = phrases = None
+    if a.predict:
+        from engine.ja_predict import JaPredict
+        predictor = JaPredict.load(d, a.predict)
+        if predictor is None:
+            sys.exit("STOPPED: could not read the phrase table (or it is for another ja_dict.bin)")
+    if a.memory:
+        from engine.lexicon import JaPhraseMemory
+        phrases = JaPhraseMemory(a.memory, lambda: 20000)
     lm = None
     if a.lm:
         lm = load_lm(a.lm)
@@ -104,7 +115,8 @@ def main():
     out = sys.stdout.buffer
     for raw in sys.stdin.buffer:
         line = raw.decode("utf-8").rstrip("\r\n")
-        lines = run_script(line, table, d, bigram, lm) if a.keys else [line_out(line, table, d, bigram, a.nbest, lm)]
+        lines = run_script(line, table, d, bigram, lm, predictor, phrases) if a.keys else \
+            [line_out(line, table, d, bigram, a.nbest, lm)]
         out.write("".join(x + "\n" for x in lines).encode("utf-8"))
 
 

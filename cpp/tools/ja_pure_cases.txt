@@ -21,3 +21,7 @@
 su3cl3{^F2}{^F2} => 你好
 # Chinese as before after a round trip
 {^F2}{^F2}su3cl3{ENTER} => 你好
+# plan 6: the prediction - Tab takes the hint (the whole word), ↓ on what Tab took lists the other predictions first
+{^F2}arig{TAB}{^F2} => ありがとうございました
+{^F2}tabe{TAB}{LEFT}{DOWN}{ENTER}{^F2} => 食べて
+{^F2}oneg{TAB}{^F2} => お願いします

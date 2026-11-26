@@ -52,8 +52,9 @@ class JaMixed:
     """The romaji table and dictionary the 中日混打 tokenizer reads, and the costs it worked out (pieces repeat as the
     text grows key by key)."""
 
-    def __init__(self, table, d, bigram=None, lm=None):
+    def __init__(self, table, d, bigram=None, lm=None, predict=None):
         self.table, self.d = table, d
+        self.predict = predict  # (plan 6: the phrase table the composer predicts from, or None)
         self.bigram = bigram  # (plan 5: what the composer shows its pieces with; piece_cost never uses it)
         self.lm = lm          # (plan 5b: the Japanese model's Scorer rescoring them, or None; piece_cost never uses it)
         self.lm_weight = lm_weight_of(lm)
@@ -63,8 +64,9 @@ class JaMixed:
     @classmethod
     def load(cls, table=None, d=None):
         from .ja_bigram import JaBigram
+        from .ja_predict import JaPredict
         d = d or JaDict.load()
-        return cls(table or RomajiTable.load(), d, JaBigram.load(d), load_lm())
+        return cls(table or RomajiTable.load(), d, JaBigram.load(d), load_lm(), JaPredict.load(d))
 
     def piece_cost(self, piece, at_end):
         key = (piece, at_end)

@@ -21,6 +21,17 @@ ja_seg.bin: b"JS01", uint16 n, uint16 0, then n * n bits, bit (rid * n + lid) = 
 ja_romaji.tsv: romanji-hiragana.tsv as is, plus each of SYMBOL_RULES (/ -> ・, ? -> ？, ! -> ！) it has no rule for
     (Google's symbol setting rather than its table; / -> ・ is the design's 目標 10).
 LICENSE-Mozc.txt: Mozc's LICENSE as is (NAIST / ICOT terms of the dictionary, BSD of the rest).
+
+--sudachi <folder> (#36 plan 8, the user 2026-11-26): SudachiDict's small_lex.zip and core_lex.zip (Apache-2.0; their
+LICENSE-2.0.txt and LEGAL copied as LICENSE-SudachiDict.txt, LEGAL-SudachiDict.txt) add the nouns Mozc lacks: each
+(reading, surface) Mozc has no entry for, its POS mapped by SUDACHI_POS onto a Mozc id.def POS, its cost that POS's
+median Mozc cost plus --sudachi-penalty (so an equal Mozc word comes first); a surface of 2 Japanese characters or more,
+a reading of hiragana (katakana turned) only. core_lex's place names (地名,一般: half a million small ones) are left out
+(the size). Not its connection table: Mozc's ids and costs only.
+
+--wiki <tsv> (#36 補詞彙 (2), the user 2026-11-26): Japanese Wikipedia's titles with their readings ("reading<TAB>title",
+tools/ja_wiki_titles.py) the dictionary still lacks after SudachiDict, as 名詞,固有名詞,一般 at that POS's median Mozc
+cost plus --wiki-penalty.
 """
 import argparse
 import array
@@ -197,15 +208,125 @@ def write_romaji(src, path):
     return added
 
 
-def build(folder, out):
+# Sudachi's noun POS (its fields 6-9) -> the Mozc id.def POS it is added as; the others (verbs, adjectives - their
+# conjugation types do not map one to one -, 数詞, 助数詞可能, 助動詞語幹) are not added
+SUDACHI_POS = {
+    ("名詞", "普通名詞", "一般", "*"): "名詞,一般,*,*,*,*,*",
+    ("名詞", "普通名詞", "サ変可能", "*"): "名詞,サ変接続,*,*,*,*,*",
+    ("名詞", "普通名詞", "サ変形状詞可能", "*"): "名詞,サ変接続,*,*,*,*,*",
+    ("名詞", "普通名詞", "形状詞可能", "*"): "名詞,形容動詞語幹,*,*,*,*,*",
+    ("名詞", "普通名詞", "副詞可能", "*"): "名詞,副詞可能,*,*,*,*,*",
+    ("名詞", "固有名詞", "一般", "*"): "名詞,固有名詞,一般,*,*,*,*",
+    ("名詞", "固有名詞", "人名", "一般"): "名詞,固有名詞,人名,一般,*,*,*",
+    ("名詞", "固有名詞", "人名", "名"): "名詞,固有名詞,人名,名,*,*,*",
+    ("名詞", "固有名詞", "人名", "姓"): "名詞,固有名詞,人名,姓,*,*,*",
+    ("名詞", "固有名詞", "地名", "一般"): "名詞,固有名詞,地域,一般,*,*,*",
+    ("名詞", "固有名詞", "地名", "国"): "名詞,固有名詞,地域,国,*,*,*",
+}
+SUDACHI_LEXICONS = ("small_lex", "core_lex")
+CORE_LEFT_OUT = {("名詞", "固有名詞", "地名", "一般")}  # (core_lex's place names: the size)
+
+
+def _japanese(c):
+    return "\u3041" <= c <= "\u30ff" or "\u4e00" <= c <= "\u9fff" or "\u3400" <= c <= "\u4dbf" or c in "々ー〆ヶ"
+
+
+def _hiragana(s):
+    return "".join(chr(ord(c) - 0x60) if "\u30a1" <= c <= "\u30f6" else c for c in s)
+
+
+WIKI_POS = "名詞,固有名詞,一般,*,*,*,*"
+
+
+def generic_ids(pos):
+    """Mozc POS feature string -> its id (the first, the generic one ending in *)."""
+    ids = {}
+    for i, feature in pos.items():
+        ids.setdefault(feature, i)
+    return ids
+
+
+def mozc_medians(by_reading):
+    """Mozc id -> the median cost of its entries (lid == rid == id), each POS once (hundreds of thousands of costs)."""
+    import statistics
+    costs = {}
+    for entries in by_reading.values():
+        for cost, _, lid, rid in entries:
+            if lid == rid:
+                costs.setdefault(lid, []).append(cost)
+    return {i: int(statistics.median(c)) for i, c in costs.items()}
+
+
+def sudachi_entries(folder, by_reading, ids, median, penalty):
+    """[(reading, surface, lid, rid, cost)] of SudachiDict's nouns Mozc lacks (see the module's --sudachi), and the counts
+    {lexicon: {Mozc POS: added}}."""
+    import io
+    import zipfile
+    have = {(r, e[1]) for r, entries in by_reading.items() for e in entries}
+    out, seen, counts = [], set(), {}
+    for lex in SUDACHI_LEXICONS:
+        counts[lex] = {}
+        with zipfile.ZipFile(os.path.join(folder, lex + ".zip")) as z:
+            with z.open(lex + ".csv") as f:
+                for raw in io.TextIOWrapper(f, encoding="utf-8"):
+                    p = raw.rstrip("\r\n").split(",")
+                    if len(p) < 12:
+                        continue
+                    key = tuple(p[5:9])
+                    target = SUDACHI_POS.get(key)
+                    if target is None or (lex == "core_lex" and key in CORE_LEFT_OUT) or target not in ids:
+                        continue
+                    surface, reading = p[4], _hiragana(p[11])
+                    if len(surface) < 2 or not all(map(_japanese, surface)) or not reading or \
+                            not all("\u3041" <= c <= "\u309f" or c == "ー" for c in reading):
+                        continue
+                    i = ids[target]
+                    if (reading, surface) in have or (reading, surface, i) in seen or i not in median:
+                        continue
+                    seen.add((reading, surface, i))
+                    cost = int16(median[i] + penalty, f"{lex}: {surface}")
+                    out.append((reading, surface, i, i, cost))
+                    counts[lex][target] = counts[lex].get(target, 0) + 1
+    return out, counts
+
+
+def wiki_entries(path, by_reading, ids, median, penalty):
+    """[(reading, surface, lid, rid, cost)] of the --wiki titles the dictionary lacks (see the module)."""
+    i = ids[WIKI_POS]
+    cost = int16(median[i] + penalty, "--wiki-penalty")
+    have = {(r, e[1]) for r, entries in by_reading.items() for e in entries}
+    out = []
+    for line in open(path, encoding="utf-8"):
+        p = line.rstrip("\r\n").split("\t")
+        if len(p) == 2 and (p[0], p[1]) not in have:
+            have.add((p[0], p[1]))
+            out.append((p[0], p[1], i, i, cost))
+    return out
+
+
+def build(folder, out, sudachi=None, penalty=0, wiki=None, wiki_penalty=0):
     unknown_id = read_unknown_id(folder)
     by_reading = read_entries(folder)
+    ids, median = generic_ids(read_pos(folder)), mozc_medians(by_reading)  # (Mozc's own costs, before any merge)
+    added, wiki_added = {}, 0
+    if sudachi:  # (#36 plan 8: SudachiDict's nouns Mozc lacks)
+        entries, added = sudachi_entries(sudachi, by_reading, ids, median, penalty)
+        for reading, surface, lid, rid, cost in entries:
+            by_reading.setdefault(reading, set()).add((cost, surface, lid, rid))
+        shutil.copyfile(os.path.join(sudachi, "LICENSE-2.0.txt"), os.path.join(out, "LICENSE-SudachiDict.txt"))
+        shutil.copyfile(os.path.join(sudachi, "LEGAL"), os.path.join(out, "LEGAL-SudachiDict.txt"))
+    if wiki:  # (#36 補詞彙 (2): Wikipedia's titles)
+        entries = wiki_entries(wiki, by_reading, ids, median, wiki_penalty)
+        for reading, surface, lid, rid, cost in entries:
+            by_reading.setdefault(reading, set()).add((cost, surface, lid, rid))
+        wiki_added = len(entries)
     n_read, n_ent, n_surf = write_dict(os.path.join(out, "ja_dict.bin"), by_reading, unknown_id)
     n = write_conn(os.path.join(folder, "connection_single_column.txt"), os.path.join(out, "ja_conn.bin"))
     write_seg(folder, os.path.join(out, "ja_seg.bin"), read_pos(folder), n)
-    added = write_romaji(os.path.join(folder, "romanji-hiragana.tsv"), os.path.join(out, "ja_romaji.tsv"))
+    symbols_added = write_romaji(os.path.join(folder, "romanji-hiragana.tsv"), os.path.join(out, "ja_romaji.tsv"))
     shutil.copyfile(os.path.join(folder, "LICENSE"), os.path.join(out, "LICENSE-Mozc.txt"))
-    return {"readings": n_read, "entries": n_ent, "surfaces": n_surf, "pos": n, "symbols_added": added}
+    return {"readings": n_read, "entries": n_ent, "surfaces": n_surf, "pos": n, "symbols_added": symbols_added,
+            "sudachi": added, "wiki": wiki_added}
 
 
 def main():
@@ -213,8 +334,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("folder")
     ap.add_argument("--out", default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data"))
+    ap.add_argument("--sudachi")  # (#36 plan 8: SudachiDict's folder - small_lex.zip, core_lex.zip, LICENSE-2.0.txt, LEGAL)
+    ap.add_argument("--sudachi-penalty", type=int, default=0)
+    ap.add_argument("--wiki")  # (#36 補詞彙 (2): tools/ja_wiki_titles.py's "reading<TAB>title" file)
+    ap.add_argument("--wiki-penalty", type=int, default=0)
     a = ap.parse_args()
-    r = build(a.folder, a.out)
+    r = build(a.folder, a.out, a.sudachi, a.sudachi_penalty, a.wiki, a.wiki_penalty)
+    if a.wiki:
+        print(f"Wikipedia titles: {r['wiki']:,} added")
+    for lex, by_pos in r["sudachi"].items():
+        print(f"SudachiDict {lex}: {sum(by_pos.values()):,} nouns added - " +
+              ", ".join(f"{p.split(',*')[0]} {n:,}" for p, n in sorted(by_pos.items(), key=lambda x: -x[1])))
     commit = os.path.join(a.folder, "COMMIT")
     print(f"Mozc {open(commit, encoding='utf-8').read().strip() if os.path.exists(commit) else '(no COMMIT file)'}: "
           f"{r['entries']:,} entries, {r['readings']:,} readings, {r['surfaces']:,} surfaces, {r['pos']} POS ids")

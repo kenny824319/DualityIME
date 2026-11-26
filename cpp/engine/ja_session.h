@@ -26,6 +26,7 @@ struct JaData {
     std::unique_ptr<JaBigram> bigram;  // plan 5: data\ja_bigram.bin when it is there and for this dictionary
     std::unique_ptr<LmModel> lm_model;  // plan 5b: data\ja_lm.bin when it is there (the Japanese model)
     std::unique_ptr<LmScorer> lm;       // ...its whole-text scorer
+    std::unique_ptr<JaPredict> predict;  // plan 6: data\ja_predict.bin when it is there and for this dictionary
     bool tried = false;
     bool ready();  // loads on the first call; false when the files cannot be read
 };
@@ -36,7 +37,8 @@ public:
     // The reply: the state fields the IME reads (as the Chinese composer's: commit, composition, cursor, candidates...)
     // plus "ja": true and "kana_lock". With 日文輸入 off (or the data missing) what was typed is sent and the reply
     // says "ja_off": true with handled false: the IME goes back to Chinese.
-    Json handle(const Json& req, JaData& data, const Config& config);
+    // phrases: the user's phrases (UserModel::ja_phrases) the composer learns into and predicts from, or null
+    Json handle(const Json& req, JaData& data, const Config& config, CorrectionMemory* phrases = nullptr);
     // 中日混打's flag on a request to the Chinese composer ("ja_mixed", every one the IME sends): on - its letters read
     // as romaji - only with 日文輸入 on and the data there; ja_off when asked for but not possible (the IME goes back to
     // Chinese, as 純日文 does - findings #171)

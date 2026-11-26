@@ -137,7 +137,8 @@
 - **Ctrl + 標點打全形**（預設開啟，在「打字」頁關閉）：中英混打時按住 Ctrl 再按 `, . ; ? [` 這類標點鍵，打出 `，。；？「`\
   打字打到一半時，這些標點和符號鍵盤打的符號會接在字後面，前面的字還能回去改，按 Enter 一起送出\
   開啟時，程式裡用這些組合的快捷鍵（例如 `Ctrl + ,`）在中英混打時會失效，需要的話可以關掉
-- **換標點**：打字打到一半時，游標移到標點前面按 `↓`，可以換成同一類的標點（逗號換頓號、句號換驚嘆號），全形換全形、半形換半形，括號會成對一起換
+- **換標點**：打字打到一半時，游標移到標點前面按 `↓`，可以換成同一類的標點（逗號換頓號、句號換驚嘆號），全形換全形、半形換半形，括號會成對一起換\
+  同一個標點換成另一個兩次之後，之後打那個標點就直接出現換過的（例如常用『）；換回兩次就回到原本的
 - **注音自動校正**（預設關閉，在「打字」頁打開）：按到旁邊的鍵、漏打聲調、注音順序打錯、同一個鍵按兩次、ㄣ／ㄥ 或 ㄢ／ㄤ 打反（「因該」是「應該」），自動改成整句最通順的字（`si3cl3` 是「你好」）\
   英文和你個人詞庫的詞不會被改\
   改錯了就在那個字按 ↓，裡面有你原本打的音的字；同樣的按鍵改回原樣 2 次，以後就照打的讀
@@ -176,7 +177,7 @@
   單一個字母（例如 `t`）從替換列選回原本的按鍵，只改那一次，不會從此都當成英文
 - **會慢慢淡掉**：很久沒用的每 20 天份量減半；學到的詞、記住的英文字各最多留 2000 筆（留最常用的）\
   記住的 e-mail 不會淡掉，最多留 2000 筆（超過時丟掉最久沒用的）
-- **刪除一筆**：「補字與記憶」頁的「記憶清單」列出目前會影響打字的記憶（選字、英文字、Email、按鍵、簡體模式），可以搜尋、勾選刪除，下一個按鍵起不再出現
+- **刪除一筆**：「補字與記憶」頁的「記憶清單」列出目前會影響打字的記憶（選字、英文字、Email、按鍵、標點、簡體模式），可以搜尋、勾選刪除，下一個按鍵起不再出現
 - **清除**：「補字與記憶」頁的「全部清除」清掉所有打字記憶，設定與個人詞庫保留；記住的 e-mail 預設留著，勾選「一併清除記住的 Email」才一起清掉
 - **換電腦**：「關於」頁的「匯出與匯入」把選字記憶、個人詞庫和設定存成一個 .json 檔\
   匯入時可以勾選要匯入哪幾項：記憶和個人詞庫是合併，這台電腦上已有的不會被刪除或改掉，同一個檔案匯入兩次也不會重複累加；勾選「設定」時換成檔案裡的設定
@@ -192,6 +193,7 @@
 | ↑                          | 叫出文字上方的替換列（游標後那個字，在句尾是最後一個字），← → 選、Enter 確定、Esc 關掉                              |
 | ← →                       | 移動游標（中文一個字、英文數字一個鍵）；在句尾按 → 採用補字提示                                                       |
 | Backspace / Delete          | 刪游標前 / 後一個                                                                                                      |
+| Ctrl + Backspace            | 刪掉游標前面連著的英文、數字與標點，刪到中文為止（吃python → 吃）；游標前面是中文時刪一個字                         |
 | Esc                         | 關掉最後打開的那個框（候選字、展開的多欄、替換列、符號鍵盤、快速填入），字和游標不動；沒有框時全部取消                |
 | Tab                         | 採用文字後面的補字提示                                                                                                 |
 | Shift（單按）               | 切換中英混打／純英文                                                                                                   |
@@ -217,4 +219,4 @@
 - 長句選字加強的語言模型（`data/lm.bin`）：本專案自己用上面兩份語料訓練，並以 [Qwen3-1.7B](https://huggingface.co/Qwen/Qwen3-1.7B)（Apache-2.0）為老師蒸餾
 - 英文字表：[google-10000-english](https://github.com/first20hours/google-10000-english)（僅供個人、教育用途），另外補上一般字表沒有的電腦用語（cmd、git、json…）
 - 英文補字字表（`data/english_complete.txt`）：[ESDB](https://github.com/en-wl/wordlist) 的字，依 [Google Books Ngram](https://github.com/hackerb9/gwordlist)（CC BY 3.0）與 [FrequencyWords](https://github.com/hermitdave/FrequencyWords)（OpenSubtitles，CC BY-SA 4.0）的字頻排序，並參考 [LDNOOBW](https://github.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words)（CC BY 4.0）去掉不雅字；這份字表以 CC BY-SA 4.0 授權（見 `data/LICENSE-english-complete.txt`）
-- 日文辭典、詞類連接成本、文節規則與羅馬字表（`data/ja_*`）：[Mozc](https://github.com/google/mozc)（辭典為 NAIST／ICOT 條款與沖繩辭書，其餘 BSD-3，見 `data/LICENSE-Mozc.txt`）
+- 日文辭典、詞類連接成本、文節規則與羅馬字表（`data/ja_*`）：[Mozc](https://github.com/google/mozc)（辭典為 NAIST／ICOT 條款與沖繩辭書，其餘 BSD-3，見 `data/LICENSE-Mozc.txt`）；日文辭典另外加入 [SudachiDict](https://github.com/WorksApplications/SudachiDict) 裡 Mozc 沒有的名詞（Apache-2.0，含 UniDic 的部分，見 `data/LICENSE-SudachiDict.txt` 與 `data/LEGAL-SudachiDict.txt`），以及[日文維基百科](https://ja.wikipedia.org/)條目名稱與條目開頭的讀音（CC BY-SA 4.0）

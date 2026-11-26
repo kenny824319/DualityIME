@@ -24,3 +24,6 @@
 ^(engine/lexicon\.py|cpp/engine/lexicon\.cpp|installer/src/Settings\.cs)$	\bforgot\.json\b  # 記憶清單刪掉的項目（#65），設定工具寫、引擎讀
 ^(engine/(lexicon|symbols)\.py|cpp/engine/lexicon\.cpp|installer/src/Settings\.cs)$	\bsymbols\.json\b  # 自訂符號鍵盤的表（#69），設定工具寫、引擎只讀
 ^(engine/ja_dict\.py|cpp/engine/ja_dict\.cpp)$	\bja_(dict|conn)\.bin\b  # 日文辭典與詞類連接成本（#36，data/，tools/build_ja_dict.py 從 Mozc 產生），引擎只讀不寫
+^(engine/ja_(bigram|predict|mixed|dict)\.py|cpp/engine/ja_(bigram|predict|session)\.cpp|installer/(build|install)\.ps1)$	\bja_(dict|conn|seg|bigram|lm|predict)\.bin\b  # 日文的辭典、連接成本、文節規則、詞 bigram、重新打分模型與預測詞組表（#36，data/），引擎只讀不寫
+^installer/(build|install)\.ps1$	\bLICENSE-Mozc\.txt\b|\b(LICENSE|LEGAL)-SudachiDict\.txt\b  # 日文辭典的授權（Mozc、SudachiDict，#36，data/）
+^(engine/lexicon\.py|cpp/engine/lexicon\.cpp|installer/src/Settings\.cs)$	\b(punct|ja_phrases)\.json\b  # 標點記憶（#83）與日文詞組記憶（#36 預測），和 user.json 分開的檔

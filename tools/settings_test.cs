@@ -190,7 +190,7 @@ static class SettingsTest {
                 fixture = Path.Combine(fixture, "tests", "data", "memory_list");
                 string mdir = Path.Combine(dir, "memory_list");
                 Directory.CreateDirectory(mdir);
-                foreach (string name in new[] { "user.json", "keys.json", "user_simplified.json", "config.json" })
+                foreach (string name in new[] { "user.json", "keys.json", "user_simplified.json", "config.json", "punct.json" })
                     File.Copy(Path.Combine(fixture, name), Path.Combine(mdir, name), true);
                 var want = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(Path.Combine(fixture, "expected.json"), Encoding.UTF8));
                 want.Remove("_about");

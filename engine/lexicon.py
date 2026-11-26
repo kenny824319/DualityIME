@@ -576,9 +576,23 @@ class CorrectionMemory:
         self.used.setdefault(keys, {})[choice] = self.today()
         return [(keys, choice, was)]
 
+    def touch(self, keys, choice):
+        """Used as remembered and sent unchanged (#78): the day is today, the count as it stands now - no more, and
+        nothing faded given back; under 1 (it no longer counts) or already today: nothing. Returns what it changed, as
+        it was: for restore."""
+        self._load()
+        n = self.count(keys, choice)
+        if n < 1 or self.used.get(keys, {}).get(choice) == self.today():
+            return []
+        self.version += 1
+        was = (self.picks.get(keys, {}).get(choice), self.used.get(keys, {}).get(choice))
+        self.picks.setdefault(keys, {})[choice] = n
+        self.used.setdefault(keys, {})[choice] = self.today()
+        return [(keys, choice, was)]
+
     def restore(self, changes):
         self.version += 1
-        for keys, choice, (count, day) in changes:
+        for keys, choice, (count, day) in reversed(changes):  # (a touch, then a record of the same: back in turn)
             for table, value in ((self.picks, count), (self.used, day)):
                 if value is None:
                     table.get(keys, {}).pop(choice, None)
@@ -628,12 +642,18 @@ class CorrectionMemory:
         """Key strings remembered (for the backup's count)."""
         return len(self.picks)
 
+    KEEP = KEEP_CORRECTIONS  # key strings kept
+
     def _prune(self):
+        """The KEEP key strings most counted - among equal counts the most recently used (findings #194: a new one,
+        once, was dropped at its own save while older ones of one count filled the memory) - and of each the choices
+        still counting."""
         entries = []
         for keys, choices in self.picks.items():
             best = max((self.count(keys, c) for c in choices), default=0)
-            entries.append((best, keys))
-        keep = {keys for best, keys in sorted(entries, reverse=True)[:KEEP_CORRECTIONS] if best >= 1}
+            last = max((d for d in self.used.get(keys, {}).values()), default=0)
+            entries.append((best, last, keys))
+        keep = {keys for best, _, keys in sorted(entries, reverse=True)[:self.KEEP] if best >= 1}
         for keys in list(self.picks):
             if keys not in keep:
                 self.picks.pop(keys, None)
@@ -653,6 +673,66 @@ class CorrectionMemory:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(out, f, ensure_ascii=False)
         os.replace(tmp, self.path)
+
+
+class PunctMemory(CorrectionMemory):
+    """標點記憶 (#83, the user 2026-11-26): a mark swapped from its row (#53) and sent - keys the mark as typed (an
+    opening bracket for a pair: its closing one follows), a choice the mark it became; one picked CORRECTION_MIN_USES
+    times, more than every other, is what that mark's key types from then on (the mark itself picked back counts for
+    the default). Fading and the renewal of a mark used as remembered as the other memories (#78). punct.json next to
+    user.json, a file of its own (keys.json's save writes its own part only: an older version would drop another).
+
+    {"format": 1, "picks": {mark: {choice: count}}, "used": {mark: {choice: day}}}
+    """
+
+    @staticmethod
+    def _parse(raw):
+        return CorrectionMemory._parse({KEYS_SECTION: raw} if isinstance(raw, dict) else None)
+
+    def choice(self, keys):
+        self._load()
+        return super().choice(keys)
+
+    def save(self):
+        if not self.path:
+            return
+        self._prune()
+        out = {"format": 1, "picks": self.picks, "used": self.used}
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        tmp = self.path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(out, f, ensure_ascii=False)
+        os.replace(tmp, self.path)
+
+
+class JaPhraseMemory(PunctMemory):
+    """The phrases the user sends (plan 6, the user 2026-11-26: 「記住常打的搭配」): keys are readings, choices what was
+    written; one sent CORRECTION_MIN_USES times, more than every other way of writing that reading, is predicted first.
+    Fading and the renewal of one used as remembered as the other memories (#78). ja_phrases.json next to user.json, a
+    file of its own, in PunctMemory's layout: {"format": 1, "picks": {reading: {surface: count}}, "used": {...}}."""
+
+    KEEP = 5000  # (every 文節 sent is one: more than keys.json's, findings #194)
+
+    def learn(self, reading, surface):
+        """A phrase sent: one more send of it - or, in effect already and sent so, used (#78: renewed, not counted
+        up, findings #195). Returns what changed, for restore."""
+        if self.choice(reading) == surface:
+            return self.touch(reading, surface)
+        return self.record(reading, surface)
+
+    def starting(self, prefix):
+        """[(surface, reading, faded count)] of the phrases in effect whose reading starts with prefix and is longer,
+        most counted first, then reading."""
+        self._load()
+        out = []
+        from .ja_predict import phrase_ok
+        for reading in self.picks:
+            if reading.startswith(prefix) and len(reading) > len(prefix):
+                surface = self.choice(reading)
+                if surface is not None and phrase_ok(reading, surface):  # (findings #199: not a broken file's)
+                    out.append((surface, reading, self.count(reading, surface)))
+        out.sort(key=lambda x: (-x[2], x[1], x[0]))
+        return out
 
 
 class CustomPickMemory:
@@ -772,6 +852,12 @@ class UserModel:
         # 校正記憶 and 代碼記憶, in a file of their own
         self.corrections = CorrectionMemory(os.path.join(os.path.dirname(path), "keys.json") if path else None,
                                             lambda: self.today())
+        # 標點記憶 (#83), in a file of its own
+        self.punct = PunctMemory(os.path.join(os.path.dirname(path), "punct.json") if path else None,
+                                 lambda: self.today())
+        # 日文 (#36 plan 6): the phrases sent, for the prediction - in a file of its own
+        self.ja_phrases = JaPhraseMemory(os.path.join(os.path.dirname(path), "ja_phrases.json") if path else None,
+                                         lambda: self.today())
         self._custom_mtime = None
         self.reload_custom()
         # 快速填入 (#21): [(text, shortcut)] in the order given, quick_fill.json next to user.json (its own file:
@@ -1112,6 +1198,55 @@ class UserModel:
                     out.append((key, phrase, state))
         return out
 
+    def touch_phrases(self, units):
+        """#78: what was sent as the memory had it is used. units: [(reading, character)] of the syllables sent, None
+        between runs (a mark, English, ...); each run of them whose readings and characters are a remembered phrase -
+        a character inside a longer word too (字 of 補字) - gets today's day and its count as it stands (no more,
+        nothing faded given back); under 1 (it no longer counts) or already today: nothing. Returns what it changed,
+        as phrases_changed does, and whether it was the shared memory's in Simplified mode: for restore_touched."""
+        if not self.phrases:
+            return []
+        longest = max((k.count("-") + 1 for k in self.phrases), default=0)
+        today = self.today()
+        changed = []
+        for i in range(len(units)):
+            for n in range(1, longest + 1):
+                run = units[i:i + n]
+                if len(run) < n or None in run:
+                    break
+                key = "-".join(r for r, _ in run)
+                phrase = "".join(ch for _, ch in run)
+                if phrase not in self.phrases.get(key, ()):
+                    continue
+                day = self.phrase_used.get(key, {}).get(phrase)
+                count = self.phrase_count(key, phrase)
+                if count < 1 or day == today:
+                    continue
+                shared = self._shared_entry(key, phrase)
+                changed.append((key, phrase, (self.phrases[key][phrase], day), shared))
+                self.phrases[key][phrase] = count
+                self.phrase_used.setdefault(key, {})[phrase] = today
+                if shared:  # (Simplified mode: a shared pick stays shared - findings #185)
+                    self._shared[0].setdefault(key, {})[phrase] = count
+                    self._shared[1].setdefault(key, {})[phrase] = today
+        return changed
+
+    def _shared_entry(self, key, phrase):
+        """In Simplified mode, phrase is the shared memory's (not Simplified mode's own): a renewal goes to both views."""
+        return self.simplified and phrase not in self._simp_phrases.get(key, {})
+
+    def restore_touched(self, changed):
+        """touch_phrases' changes put back (Simplified mode: in the shared memory too, as it was when renewed - not as
+        _simp_phrases has it by now: a save since may count the same send's pick as Simplified mode's, findings #188)."""
+        for key, phrase, (count, used), shared in changed:
+            shared = shared and self.simplified
+            for table, value in ((self.phrases, count), (self.phrase_used, used)) + \
+                    (((self._shared[0], count), (self._shared[1], used)) if shared else ()):
+                if value is None:
+                    table.get(key, {}).pop(phrase, None)
+                else:
+                    table.setdefault(key, {})[phrase] = value
+
     def restore_phrases(self, changed):
         for key, phrase, (count, used) in changed:
             for table, value in ((self.phrases, count), (self.phrase_used, used)):
@@ -1159,6 +1294,8 @@ class UserModel:
             self.set_simplified(simplified)
             self.corrections.forget()  # (注音自動校正's habits and 代碼記憶, the setting on or off)
             self.custom_picks.forget()
+            self.punct.forget()  # (標點記憶, #83)
+            self.ja_phrases.forget()  # (日文's phrases, #36 plan 6)
 
     def forget_emails(self, counter):
         """全部清除 with 一併清除記住的 Email ticked (the settings tool bumped counter)."""
@@ -1167,7 +1304,7 @@ class UserModel:
             self.save()
 
     # ---- 記憶清單 (#65): the rows deleted in the settings, and what the list shows ---------------------------------
-    FORGET_KINDS = ("pick", "word", "email", "correction", "english", "simp_pick", "simp_term")
+    FORGET_KINDS = ("pick", "word", "email", "correction", "english", "simp_pick", "simp_term", "punct")
 
     def _forgot_path(self):
         return os.path.join(os.path.dirname(self.path), FORGOT_FILE) if self.path else None
@@ -1199,7 +1336,7 @@ class UserModel:
             return False
         simplified = self.simplified
         self.set_simplified(False)  # (the shared memory itself, not the view Simplified mode lays over it)
-        changed = keys_changed = simp_changed = False
+        changed = keys_changed = simp_changed = punct_changed = False
         for it in items:
             if not (isinstance(it, dict) and isinstance(it.get("id"), int) and not isinstance(it.get("id"), bool)
                     and it["id"] > applied and it.get("kind") in self.FORGET_KINDS
@@ -1223,12 +1360,16 @@ class UserModel:
                 simp_changed |= _drop(self._simp_phrases, self._simp_used, key, value)
             elif kind == "simp_term":
                 simp_changed |= _drop(self.replacements, self.replacement_used, key, value)
+            elif kind == "punct":  # (標點記憶, #83: the mark types its default again)
+                punct_changed |= self.punct.forget_choice(key, value)
         if changed:
             self.save()
         if simp_changed and self.simplified_path:
             self._save_simplified()
         if keys_changed:
             self.corrections.save()
+        if punct_changed:
+            self.punct.save()
         self.set_simplified(simplified)
         self.forgot_applied = max(ids)
         try:
@@ -1236,7 +1377,7 @@ class UserModel:
                 json.dump({"format": 1, "applied": self.forgot_applied}, f)
         except OSError:
             pass
-        return changed or keys_changed or simp_changed
+        return changed or keys_changed or simp_changed or punct_changed
 
     def memory_list(self, autocorrect):
         """What the memory holds that affects typing, as the settings page lists it (#65; the settings tool lists the
@@ -1295,8 +1436,15 @@ class UserModel:
                 simp = ordered(simp)
         finally:
             self.set_simplified(simplified)
+        punct = []  # (標點記憶, #83: the marks whose choice is in effect - the default winning is no row)
+        self.punct.enable(True)
+        for k in self.punct.picks:
+            choice = self.punct.choice(k)
+            if choice is not None and choice != k:
+                punct.append(row("punct", k, choice, k, choice, self.punct.count(k, choice),
+                                 self.punct.used.get(k, {}).get(choice), ""))
         return {"picks": ordered(picks), "words": ordered(words), "emails": ordered(emails), "keys": ordered(keys),
-                "simplified": simp}
+                "punct": ordered(punct), "simplified": simp}
 
     def import_memory(self, counter):
         """The settings tool restored a backup (counter bumped): merge import-memory.json, put next
@@ -1355,6 +1503,10 @@ class UserModel:
             self.corrections.merge(data["keys"])
         if "custom_picks" in data:  # 自訂詞彙 taken with Tab: its own file
             self.custom_picks.merge(data["custom_picks"])
+        if "punct" in data:  # 標點記憶 (#83): its own file
+            self.punct.merge(data["punct"])
+        if "ja_phrases" in data:  # 日文's phrases (#36 plan 6): its own file
+            self.ja_phrases.merge(data["ja_phrases"])
         simp = data.get("simplified")
         if isinstance(simp, dict):  # 簡體輸出's own memory (#32): the higher count and the later day, as above
             simp_used = simp.get("used") if isinstance(simp.get("used"), dict) else {}

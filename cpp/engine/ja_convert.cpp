@@ -322,4 +322,9 @@ std::vector<std::pair<std::vector<JaNode>, int64_t>> ja_nbest(const ustr& kana, 
     return out;
 }
 
+// a word written so (reading, surface) as a bigram word number: the first entry of its reading written as it (-1 none)
+int ja_pin_sid(const JaDict& d, const JaBigram& bigram, const ustr& reading, const ustr& surface) {
+    return pin_sid(d, bigram, reading, surface);
+}
+
 }  // namespace sz

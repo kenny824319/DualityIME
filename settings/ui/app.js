@@ -554,6 +554,8 @@ const MEMORY_TABS = [
   ["emails", "Email", ["Email", "打過", "最近使用"], (r) => [r.shown, memoryCount(r), memoryDay(r)]],
   // (count and last use as the other tabs - the user 2026-11-24; 會打成: the 注音 stored, or the keys themselves)
   ["keys", "按鍵", ["按鍵", "會打成", "說明", "選過", "最近使用"], (r) => [r.shown, r.reading || r.shown, r.note, memoryCount(r), memoryDay(r)]],
+  // (#83 標點記憶, the user 2026-11-26: a mark swapped twice is what its key types; only the ones in effect listed)
+  ["punct", "標點", ["標點", "會打成", "選過", "最近使用"], (r) => [r.shown, r.reading, memoryCount(r), memoryDay(r)]],
   ["simplified", "簡體模式", ["字詞", "對應", "種類", "選過", "最近使用"], (r) => [r.shown, r.reading, r.note, memoryCount(r), memoryDay(r)]]
 ];
 
@@ -561,6 +563,7 @@ function memoryPanel(deleted) {
   // deleted(): after a 刪除, so 已記憶項目 above follows (the settings tool counts the rows the engine is about to remove
   // as gone). (On the page itself, below 已記憶項目: the user 2026-11-24 "我不喜歡要點開才能看 直接列在下面就好")
   let data = { picks: [], words: [], emails: [], keys: [], simplified: null };
+  data.punct = [];  // (#83 標點記憶)
   let tab = "picks";
   const id = (r) => r.kind + "\u0000" + r.key + "\u0000" + r.value;
   const picked = new Set();  // id() of the rows ticked
@@ -632,7 +635,7 @@ async function forgetMemory() {
   const emails = h("input", { type: "checkbox" });
   const body = h("div", {},
     h("p", { class: "row-desc", style: "font-size:14px" },
-      "確定要清除所有打字記憶（選字習慣、記住的英文與自動校正的習慣）嗎？設定與個人詞庫會保留。此操作無法復原。"),
+      "確定要清除所有打字記憶（選字習慣、記住的英文、自動校正與標點的習慣）嗎？設定與個人詞庫會保留。此操作無法復原。"),
     h("label", { class: "check" }, emails, "一併清除記住的 Email"));
   const ok = await dialog("清除所有記憶項目", body, [{ text: "取消", value: false }, { text: "確定清除", kind: "danger", value: true }]);
   if (!ok) return;

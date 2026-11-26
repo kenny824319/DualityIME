@@ -381,12 +381,12 @@ public class Backend {
     }
 
     // 已記憶項目: { N, M, S } - the rows of 記憶清單 (#65, the user 2026-11-24: the count agrees with the list): N =
-    // 選字 + 英文字 + 按鍵, M = Email, S = 簡體模式, -1 without user_simplified.json (簡體輸出 never used, #32).
+    // 選字 + 英文字 + 按鍵 + 標點 (#83), M = Email, S = 簡體模式, -1 without user_simplified.json (簡體輸出 never used, #32).
     public int[] RememberedCount() { return RememberedCount(MemoryList(Today())); }
 
     static int[] RememberedCount(Dictionary<string, object> list) {
         Func<string, int> n = k => list[k] == null ? -1 : ((List<Dictionary<string, object>>)list[k]).Count;
-        return new[] { n("picks") + n("words") + n("keys"), n("emails"), n("simplified") };
+        return new[] { n("picks") + n("words") + n("keys") + n("punct"), n("emails"), n("simplified") };
     }
 
     // ---- 記憶清單 (#65): what the memory holds that affects typing, as the engine reads it -------------------------
@@ -536,6 +536,28 @@ public class Backend {
                     if (!double.IsNaN(n) && n > 0) emails.Add(MemoryRow("email", m.Key, "", m.Key, "", n, DayOf(Sub(used, "emails"), m.Key), ""));
                 }
         }
+        var punctRows = new List<Dictionary<string, object>>();  // 標點記憶 (#83): punct.json, {picks, used} at the top
+        if (!clearHabits) {
+            var punct = ReadData("punct.json");
+            var punctPicks = Sub(punct, "picks");
+            var punctUsed = Sub(punct, "used");
+            if (punctPicks != null)
+                foreach (var k in punctPicks) {
+                    var bucket = k.Value as Dictionary<string, object>;
+                    if (bucket == null || bucket.Count == 0) continue;
+                    var days = Sub(punctUsed, k.Key);
+                    string best = null;
+                    double top = double.NegativeInfinity, second = double.NegativeInfinity;
+                    foreach (var c in bucket) {
+                        double n = Num(c.Value);
+                        double f = double.IsNaN(n) || n == 0 ? 0 : Faded(n, DayOf(days, c.Key), today);
+                        if (f > top) { second = top; top = f; best = c.Key; }
+                        else if (f > second) second = f;
+                    }
+                    if (best == null || top < CorrectionMinUses || top <= second || best == k.Key) continue;
+                    punctRows.Add(MemoryRow("punct", k.Key, best, k.Key, best, top, DayOf(days, best), ""));
+                }
+        }
         List<Dictionary<string, object>> simpRows = null;
         if (simpFile) {
             simpRows = new List<Dictionary<string, object>>();
@@ -572,7 +594,7 @@ public class Backend {
         return new Dictionary<string, object> {
             { "picks", Ordered(picks.Where(kept).ToList()) }, { "words", Ordered(words.Where(kept).ToList()) },
             { "emails", Ordered(emails.Where(kept).ToList()) }, { "keys", Ordered(keyRows.Where(kept).ToList()) },
-            { "simplified", simpRows }
+            { "punct", Ordered(punctRows.Where(kept).ToList()) }, { "simplified", simpRows }
         };
     }
 
@@ -1203,6 +1225,12 @@ public class Backend {
                     if (Sub(simp, "replacements") != null) nested(Sub(simp, "replacements"), key, value);
                     if (Sub(simp, "replacements_used") != null) nested(Sub(simp, "replacements_used"), key, value);
                     break;
+                case "punct": {  // (標點記憶, #83)
+                    var punct = Sub(memory, "punct");
+                    if (Sub(punct, "picks") != null) nested(Sub(punct, "picks"), key, value);
+                    if (Sub(punct, "used") != null) nested(Sub(punct, "used"), key, value);
+                    break;
+                }
             }
         }
     }
@@ -1226,6 +1254,20 @@ public class Backend {
         if (customPicks != null) {
             if (memory == null) memory = new Dictionary<string, object>();
             memory["custom_picks"] = customPicks;
+        }
+        // 標點記憶 (punct.json, a file of its own, #83) too
+        Dictionary<string, object> punctMemory = null;
+        try { punctMemory = json.DeserializeObject(File.ReadAllText(Path.Combine(dataDir, "punct.json"), Encoding.UTF8)) as Dictionary<string, object>; } catch { }
+        if (punctMemory != null) {
+            if (memory == null) memory = new Dictionary<string, object>();
+            memory["punct"] = punctMemory;
+        }
+        // 日文's phrases sent (ja_phrases.json, a file of its own, #36 plan 6) too
+        Dictionary<string, object> jaPhrases = null;
+        try { jaPhrases = json.DeserializeObject(File.ReadAllText(Path.Combine(dataDir, "ja_phrases.json"), Encoding.UTF8)) as Dictionary<string, object>; } catch { }
+        if (jaPhrases != null) {
+            if (memory == null) memory = new Dictionary<string, object>();
+            memory["ja_phrases"] = jaPhrases;
         }
         // 簡體輸出's own memory (user_simplified.json, #32) too; the IME merges it on restore (import_memory)
         Dictionary<string, object> simplified = null;

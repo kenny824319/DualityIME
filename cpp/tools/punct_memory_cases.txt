@@ -1,0 +1,9 @@
+# 標點記憶 (#83): 「 swapped for 『 from its row and sent twice - from then on Ctrl + [ types 『 and Ctrl + ] 』, the symbol
+# keyboard's 「 too; picked back twice (『's row: 「 second), 「 again. The lines run in order on one memory.
+su3{^[}{LEFT}{DOWN}2{ENTER}{ENTER} => 你『
+su3{^[}{LEFT}{DOWN}2{ENTER}{ENTER} => 你『
+su3{^[}cl3{^]}{ENTER} => 你『好』
+`g{ENTER} => 『
+su3{^[}{LEFT}{DOWN}2{ENTER}{ENTER} => 你「
+su3{^[}{LEFT}{DOWN}2{ENTER}{ENTER} => 你「
+su3{^[}cl3{^]}{ENTER} => 你「好」

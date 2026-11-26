@@ -239,7 +239,7 @@ Json handle(Session& s, const Json& req) {
         } else if (jop == "ja_flush" && !(keep && keep->is_bool() && keep->as_bool())) {
             c.set_ja_lock("auto");  // (switching to Chinese; Shift between 中日混打 and 純日文 keeps it)
         }
-        Json o = s.ja.handle(req, g->ja, *g->config);
+        Json o = s.ja.handle(req, g->ja, *g->config, &g->user->ja_phrases);
         const Json* jm = req.get("ja_mixed");
         if (jop == "ja_kana" && jm && jm->is_bool() && jm->as_bool()) {
             // (asked in 中日混打: what is typed is the Chinese composer's - its state, not 純日文's empty one; the mode

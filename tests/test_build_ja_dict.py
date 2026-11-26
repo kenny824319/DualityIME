@@ -169,5 +169,117 @@ class BuildJaDictTest(unittest.TestCase):
         self.assertEqual(lines.count("/\t・"), 1)
 
 
+class SudachiTest(unittest.TestCase):
+    """#36 plan 8 (the user 2026-11-26): SudachiDict's nouns Mozc lacks merged in - small and core (core without its place
+    names), each with the mapped Mozc POS id and that POS's median Mozc cost plus a penalty."""
+
+    def setUp(self):
+        import zipfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.src = os.path.join(self.tmp.name, "mozc")
+        self.sud = os.path.join(self.tmp.name, "sudachi")
+        self.out = os.path.join(self.tmp.name, "out")
+        for d in (self.src, self.sud, self.out):
+            os.makedirs(d)
+        write(os.path.join(self.src, "dictionary00.txt"),
+              "きょう\t2\t2\t3000\t今日\nいぬ\t2\t2\t5000\t犬\nさとう\t3\t3\t6000\t佐藤\nおおさか\t4\t4\t7000\t大阪\n")
+        write(os.path.join(self.src, "connection_single_column.txt"), "4\n" + "".join(f"{i}\n" for i in range(16)))
+        write(os.path.join(self.src, "id.def"), "0 BOS/EOS,*,*,*,*,*,*\n1 動詞,自立,*,*,*,*,*\n2 名詞,一般,*,*,*,*,*\n"
+              "3 名詞,固有名詞,人名,姓,*,*,*\n4 名詞,固有名詞,地域,一般,*,*,*\n")
+        write(os.path.join(self.src, "romanji-hiragana.tsv"), "a\tあ\n")
+        write(os.path.join(self.src, "LICENSE"), "license text\n")
+        write(os.path.join(self.src, "segmenter.def"), "* * true\n")
+
+        def lex(name, lines):
+            with zipfile.ZipFile(os.path.join(self.sud, name + ".zip"), "w") as z:
+                z.writestr(name + ".csv", "\n".join(lines) + "\n")
+
+        def line(surface, pos, reading):
+            return f"{surface},1,1,5000,{surface},{pos},*,*,{reading},{surface},*,A,*,*,*,*"
+
+        lex("small_lex", [line("新語", "名詞,普通名詞,一般,*", "シンゴ"), line("今日", "名詞,普通名詞,一般,*", "キョウ"),
+                          line("走る", "動詞,一般,*,*", "ハシル"), line("鈴木", "名詞,固有名詞,人名,姓", "スズキ"),
+                          line("試験", "名詞,普通名詞,一般,*", "ABC"), line("某町", "名詞,固有名詞,地名,一般", "ボウチョウ"),
+                          line("あ", "名詞,普通名詞,一般,*", "ア")])
+        lex("core_lex", [line("村名", "名詞,固有名詞,地名,一般", "ソンメイ"), line("珍語", "名詞,普通名詞,一般,*", "チンゴ")])
+        write(os.path.join(self.sud, "LICENSE-2.0.txt"), "apache\n")
+        write(os.path.join(self.sud, "LEGAL"), "legal\n")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def build(self, penalty=1000):
+        build_ja_dict.build(self.src, self.out, sudachi=self.sud, penalty=penalty)
+        return read_dict(os.path.join(self.out, "ja_dict.bin"))[0]
+
+    def test_a_noun_mozc_lacks_added(self):
+        d = self.build()
+        self.assertEqual(d["しんご"], [(2, 2, 4000 + 1000, "新語")])  # (名詞,一般's median: 3000 and 5000)
+        self.assertEqual(d["すずき"], [(3, 3, 6000 + 1000, "鈴木")])  # (人名,姓: its own median)
+        self.assertEqual(d["ちんご"][0][3], "珍語")  # (core too)
+        self.assertEqual(d["ぼうちょう"][0][3], "某町")  # (small's place names kept)
+
+    def test_skipped(self):
+        d = self.build()
+        self.assertEqual([e[3] for e in d["きょう"]], ["今日"])  # (Mozc has it)
+        self.assertNotIn("はしる", d)  # (a verb)
+        self.assertNotIn("abc", d)  # (not a kana reading)
+        self.assertNotIn("あ", d)  # (one character)
+        self.assertNotIn("そんめい", d)  # (core's place names left out: the size, the user 2026-11-26)
+
+    def test_licence_copied(self):
+        self.build()
+        self.assertTrue(os.path.exists(os.path.join(self.out, "LICENSE-SudachiDict.txt")))
+        self.assertTrue(os.path.exists(os.path.join(self.out, "LEGAL-SudachiDict.txt")))
+
+    def test_without_sudachi_as_before(self):
+        build_ja_dict.build(self.src, self.out)
+        d = read_dict(os.path.join(self.out, "ja_dict.bin"))[0]
+        self.assertNotIn("しんご", d)
+
+
+class WikiTest(unittest.TestCase):
+    """#36 補詞彙 (2) (the user 2026-11-26): Wikipedia's titles with readings (tools/ja_wiki_titles.py) merged in as
+    名詞,固有名詞,一般 at that POS's median Mozc cost plus a penalty; pairs the dictionary has (Mozc or SudachiDict) skipped."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.src = os.path.join(self.tmp.name, "mozc")
+        self.out = os.path.join(self.tmp.name, "out")
+        os.makedirs(self.src)
+        os.makedirs(self.out)
+        write(os.path.join(self.src, "dictionary00.txt"),
+              "きょう\t2\t2\t3000\t今日\nふじさん\t3\t3\t6000\t富士山\nあそさん\t3\t3\t7000\t阿蘇山\n")
+        write(os.path.join(self.src, "connection_single_column.txt"), "4\n" + "".join(f"{i}\n" for i in range(16)))
+        write(os.path.join(self.src, "id.def"), "0 BOS/EOS,*,*,*,*,*,*\n1 動詞,自立,*,*,*,*,*\n2 名詞,一般,*,*,*,*,*\n"
+              "3 名詞,固有名詞,一般,*,*,*,*\n")
+        write(os.path.join(self.src, "romanji-hiragana.tsv"), "a\tあ\n")
+        write(os.path.join(self.src, "LICENSE"), "license text\n")
+        write(os.path.join(self.src, "segmenter.def"), "* * true\n")
+        self.wiki = os.path.join(self.tmp.name, "titles.tsv")
+        write(self.wiki, "ひらがげんない\t平賀源内\nふじさん\t富士山\nきょう\t京\n")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def build(self):
+        r = build_ja_dict.build(self.src, self.out, wiki=self.wiki, wiki_penalty=500)
+        return read_dict(os.path.join(self.out, "ja_dict.bin"))[0], r
+
+    def test_title_added(self):
+        d, r = self.build()
+        self.assertEqual(d["ひらがげんない"], [(3, 3, 6500 + 500, "平賀源内")])  # (固有名詞,一般's median: 6000 and 7000)
+        self.assertEqual(d["きょう"][1][3], "京")  # (a new surface of a known reading: added)
+        self.assertEqual(r["wiki"], 2)
+
+    def test_known_pair_skipped(self):
+        d, _ = self.build()
+        self.assertEqual([e[3] for e in d["ふじさん"]], ["富士山"])
+
+    def test_without_wiki_as_before(self):
+        build_ja_dict.build(self.src, self.out)
+        self.assertNotIn("ひらがげんない", read_dict(os.path.join(self.out, "ja_dict.bin"))[0])
+
+
 if __name__ == "__main__":
     unittest.main()

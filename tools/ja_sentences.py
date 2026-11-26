@@ -24,9 +24,8 @@ sys.path.insert(0, ROOT)
 
 from engine.ja_convert import convert  # noqa: E402
 from engine.ja_dict import Entry, JaDict  # noqa: E402
-from engine.ja_romaji import RomajiTable  # noqa: E402
-
-PUNCT = {"。": ".", "、": ",", "？": "?", "！": "!", "ー": "-"}
+from engine.ja_romaji import RomajiTable, romaji_table, to_romaji  # noqa: E402,F401 (plan 6: they live in the engine)
+from engine.ja_romaji import ROMAJI_PUNCT as PUNCT  # noqa: E402
 
 
 def kana_ok(c):
@@ -67,50 +66,6 @@ class SurfaceIndex:
 
     def cost(self, rid, lid):
         return self.d.cost(rid, lid)
-
-
-def romaji_table(table):
-    """hiragana -> the romaji that gives it, from the table's rules without pending: spellings without c q x l v first
-    (ka, not ca; the letters everyday typing uses), then the shortest, then alphabetical."""
-    def key(inp):
-        return (any(ch in "cqxlv" for ch in inp), len(inp), inp)
-
-    best = {}
-    for inp, (out, pending) in table.rules.items():
-        if pending or not inp.isalpha() or not inp.islower() or out in ("ん", "っ"):
-            continue
-        cur = best.get(out)
-        if cur is None or key(inp) < key(cur):
-            best[out] = inp
-    return best
-
-
-def to_romaji(reading, inv):
-    out = []
-    i = 0
-    while i < len(reading):
-        c = reading[i]
-        if c == "ん":
-            out.append("nn")
-            i += 1
-            continue
-        if c == "っ":
-            nxt = next((inv[reading[i + 1:i + 1 + k]] for k in (2, 1) if reading[i + 1:i + 1 + k] in inv), None)
-            out.append(nxt[0] if nxt and nxt[0] not in "aiueon" else "xtu")
-            i += 1
-            continue
-        if c in PUNCT:
-            out.append(PUNCT[c])
-            i += 1
-            continue
-        for k in (2, 1):
-            if reading[i:i + k] in inv:
-                out.append(inv[reading[i:i + k]])
-                i += k
-                break
-        else:
-            return None
-    return "".join(out)
 
 
 def fingerprint(lines):

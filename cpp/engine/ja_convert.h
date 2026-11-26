@@ -44,6 +44,8 @@ ustr ja_units(const ustr& text);
 size_t ja_rescore(const std::vector<std::pair<std::vector<JaNode>, int64_t>>& paths, const LmScorer& view, int64_t w);
 // W of the rescoring: the model file's weight field (whole units; engine/ja_mixed.py lm_weight_of)
 int64_t ja_lm_weight(const LmScorer& lm);
+// a word written so (reading, surface) as a bigram word number (plan 6's prediction context), -1 none
+int ja_pin_sid(const JaDict& d, const JaBigram& bigram, const ustr& reading, const ustr& surface);
 // a path node's word number in the bigram (its entry's; a pin or fallback: its reading's first entry written as it),
 // -1 none or no bigram - the context the next conversion starts from (engine/ja_convert.py word_sid)
 int ja_word_sid(const JaDict& d, const JaBigram* bigram, const JaNode& node);

@@ -139,6 +139,7 @@ private:
     bool no_text_field(ITfContext* ctx);
     bool password_field(ITfContext* ctx);
     bool ctrl_punct_key(ITfContext* ctx, WPARAM vk, LPARAM lp);  // Ctrl + a key the setting ctrl_full_punct makes full width
+    bool lone_chord(WPARAM vk);  // Ctrl (and Shift) with this key only: no other key of a shortcut held (#46, #73)
     void stuck_key_hint(unsigned vk);  // "Insert 沒有放開" at the caret (#73), once a minute a key
     bool key_down(ITfContext* ctx, WPARAM vk, LPARAM lp);
     void key_up(WPARAM vk);

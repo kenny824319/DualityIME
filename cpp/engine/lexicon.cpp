@@ -591,14 +591,16 @@ const std::unordered_set<std::string>& CorrectionMemory::codes() const {
     return codes_;
 }
 
-CorrectionMemory::CorrectionMemory(std::wstring path, std::function<int()> today)
-    : path_(std::move(path)), today_(std::move(today)) {}
+CorrectionMemory::CorrectionMemory(std::wstring path, std::function<int()> today, bool flat, size_t keep)
+    : flat_(flat), keep_(keep), path_(std::move(path)), today_(std::move(today)) {
+    if (flat_) load();  // (標點記憶: always on)
+}
 
-CorrectionMemory::Part CorrectionMemory::parse(const Json& raw) {
+CorrectionMemory::Part CorrectionMemory::parse(const Json& raw, bool flat) {
     // whatever is broken is left out
     Part p;
     if (!raw.is_object()) return p;
-    const Json* part = raw.get(kKeysSection);
+    const Json* part = flat ? &raw : raw.get(kKeysSection);
     if (!part || !part->is_object()) return p;
     const Json* used = part->get("used");
     if (used && !used->is_object()) used = nullptr;
@@ -627,7 +629,7 @@ void CorrectionMemory::load() {
     if (path_.empty() || !read_file(path_, text)) return;
     bool ok = false;
     Json raw = Json::parse(text, &ok);
-    if (ok) data_ = parse(raw);
+    if (ok) data_ = parse(raw, flat_);
 }
 
 void CorrectionMemory::enable(bool on) {
@@ -672,9 +674,26 @@ std::vector<CorrectionMemory::Change> CorrectionMemory::record(const std::string
     return {Change{keys, choice, was_count, was_day}};
 }
 
+std::vector<CorrectionMemory::Change> CorrectionMemory::touch(const std::string& keys, const ustr& choice) {
+    load();
+    double n = count(keys, choice);
+    std::optional<double> was_count;
+    std::optional<int> was_day;
+    if (auto k = data_.picks.find(keys); k != data_.picks.end())
+        if (auto c = k->second.find(choice); c != k->second.end()) was_count = c->second;
+    if (auto u = data_.used.find(keys); u != data_.used.end())
+        if (auto d = u->second.find(choice); d != u->second.end()) was_day = d->second;
+    if (n < 1 || (was_day && *was_day == today_())) return {};
+    ++version_;
+    data_.picks[keys][choice] = n;
+    data_.used[keys][choice] = today_();
+    return {Change{keys, choice, was_count, was_day}};
+}
+
 void CorrectionMemory::restore(const std::vector<Change>& changes) {
     ++version_;
-    for (auto& [keys, choice, count, day] : changes) {
+    for (auto it = changes.rbegin(); it != changes.rend(); ++it) {
+        auto& [keys, choice, count, day] = *it;
         if (count) data_.picks[keys][choice] = *count;
         else if (auto k = data_.picks.find(keys); k != data_.picks.end()) {
             k->second.erase(choice);
@@ -717,7 +736,7 @@ void CorrectionMemory::merge(const Json& raw) {
     load();
     ++version_;
     int today = today_();
-    Part theirs = parse(raw);
+    Part theirs = parse(raw, flat_);
     for (auto& [keys, choices] : theirs.picks)
         for (auto& [c, n] : choices) {
             double& mine = data_.picks[keys][c];
@@ -736,16 +755,19 @@ size_t CorrectionMemory::size() const {
 }
 
 void CorrectionMemory::prune() {
-    std::vector<std::pair<double, std::string>> entries;  // (best, keys)
+    std::vector<std::tuple<double, int, std::string>> entries;  // (best, last day used, keys)
     for (auto& [keys, choices] : data_.picks) {
         double best = 0;
         for (auto& [c, _] : choices) best = std::max(best, count(keys, c));
-        entries.emplace_back(best, keys);
+        int last = 0;
+        if (auto u = data_.used.find(keys); u != data_.used.end())
+            for (auto& [c, d] : u->second) last = std::max(last, d);
+        entries.emplace_back(best, last, keys);
     }
     std::sort(entries.begin(), entries.end(), [](auto& a, auto& b) { return a > b; });
     std::set<std::string> keep;
-    for (size_t i = 0; i < entries.size() && i < KEEP_CORRECTIONS; ++i)
-        if (entries[i].first >= 1) keep.insert(entries[i].second);
+    for (size_t i = 0; i < entries.size() && i < keep_; ++i)
+        if (std::get<0>(entries[i]) >= 1) keep.insert(std::get<2>(entries[i]));
     for (auto k = data_.picks.begin(); k != data_.picks.end();) {
         if (!keep.count(k->first)) {
             data_.used.erase(k->first);
@@ -781,10 +803,15 @@ void CorrectionMemory::save() {
         for (auto& [choice, day] : days) d[to_utf8(choice)] = Json(day);
         used[keys] = std::move(d);
     }
-    Json part = Json::object();
-    part["picks"] = std::move(picks);
-    part["used"] = std::move(used);
-    out[kKeysSection] = std::move(part);
+    if (flat_) {  // (標點記憶: picks and used at the top)
+        out["picks"] = std::move(picks);
+        out["used"] = std::move(used);
+    } else {
+        Json part = Json::object();
+        part["picks"] = std::move(picks);
+        part["used"] = std::move(used);
+        out[kKeysSection] = std::move(part);
+    }
     write_file_atomic(path_, out.dump());
 }
 
@@ -875,6 +902,8 @@ void CustomPickMemory::save() {
 UserModel::UserModel(const std::wstring& path, std::function<int()> today)
     : corrections(next_to(path, L"keys.json"), [this] { return today_(); }),
       custom_picks(next_to(path, L"custom_picks.json"), [this] { return today_(); }),
+      punct(next_to(path, L"punct.json"), [this] { return today_(); }, true),
+      ja_phrases(next_to(path, L"ja_phrases.json"), [this] { return today_(); }, true, 5000),  // (findings #194)
       path_(path), today_(std::move(today)) {
     if (!path.empty()) {
         size_t slash = path.find_last_of(L"\\/");
@@ -1326,6 +1355,66 @@ std::vector<UserModel::PhraseChange> UserModel::phrases_changed(
     return out;
 }
 
+std::vector<UserModel::TouchChange> UserModel::touch_phrases(
+    const std::vector<std::optional<std::pair<ustr, char32_t>>>& units) {
+    // see engine/lexicon.py touch_phrases
+    std::vector<TouchChange> changed;
+    if (phrases.empty()) return changed;
+    size_t longest = 0;
+    for (auto& [key, _] : phrases) {
+        size_t n = 1 + static_cast<size_t>(std::count(key.begin(), key.end(), U'-'));
+        longest = std::max(longest, n);
+    }
+    int today = today_();
+    for (size_t i = 0; i < units.size(); ++i) {
+        ustr key, phrase;
+        for (size_t n = 1; n <= longest; ++n) {
+            if (i + n > units.size() || !units[i + n - 1]) break;
+            if (n > 1) key += U'-';
+            key += units[i + n - 1]->first;
+            phrase += units[i + n - 1]->second;
+            auto* bucket = phrases.find(key);
+            const double* stored = bucket ? bucket->find(phrase) : nullptr;
+            if (!stored) continue;
+            auto* days = phrase_used.find(key);
+            const int* day = days ? days->find(phrase) : nullptr;
+            double count = phrase_count(key, phrase);
+            if (count < 1 || (day && *day == today)) continue;
+            bool shared = shared_entry(key, phrase);
+            changed.emplace_back(PhraseChange{key, phrase, *stored, day ? std::optional<int>(*day) : std::nullopt}, shared);
+            phrases[key].set(phrase, count);
+            phrase_used[key].set(phrase, today);
+            if (shared) {  // (Simplified mode: a shared pick stays shared - findings #185)
+                shared_phrases_[key].set(phrase, count);
+                shared_used_[key].set(phrase, today);
+            }
+        }
+    }
+    return changed;
+}
+
+bool UserModel::shared_entry(const ustr& key, const ustr& phrase) const {
+    if (!simplified) return false;
+    auto* bucket = simp_phrases_.find(key);
+    return !bucket || !bucket->find(phrase);
+}
+
+void UserModel::restore_touched(const std::vector<TouchChange>& changed) {
+    // (shared as it was when renewed, not as simp_phrases_ has it by now: findings #188)
+    for (auto& [change, was_shared] : changed) {
+        auto& [key, phrase, count, day] = change;
+        bool shared = was_shared && simplified;
+        auto put = [&](OrderedMap<ustr, OrderedMap<ustr, double>>& counts, OrderedMap<ustr, OrderedMap<ustr, int>>& days) {
+            if (count) counts[key].set(phrase, *count);
+            else if (auto* b = counts.find(key)) b->erase(phrase);
+            if (day) days[key].set(phrase, *day);
+            else if (auto* b = days.find(key)) b->erase(phrase);
+        };
+        put(phrases, phrase_used);
+        if (shared) put(shared_phrases_, shared_used_);
+    }
+}
+
 void UserModel::restore_phrases(const std::vector<PhraseChange>& changed) {
     for (auto& [key, phrase, count, day] : changed) {
         if (count) phrases[key].set(phrase, *count);
@@ -1370,6 +1459,8 @@ void UserModel::forget_words(int counter) {
         set_simplified(was_simplified);
         corrections.forget();  // (注音自動校正's habits and 代碼記憶, the setting on or off)
         custom_picks.forget();
+        punct.forget();  // (標點記憶, #83)
+        ja_phrases.forget();  // (日文's phrases, #36 plan 6)
     }
 }
 
@@ -1572,8 +1663,9 @@ bool UserModel::forget_items(const Json& items) {
     if (top <= forgot_applied) return false;
     bool was_simplified = simplified;
     set_simplified(false);  // (the shared memory itself, not the view Simplified mode lays over it)
-    bool changed = false, keys_changed = false, simp_changed = false;
-    static const std::set<std::string> kinds = {"pick", "word", "email", "correction", "english", "simp_pick", "simp_term"};
+    bool changed = false, keys_changed = false, simp_changed = false, punct_changed = false;
+    static const std::set<std::string> kinds = {"pick", "word", "email", "correction", "english", "simp_pick", "simp_term",
+                                                "punct"};
     for (auto& it : items.items()) {
         int id;
         if (!id_of(it, id) || id <= forgot_applied) continue;
@@ -1605,11 +1697,14 @@ bool UserModel::forget_items(const Json& items) {
             simp_changed |= drop_nested(simp_phrases_, simp_used_, from_utf8(key8), from_utf8(value8));
         } else if (k == "simp_term") {
             simp_changed |= drop_nested(replacements, replacement_used, from_utf8(key8), from_utf8(value8));
+        } else if (k == "punct") {  // (標點記憶, #83: the mark types its default again)
+            punct_changed |= punct.forget_choice(key8, from_utf8(value8));
         }
     }
     if (changed) save();
     if (simp_changed && !simplified_path_.empty()) save_simplified();
     if (keys_changed) corrections.save();
+    if (punct_changed) punct.save();
     set_simplified(was_simplified);
     forgot_applied = top;
     if (!keep_files_) {
@@ -1618,7 +1713,7 @@ bool UserModel::forget_items(const Json& items) {
         out["applied"] = Json(top);
         write_file_atomic(forgot_path, out.dump());
     }
-    return changed || keys_changed || simp_changed;
+    return changed || keys_changed || simp_changed || punct_changed;
 }
 
 void UserModel::import_memory(int counter) {
@@ -1686,6 +1781,8 @@ void UserModel::import_memory_now(int counter) {
     save();
     if (auto* ac = data.get("keys"); ac) corrections.merge(*ac);  // 校正記憶 / 代碼記憶: their own file, the setting on or off
     if (auto* cp = data.get("custom_picks"); cp) custom_picks.merge(*cp);  // 自訂詞彙 taken with Tab: its own file
+    if (auto* pm = data.get("punct"); pm) punct.merge(*pm);  // 標點記憶 (#83): its own file
+    if (auto* jp = data.get("ja_phrases"); jp) ja_phrases.merge(*jp);  // 日文's phrases (#36 plan 6): its own file
     if (auto* simp = data.get("simplified"); simp && simp->is_object()) {
         // 簡體輸出's own memory (#32): the higher count and the later day, as above (see lexicon.py)
         const Json* simp_used = simp->get("used");

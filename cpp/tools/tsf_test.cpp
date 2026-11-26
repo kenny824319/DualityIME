@@ -6,7 +6,8 @@
 // each line's window saved as line<N>.bmp, the box zoomed three times)
 // Script lines:  keys => expected text
 // keys: characters as typed, {ENTER} {ESC} {BACK} {DOWN} {UP} {LEFT} {RIGHT} {TAB} {PGDN} {PGUP}
-// {#5} (a numpad key) {SPACE} {SHIFT} (a Shift tap) {SBACK} (Shift+Backspace) {SSPACE} (Shift+Space)
+// {#5} (a numpad key) {SPACE} {SHIFT} (a Shift tap) {SBACK} (Shift+Backspace) {CBACK} (Ctrl+Backspace, #86)
+// {SSPACE} (Shift+Space)
 // {WAIT} (half a second), {^,} (Ctrl + a key, with Shift if its character needs it), {^^,} (the same
 // with F13 held as well), {+INS} / {-INS} (Insert down only / up only; F13, F24 too), {PAUSE 11} (11 seconds),
 // {UNSEEN INS} (the shared key record forgets Insert, #73), {HINT} (the line fails unless the hint box is up).
@@ -502,6 +503,7 @@ int wmain(int argc, wchar_t** argv) {
                     if (name == "NOHINT" && find.seen) g_note += " [a hint at the caret]";
                 }
                 else if (name == "SBACK") tap(VK_BACK, true);
+                else if (name == "CBACK") send({{VK_LCONTROL, false}, {VK_BACK, false}, {VK_BACK, true}, {VK_LCONTROL, true}});
                 else if (name == "SSPACE") tap(VK_SPACE, true);
                 else if (name == "WAIT") pump(500);
                 else if (name == "SHOT") {

@@ -96,6 +96,74 @@ def groups(out):
     return res
 
 
+def predict_compare(a):
+    """Plan 6: the predictions of both engines for the kana prefixes (2-4 kana) of every case line, each with a random
+    pending (none, or a consonant start) and a random context (none, or a word number) with data/ja_bigram.bin, and a
+    user phrase memory both read (some phrases sent twice or three times, one way written twice and another three)."""
+    sys.path.insert(0, ROOT)
+    from engine.ja_bigram import JaBigram
+    from engine.ja_dict import JaDict
+    from engine.ja_predict import JaPhraseMemory, JaPredict, predict
+    from engine.ja_romaji import RomajiTable
+    d, romaji = JaDict.load(), RomajiTable.load()
+    table, bigram = JaPredict.load(d, a.predict), JaBigram.load(d)
+    if table is None:
+        sys.exit(f"STOPPED: not a phrase table for this dictionary: {a.predict}")
+    rng = random.Random(37)
+    pendings = ["", "", "k", "g", "s", "t", "n", "h", "m", "y", "r", "w", "b", "p", "d", "z", "j", "ch", "sh", "ky", "tt"]
+    kanas = [romaji.to_kana(line)[0] for line in (open(a.cases, encoding="utf-8").read().split("\n") if a.cases
+                                                    else cases()) if line]
+    queries = []
+    step = max(1, len(table.phrases) // 2000)  # (and the table's own readings: most queries then have predictions)
+    kanas += [p.reading for p in table.phrases[::step]]
+    for kana in kanas:
+        for k in (2, 3, 4):
+            if len(kana) > k:
+                queries.append((kana[:k], rng.choice(pendings), rng.choice([-1, rng.randrange(500)]) if bigram else -1))
+    with tempfile.TemporaryDirectory() as tmp:
+        mpath = os.path.join(tmp, "ja_phrases.json")
+        memory = JaPhraseMemory(mpath, lambda: 20000)
+        for kana in rng.sample(kanas, min(40, len(kanas))):
+            for _ in range(rng.choice([1, 2, 3])):
+                memory.record(kana[:6], kana[:6])
+            if rng.random() < 0.3:
+                for _ in range(2):
+                    memory.record(kana[:6], kana[:3] + "X")
+        memory.save()
+        memory = JaPhraseMemory(mpath, lambda: 20000)
+        py = ["|".join(p.surface for p in predict(table, memory, pre, pend, romaji, d, bigram, sid))
+              for pre, pend, sid in queries]
+        cpp = run([a.exe, os.path.join(ROOT, "data"), "--predict", a.predict, "--memory", mpath] +
+                  (["--bigram", os.path.join(ROOT, "data", "ja_bigram.bin")] if bigram else []),
+                  [f"{pre}\t{pend}\t{sid}" for pre, pend, sid in queries])
+        # (and the key scripts typed with the table and a user phrase memory each side learns into - plan 6's Tab, ↓ on
+        # what Tab took, the kana lock, phrases sent twice)
+        keys = scripts() + ["arig{TAB}{ENTER}", "tabe{TAB}{LEFT}{DOWN}{ENTER}{ENTER}", "tabe{TAB}{BACK}{ENTER}",
+                            "yorosiku{ENTER}yorosiku{ENTER}yoro{TAB}{ENTER}", "{HIRA}tabe{TAB}{ENTER}{AUTO}",
+                            "watasiha{TAB}{TAB}{ENTER}", "ari{LEFT}{TAB}{ENTER}", "kyouha{ESC}kyou{TAB}{ENTER}",
+                            "tabe{TAB}{HOME}a{DOWN}{ENTER}{ENTER}"]
+        convert = os.path.join(ROOT, "tools", "ja_convert.py")
+        extra = ["--bigram", os.path.join(ROOT, "data", "ja_bigram.bin"), "--predict", a.predict]
+        py_k = groups(run([sys.executable, convert, "--keys", "--memory", os.path.join(tmp, "py.json")] + extra, keys))
+        cpp_k = groups(run([a.exe, os.path.join(ROOT, "data"), "--keys", "--memory", os.path.join(tmp, "cpp.json")] +
+                           extra, keys))
+    if len(cpp) != len(queries):
+        sys.exit(f"DIFFERENT: {len(queries)} queries, C++ {len(cpp)} out")
+    diff = [(q, p, c) for q, p, c in zip(queries, py, cpp) if p != c]
+    for q, p, c in diff[:30]:
+        print(f"{q}\n  py:  {p}\n  cpp: {c}")
+    kdiff = [(s, p, c) for s, p, c in zip(keys, py_k, cpp_k) if p != c]
+    for s, p, c in kdiff[:10]:
+        at = next((i for i, (x, y) in enumerate(zip(p, c)) if x != y), min(len(p), len(c)))
+        print(f"script {s}\n  key {at + 1}\n  py:  {p[at] if at < len(p) else '(none)'}\n"
+              f"  cpp: {c[at] if at < len(c) else '(none)'}")
+    hints = sum(1 for g in py_k for line in g if line.split("\t")[-1])
+    same = not diff and not kdiff and len(py_k) == len(cpp_k) == len(keys)
+    print(f"{'same' if same else 'DIFFERENT'} ({len(queries)} queries, {sum(1 for p in py if p)} with predictions; "
+          f"{len(keys)} scripts, {hints} states with a hint)")
+    sys.exit(0 if same else 1)
+
+
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
@@ -104,10 +172,13 @@ def main():
     ap.add_argument("--exe", default=os.path.join(ROOT, "cpp", "build", "x64-Release", "sz_ja.exe"))
     ap.add_argument("--bigram")  # (a bigram file, or "random": one made here; each line then gets a context)
     ap.add_argument("--nbest", action="store_true")
+    ap.add_argument("--predict")  # (plan 6: a phrase table - the predictions compared instead, predict_compare)
     ap.add_argument("--lm")  # (plan 5b: a Japanese model file both sides rescore with)  # (plan 5b: each line's best distinct sentences compared)
     a = ap.parse_args()
     if not os.path.exists(a.exe):
         sys.exit(f"STOPPED: build first (cpp\\build.cmd): {a.exe}")
+    if a.predict:
+        return predict_compare(a)
     convert = os.path.join(ROOT, "tools", "ja_convert.py")
     data = os.path.join(ROOT, "data")
     lines = [line.rstrip("\r\n") for line in open(a.cases, encoding="utf-8")] if a.cases else cases()

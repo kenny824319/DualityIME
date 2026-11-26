@@ -79,6 +79,12 @@ const std::vector<ustr>& PUNCT_ROW_ORDER() {
                                         U"……", U"——", U"＼", U"｜"};
     return v;
 }
+ustr opener(const ustr& mark) {
+    // the mark 標點記憶 keeps a mark under (#83): a closing bracket's opening one, any other mark itself
+    for (auto& [o, c] : BRACKETS())
+        if (c == mark) return o;
+    return mark;
+}
 bool is_opening(const ustr& s) {
     for (auto& [o, c] : BRACKETS())
         if (o == s) return true;
@@ -2826,6 +2832,7 @@ Composer::Composer(SyllableTable& table, const Lexicon& lexicon, const English& 
 void Composer::reset() {
     context_word_.reset();
     ja_context_ = -1;  // (中日混打, plan 5)
+    ja_sent_ = false;
     ja_lm_context_.clear();
     lm_context_.clear();
     lm_units_.clear();
@@ -2882,6 +2889,7 @@ bool Composer::lit_keys() const {
 void Composer::clear_input() {
     raw.clear();
     ja_pins_.clear();      // 中日混打 (#36): romaji token start -> (its kana when picked, the pins)
+    ja_predicted_.clear();
     ja_finishing_ = false;  // ...true while being sent: the pending letters made kana
     overrides_.clear();
     term_picks_.clear();
@@ -2892,6 +2900,7 @@ void Composer::clear_input() {
     exact_.clear();
     taken_.clear();
     pending_.clear();
+    mark_from_.clear();
     literal_.clear();
     caps_.clear();
     caps_lock_ = false;
@@ -2929,6 +2938,7 @@ void Composer::set_japanese(const JaMixed* ja) {
     if (ja != ja_) {
         ja_ = ja;
         ja_pins_.clear();
+        ja_predicted_.clear();  // (as the pins: what Tab took, findings #196)
         refresh();
     }
 }
@@ -3152,7 +3162,34 @@ void Composer::ja_candidates(std::vector<ustr>& labels, std::vector<Action>& act
                 break;
             }
     }
+    // (on what Tab took, its pin still there: the other predictions first - findings #196)
+    auto pr = ja_predicted_.find(t->start);
+    // (...while it is still the end of the text, as Tab took it - findings #201)
+    if (pr != ja_predicted_.end() && std::get<0>(pr->second) == seg.begin && std::get<1>(pr->second) == seg.end &&
+        std::get<1>(pr->second) == static_cast<int>(kana.size()) && pending.empty() && t == &tokens.back()) {  // (#203)
+        bool pinned = false;
+        for (auto& q : ja_pins_of(*t, kana))
+            if (q.begin == seg.begin && q.end == seg.end) pinned = true;
+        if (pinned)
+            for (auto& ph : std::get<2>(pr->second)) {
+                jc.kana_lock = ja_lock_;
+                ustr text = jc.shown(ph);
+                if (text == seg.surface || std::find(labels.begin(), labels.end(), text) != labels.end()) continue;
+                labels.push_back(text);
+                Action a;
+                a.type = "ja";
+                a.start = t->start;
+                a.ja_kana = kana;
+                a.ja_alt = true;
+                a.first = seg.begin;
+                a.end = seg.end;
+                a.ja_preds = {ph};
+                a.ja_all = std::get<2>(pr->second);
+                actions.push_back(a);
+            }
+    }
     for (auto& [text, pin] : jc.candidates_for(seg)) {
+        if (std::find(labels.begin(), labels.end(), text) != labels.end()) continue;
         labels.push_back(text);
         Action a;
         a.type = "ja";
@@ -3163,8 +3200,70 @@ void Composer::ja_candidates(std::vector<ustr>& labels, std::vector<Action>& act
     }
 }
 
+int Composer::ja_cut(const Token& t, const ustr& kana, int offset) const {
+    // see engine/composer.py _ja_cut
+    size_t end = t.raw.find_last_not_of(' ');
+    std::string core = end == std::string::npos ? std::string() : t.raw.substr(0, end + 1);
+    if (offset >= static_cast<int>(kana.size())) return t.start + static_cast<int>(core.size());
+    for (size_t k = 0; k <= core.size(); ++k) {
+        ustr formed, pending;
+        ja_kana(core.substr(0, k), true, formed, pending);
+        if (pending.empty() && formed == kana.substr(0, static_cast<size_t>(offset))) return t.start + static_cast<int>(k);
+    }
+    return -1;
+}
+
+void Composer::pick_ja_alt(const Action& a) {
+    // see engine/composer.py _pick_ja_alt
+    const Token* t = nullptr;
+    for (auto& x : tokens)
+        if (x.start == a.start) t = &x;
+    if (!t) return;
+    const ustr& kana = a.ja_kana;
+    int b = a.first, e = a.end;
+    int cut_b = ja_cut(*t, kana, b), cut_e = ja_cut(*t, kana, e);
+    const JaPhrase& ph = a.ja_preds[0];
+    auto keys = ja_->table.to_romaji(ph.reading);
+    if (cut_b < 0 || cut_e < 0 || !keys) return;
+    ustr k2, p2, s2;
+    auto path = ja_path(*t, k2, p2, s2);
+    const JaNode* first = nullptr;
+    const JaNode* lastn = nullptr;
+    for (auto& n : path)
+        if (b <= n.begin && n.end <= e) {
+            if (!first) first = &n;
+            lastn = &n;
+        }
+    int lid = ph.lid >= 0 ? ph.lid : (first ? first->lid : ja_->d.unknown_id);
+    int rid = ph.rid >= 0 ? ph.rid : (lastn ? lastn->rid : ja_->d.unknown_id);
+    raw = raw.substr(0, static_cast<size_t>(cut_b)) + to_utf8(*keys) + raw.substr(static_cast<size_t>(cut_e));
+    ustr new_kana = kana.substr(0, static_cast<size_t>(b)) + ph.reading + kana.substr(static_cast<size_t>(e));
+    std::vector<JaPin> pins;
+    auto it = ja_pins_.find(a.start);
+    if (it != ja_pins_.end()) {
+        const ustr& kept = it->second.first;
+        for (auto& q : it->second.second)
+            if (q.end <= b && kana.substr(0, std::min<size_t>(q.end, kana.size())) ==
+                                  kept.substr(0, std::min<size_t>(q.end, kept.size())))
+                pins.push_back(q);
+    }
+    JaComposer jc(ja_->table, ja_->d, config);
+    jc.kana_lock = ja_lock_;
+    int end = b + static_cast<int>(ph.reading.size());
+    pins.push_back(JaPin{b, end, jc.shown(ph), lid, rid});
+    ja_pins_[a.start] = {new_kana, pins};
+    ja_predicted_[a.start] = {b, end, a.ja_all};
+    close_candidates();
+    caret_.reset();
+    refresh();
+}
+
 void Composer::pick_ja(const Action& a) {
     // a Japanese candidate picked: its 文節 shows it from now on (kept while the kana up to it stays)
+    if (a.ja_alt) {  // (another prediction over what Tab took, findings #196)
+        pick_ja_alt(a);
+        return;
+    }
     const JaPin& pin = a.ja_pin;
     std::vector<JaPin> pins;
     auto it = ja_pins_.find(a.start);
@@ -3586,7 +3685,7 @@ void Composer::render_text() {
         } else if (t.kind == Kind::Partial) {
             text += zhuyin_preview ? t.value : as_typed(t.start, t.raw);
         } else if (t.kind == Kind::Lit) {
-            text += lit_text(t.value, t.raw);
+            text += lit_shown(t);
         } else if (is_romaji(t)) {  // 中日混打 (#36): a romaji piece shown as Japanese
             ustr shown = ja_text(t);
             text += shown;
@@ -3605,7 +3704,8 @@ void Composer::render_text() {
     }
     cursor = caret_ ? tok_offset(*caret_) : static_cast<int>(composition.size());
     suggest();
-    if (user.simplified) {  // (shown in Simplified characters; what Tab takes is in sugg_actions_, #32)
+    // (shown in Simplified characters; what Tab takes is in sugg_actions_, #32 - not a Japanese hint, plan 6)
+    if (user.simplified && !(!sugg_actions_.empty() && sugg_actions_[0].type == "japred")) {
         for (auto& s : suggestions) s = lexicon_.script().to_simplified(s);
         if (!segments_.empty()) {
             const Segment& last = segments_.back();
@@ -3640,7 +3740,28 @@ ustr Composer::as_typed(int start, const std::string& keys) const {
 }
 
 ustr Composer::lit_text(const ustr& value, const std::string& key) const {
-    // punctuation and spaces in the width the user chose (key: what was typed)
+    // punctuation and spaces in the width the user chose (key: what was typed), a mark as 標點記憶 has it (#83)
+    return remembered(lit_base(value, key));
+}
+
+ustr Composer::remembered(const ustr& mark) const {
+    // the choice in effect for a mark (a closing bracket: the closing one of the choice for its opening one); itself
+    // when there is none, or for a space (engine/composer.py _remembered)
+    if (mark.empty() || std::all_of(mark.begin(), mark.end(), [](char32_t c) { return c == U' ' || c == U'\u3000'; }))
+        return mark;
+    ustr o = opener(mark);
+    auto choice = user.punct.choice(to_utf8(o));
+    if (!choice || *choice == o) return mark;
+    if (o != mark) {
+        for (auto& [op, cl] : BRACKETS())
+            if (op == *choice) return cl;
+        return mark;
+    }
+    return *choice;
+}
+
+ustr Composer::lit_base(const ustr& value, const std::string& key) const {
+    // punctuation and spaces in the width the user chose, before 標點記憶
     if (value == U" ") return config.text("space") == "full" || config.flag("full_width") ? FULL_SPACE : U" ";
     if (config.flag("full_width")) return value;
     if (config.text("punctuation") == "half") return U(key);  // the key as typed (, < ! _)
@@ -3739,7 +3860,7 @@ static std::optional<ustr> bracket_partner_text(const ustr& /*old_text*/, const 
 std::optional<ustr> Composer::shown_mark(const Token* tok) const {
     // the text a mark token shows (#53): a typed punctuation key in the width chosen, a joined one as joined
     if (!tok) return std::nullopt;
-    if (tok->kind == Kind::Lit) return lit_text(tok->value, tok->raw);
+    if (tok->kind == Kind::Lit) return lit_shown(*tok);
     if (tok->kind == Kind::Fix) return tok->value;
     return std::nullopt;
 }
@@ -3807,6 +3928,8 @@ void Composer::swap_punct(const Action& a) {
     // bracket it pairs with too; the caret past it; nothing learned
     std::vector<std::tuple<int, int, ustr>> swaps{{a.start, a.end, a.text}};
     if (a.pair_start >= 0) swaps.emplace_back(a.pair_start, a.pair_end, a.pair_text);
+    for (size_t i = 0; i < swaps.size(); ++i)  // (標點記憶, #83: before the swap shows)
+        note_swap(std::get<0>(swaps[i]), std::get<1>(swaps[i]), i == 0 ? "swap" : "partner");
     for (auto& [s, e, t] : swaps) {
         Fixed fixed;
         for (auto& [b, v] : fixed_)
@@ -3818,6 +3941,184 @@ void Composer::swap_punct(const Action& a) {
     cand_actions_.clear();
     refresh();
     caret_past(a.end);
+}
+
+const std::tuple<int, ustr, ustr, std::string>* Composer::mark_entry(const Token& tok) const {
+    auto it = mark_from_.find(tok.start);
+    if (it == mark_from_.end() || std::get<0>(it->second) != tok.start + static_cast<int>(tok.raw.size())) return nullptr;
+    return &it->second;
+}
+
+void Composer::note_swap(int start, int end, const std::string& how) {
+    // a mark at start about to be swapped (#83): its default and what it showed before the first swap kept
+    const Token* tok = nullptr;
+    for (auto& t : tokens)
+        if (t.start == start) {
+            tok = &t;
+            break;
+        }
+    if (!tok) return;
+    if (auto* v = mark_entry(*tok); v && std::get<3>(*v) == "ja") return;  // (the Japanese side, findings #186)
+    if (auto* v = mark_entry(*tok); v && std::get<3>(*v) != "mem") {
+        mark_from_[start] = {end, std::get<1>(*v), std::get<2>(*v), how};
+        return;
+    }
+    auto* v = mark_entry(*tok);
+    ustr def = v ? std::get<1>(*v) : tok->kind == Kind::Lit ? lit_base(tok->value, tok->raw) : tok->value;
+    auto shown = shown_mark(tok);
+    mark_from_[start] = {end, def, shown ? *shown : ustr(), how};
+}
+
+bool Composer::japanese_side() const {
+    // see engine/composer.py _japanese_side
+    if (!ja_) return false;
+    int at = caret_ ? *caret_ : static_cast<int>(raw.size());
+    const Token* before = nullptr;
+    for (auto& t : tokens) {
+        if (t.start >= at) break;
+        before = &t;
+    }
+    if (before) return is_romaji(*before);
+    return ja_sent_;  // (kept at the send: the context is cleared after 。 and with the katakana lock, #189)
+}
+
+bool Composer::ends_japanese(const Token* last) const {
+    if (!ja_ || !last) return false;
+    bool mark = last->kind == Kind::Lit || (last->kind == Kind::Fix && last->raw == std::string(1, NAME_MARK_KEY));
+    return is_romaji(*last) || (mark && japanese_mark(*last));  // (only a mark by those before it, #191)
+}
+
+bool Composer::japanese_mark(const Token& tok) const {
+    // see engine/composer.py _japanese_mark
+    if (!ja_) return false;
+    if (auto* v = mark_entry(tok); v && std::get<3>(*v) == "ja") return true;
+    long k = -1;
+    for (size_t i = 0; i < tokens.size(); ++i)
+        if (&tokens[i] == &tok) k = static_cast<long>(i);
+    while (k > 0) {
+        --k;
+        const Token& t = tokens[static_cast<size_t>(k)];
+        if (t.kind == Kind::Lit || (t.kind == Kind::Fix && t.raw == std::string(1, NAME_MARK_KEY))) continue;
+        return is_romaji(t);
+    }
+    return ja_sent_;
+}
+
+ustr Composer::lit_shown(const Token& tok) const {
+    ustr base = lit_base(tok.value, tok.raw);
+    return japanese_mark(tok) ? base : remembered(base);
+}
+
+void Composer::touch_mark(const ustr& def, const ustr& shown) {
+    // a mark sent as 標點記憶 had it (#83 with #78): used today
+    if (!shown.empty() && def != shown && shown == remembered(def))
+        if (!user.punct.touch(to_utf8(opener(def)), opener(shown)).empty()) user.punct.save();
+}
+
+std::vector<CorrectionMemory::Change> Composer::learn_marks(int upto) {
+    // see engine/composer.py _learn_marks
+    std::vector<CorrectionMemory::Change> changes;
+    for (auto& tok : tokens) {
+        if (tok.start >= upto) break;
+        auto shown = shown_mark(&tok);
+        if (!shown || shown->empty() ||
+            std::all_of(shown->begin(), shown->end(), [](char32_t c) { return c == U' ' || c == U'\u3000'; }))
+            continue;
+        ustr def, first;
+        std::string how;
+        if (auto* v = mark_entry(tok)) {
+            def = std::get<1>(*v);
+            first = std::get<2>(*v);
+            how = std::get<3>(*v);
+        } else if (tok.kind == Kind::Lit && !japanese_mark(tok)) {
+            def = lit_base(tok.value, tok.raw);
+            first = *shown;
+            how = "mem";
+        } else {
+            continue;
+        }
+        std::vector<CorrectionMemory::Change> c;
+        if (how == "swap" && *shown != first) {
+            auto row = punct_choices(def);
+            if (*shown == def || std::find(row.begin(), row.end(), *shown) != row.end())
+                c = user.punct.record(to_utf8(opener(def)), opener(*shown));
+        } else if (how == "mem" && *shown != def && *shown == remembered(def)) {
+            c = user.punct.touch(to_utf8(opener(def)), opener(*shown));
+        }
+        changes.insert(changes.end(), c.begin(), c.end());
+    }
+    if (!changes.empty()) user.punct.save();
+    return changes;
+}
+
+std::vector<std::optional<std::pair<ustr, char32_t>>> Composer::sent_units(int upto) const {
+    // see engine/composer.py _sent_units
+    std::map<int, char32_t> chars;
+    for (auto& seg : segments_)
+        if (static_cast<int>(seg.phrase.size()) == seg.length)
+            for (int k = 0; k < seg.length; ++k) chars[seg.start + k] = seg.phrase[static_cast<size_t>(k)];
+    std::vector<std::optional<std::pair<ustr, char32_t>>> units;
+    int idx = 0;
+    for (auto& t : tokens) {
+        if (t.start >= upto) break;
+        if (t.kind == Kind::Zh) {
+            auto ch = chars.find(idx);
+            if (ch != chars.end() && idx < static_cast<int>(readings.size()))
+                units.emplace_back(std::make_pair(readings[static_cast<size_t>(idx)], ch->second));
+            else
+                units.emplace_back(std::nullopt);
+            ++idx;
+        } else if (!units.empty() && units.back()) {
+            units.emplace_back(std::nullopt);
+        }
+    }
+    return units;
+}
+
+std::vector<CorrectionMemory::Change> Composer::touch_corrections(int upto) {
+    // see engine/composer.py _touch_corrections
+    auto& memory = user.corrections;
+    std::vector<CorrectionMemory::Change> changes;
+    if (!memory.loaded()) return changes;
+    const auto& codes = memory.codes();
+    auto add = [&](std::vector<CorrectionMemory::Change> c) { changes.insert(changes.end(), c.begin(), c.end()); };
+    for (size_t k = 0; k < tokens.size(); ++k) {
+        const Token& t = tokens[k];
+        if (t.start >= upto) break;
+        std::string keys = rstrip(t.raw);
+        if (t.kind == Kind::En) {
+            if (!exact_.count(t.start) && codes.count(keys)) {
+                add(memory.touch(keys, U("en")));
+                continue;
+            }
+            // (as typed, no syllable there: 817 a number - findings #184 - and digits right after English, CP56)
+            if (table_.autocorrect || is_code(keys)) {
+                auto c = memory.choice(keys);
+                if (c && c->empty()) add(memory.touch(keys, U("")));
+            }
+            for (size_t i = 1; i < keys.size(); ++i)
+                if (all_alpha(keys.substr(0, i)) && !std::isalpha(static_cast<unsigned char>(keys[i]))) {
+                    std::string split = split_keys(keys.substr(0, i), keys.substr(i));
+                    auto c = memory.choice(split);
+                    if (c && c->empty()) add(memory.touch(split, U("")));
+                    break;
+                }
+            continue;
+        }
+        if (t.kind != Kind::Zh) continue;
+        if (const Token* before = english_before(k)) {
+            std::string split = split_keys(before->raw, keys);
+            auto choice = memory.choice(split);
+            if (choice && !choice->empty() && t.value == *choice) add(memory.touch(split, *choice));
+        }
+        if (!(table_.autocorrect || is_code(keys)) || exact_.count(t.start)) continue;
+        auto choice = memory.choice(keys);
+        if (!choice || *choice == U("en")) continue;
+        if ((choice->empty() && t.corrected.empty()) || (!choice->empty() && t.value == *choice))
+            add(memory.touch(keys, *choice));
+    }
+    if (!changes.empty()) memory.save();
+    return changes;
 }
 
 const Token* Composer::caret_token() const {
@@ -3836,7 +4137,7 @@ int Composer::width(const Token& t) const {
         return it == wide_.end() ? 1 : it->second;
     }
     if (t.kind == Kind::Partial && config.text("preview") != "zhuyin") return static_cast<int>(t.raw.size());
-    if (t.kind == Kind::Lit) return static_cast<int>(lit_text(t.value, t.raw).size());  // (_ is —— or _)
+    if (t.kind == Kind::Lit) return static_cast<int>(lit_shown(t).size());  // (_ is —— or _)
     if (is_romaji(t)) {  // (中日混打: as Japanese, render)
         auto it = wide_.find(t.start);
         return it == wide_.end() ? static_cast<int>(t.value.size()) : it->second;
@@ -3898,6 +4199,18 @@ void Composer::splice(int p, int q, const std::string& text) {
         else if (a >= q) taken[a + d] = {v.first + d, v.second};
     }
     taken_ = std::move(taken);
+    {
+        std::map<int, std::tuple<int, ustr, ustr, std::string>> marks;  // (標點記憶, #83)
+        for (auto& [a, v] : mark_from_) {
+            if (std::get<0>(v) <= p) marks[a] = v;
+            else if (a >= q) {
+                auto w = v;
+                std::get<0>(w) += d;
+                marks[a + d] = w;
+            }
+        }
+        mark_from_ = std::move(marks);
+    }
     std::map<int, std::pair<std::string, ustr>> pending;
     for (auto& [x, v] : pending_)
         if (!(p <= x && x < q)) pending[x < p ? x : x + d] = v;
@@ -3938,8 +4251,11 @@ void Composer::suggest() {
     suggestions.clear();
     sugg_actions_.clear();
     sugg_index = 0;
-    // (中日混打, #36: no English completion after romaji; Japanese prediction is a later plan)
-    if (ja_ && !tokens.empty() && tokens.back().kind == Kind::En) return;
+    // (中日混打, #36: no English completion after romaji; the Japanese piece at the end gets 純日文's prediction, plan 6)
+    if (ja_ && !tokens.empty() && tokens.back().kind == Kind::En) {
+        if (is_romaji(tokens.back()) && candidates.empty() && !fill_ && !symbol_page && !caret_) ja_suggest(tokens.back());
+        return;
+    }
     // (nor while the symbol keyboard is up - kept open, #49: Tab and → are its own then, nothing to take it with)
     if (!config.flag("completion") || !candidates.empty() || raw.empty() || fill_ || symbol_page) return;
     if (caret_) return;  // (only at the end, like the ASUS IME: in the middle the bar is up)
@@ -4445,9 +4761,109 @@ void Composer::take_name(const Action& action) {
     user.custom_picks.record(action.text);
 }
 
+void Composer::ja_suggest(const Token& t) {
+    // see engine/composer.py _ja_suggest
+    if (!config.flag("ja_predict")) return;
+    ustr kana, pending, spaces;
+    auto path = ja_path(t, kana, pending, spaces);
+    if (!spaces.empty() || path.empty()) return;
+    JaComposer jc(ja_->table, ja_->d, config);
+    jc.set_state(kana, path, ja_pins_of(t, kana));
+    jc.kana_lock = ja_lock_;
+    auto segs = jc.segments();
+    const JaSegment& last = segs.back();
+    for (auto& p : jc.pins)
+        if (p.end > last.begin) return;
+    ustr reading = kana.substr(static_cast<size_t>(last.begin));
+    if (reading.size() < 2) return;
+    const JaNode* before = nullptr;
+    for (auto& n : path)
+        if (n.end <= last.begin) before = &n;
+    int prev_sid = before ? ja_word_sid(ja_->d, ja_->bigram, *before) : (ja_->bigram ? ja_prev_sid(t) : -1);
+    auto preds = ja_predict(ja_->predict, &user.ja_phrases, reading, pending, ja_->table, ja_->d, ja_->bigram, prev_sid);
+    if (preds.empty()) return;
+    suggestions = {jc.shown(preds[0])};
+    Action a;
+    a.type = "japred";
+    a.start = t.start;
+    a.first = last.begin;
+    a.ja_preds = preds;
+    sugg_actions_ = {a};
+}
+
+void Composer::take_ja(const Action& a) {
+    // see engine/composer.py _take_ja
+    const Token* t = nullptr;
+    for (auto& x : tokens)
+        if (x.start == a.start) t = &x;
+    if (!t) return;
+    ustr kana, pending, spaces;
+    auto path = ja_path(*t, kana, pending, spaces);
+    JaComposer jc(ja_->table, ja_->d, config);
+    jc.kana_lock = ja_lock_;
+    const JaPhrase& p = a.ja_preds[0];
+    int b = a.first;
+    if (static_cast<size_t>(b) > kana.size() || p.reading.compare(0, kana.size() - b, kana, b, ustr::npos) != 0) return;
+    auto keys = ja_->table.to_romaji(p.reading.substr(kana.size() - static_cast<size_t>(b)));
+    if (!keys) return;
+    const JaNode* first = nullptr;
+    const JaNode* lastn = nullptr;
+    for (auto& n : path)
+        if (n.begin >= b) {
+            if (!first) first = &n;
+            lastn = &n;
+        }
+    int lid = p.lid >= 0 ? p.lid : (first ? first->lid : ja_->d.unknown_id);
+    int rid = p.rid >= 0 ? p.rid : (lastn ? lastn->rid : ja_->d.unknown_id);
+    raw = raw.substr(0, raw.size() - pending.size()) + to_utf8(*keys);
+    ustr new_kana = kana.substr(0, static_cast<size_t>(b)) + p.reading;
+    std::vector<JaPin> pins;
+    auto it = ja_pins_.find(a.start);
+    if (it != ja_pins_.end()) {
+        const ustr& kept = it->second.first;
+        for (auto& q : it->second.second)
+            if (q.end <= b && kana.substr(0, std::min<size_t>(q.end, kana.size())) ==
+                                  kept.substr(0, std::min<size_t>(q.end, kept.size())))
+                pins.push_back(q);
+    }
+    pins.push_back(JaPin{b, static_cast<int>(new_kana.size()), jc.shown(p), lid, rid});
+    ja_pins_[a.start] = {new_kana, pins};
+    ja_predicted_[a.start] = {b, static_cast<int>(new_kana.size()), a.ja_preds};  // (for ↓ on it, findings #196)
+}
+
+std::vector<CorrectionMemory::Change> Composer::ja_learn(int upto) {
+    // see engine/composer.py _ja_learn
+    std::vector<CorrectionMemory::Change> changes;
+    if (!ja_ || !config.flag("ja_predict")) return changes;
+    for (auto& t : tokens) {
+        if (t.start >= upto) break;
+        if (!is_romaji(t)) continue;
+        ustr kana, pending, spaces;
+        auto path = ja_path(t, kana, pending, spaces);
+        if (path.empty()) continue;
+        JaComposer jc(ja_->table, ja_->d, config);
+        jc.set_state(kana, path, ja_pins_of(t, kana));
+        jc.kana_lock = ja_lock_;
+        std::vector<std::pair<ustr, ustr>> items;
+        for (auto& s : jc.segments()) items.emplace_back(kana.substr(s.begin, s.end - s.begin), s.surface);
+        size_t n = items.size();
+        for (size_t i = 0; i + 1 < n; ++i)
+            items.emplace_back(items[i].first + items[i + 1].first, items[i].second + items[i + 1].second);
+        for (auto& [reading, surface] : items)
+            if (ja_phrase_ok(reading, surface)) {
+                auto c = ja_learn_phrase(user.ja_phrases, reading, surface);  // (findings #195)
+                changes.insert(changes.end(), c.begin(), c.end());
+            }
+    }
+    if (!changes.empty()) user.ja_phrases.save();
+    return changes;
+}
+
 void Composer::take_suggestion() {
     const Action action = sugg_actions_[sugg_index];
-    if (action.type == "custom") {
+    if (action.type == "japred") {
+        take_ja(action);
+    } else if (action.type == "custom") {
         take_custom(action);
     } else if (action.type == "name") {
         take_name(action);
@@ -5740,10 +6156,12 @@ void Composer::type_symbol(const ustr& sym, bool stay, bool join, bool hold) {
     // the text typed so far goes out first, then the symbol (快速填入 closes too); the symbol keyboard closes unless stay
     // (符號鍵盤選完不關, #49); join (Ctrl + a mark, the symbol keyboard: #52): with text being typed it joins it instead
     fill_.reset();
+    bool japanese = join && japanese_side();
+    ustr shown = join && !japanese ? remembered(sym) : sym;  // (標點記憶, #83: the symbol keyboard's marks and Ctrl + a mark)
     if (!stay) close_symbols();
     else symbol_fresh_ = false;  // (something went out: no longer new, Space is a space - not 快速填入)
     if (join && (!raw.empty() || hold)) {  // (hold: a symbol picked from the keyboard, #82 / Issue #11: kept with nothing typed too)
-        join_symbol(sym);
+        join_symbol(shown, sym, japanese);
         return;
     }
     ustr before;
@@ -5756,12 +6174,14 @@ void Composer::type_symbol(const ustr& sym, bool stay, bool join, bool hold) {
     context_word_.reset();
     ja_context_ = -1;
     ja_lm_context_.clear();
+    ja_sent_ = japanese;  // (a Japanese-side mark: what follows is still that side, findings #189)
     after_english_ = false;
-    sent({sym});  // (its Chinese, if any, is what is right before the caret now: #37)
-    commit = before + sym;
+    sent({shown});  // (its Chinese, if any, is what is right before the caret now: #37)
+    commit = before + shown;
+    touch_mark(sym, shown);  // (sent as remembered: used, #78)
 }
 
-void Composer::join_symbol(const ustr& sym) {
+void Composer::join_symbol(const ustr& sym, const std::optional<ustr>& def, bool japanese) {
     // a symbol into the text being typed, at the caret, as a mark typed there (#52): a NAME_MARK_KEY shown as it - no
     // syllable, so the picks stay; what is before it can still be picked, Enter sends all (engine/composer.py)
     commit.clear();
@@ -5771,6 +6191,8 @@ void Composer::join_symbol(const ustr& sym) {
     keep_picks_around(at, [&] {
         insert_key(std::string(1, NAME_MARK_KEY));
         fixed_[at] = {at + 1, sym};
+        if (japanese) mark_from_[at] = {at + 1, sym, sym, "ja"};  // (the Japanese side: neither holds nor learns, #186)
+        else if (def && *def != sym) mark_from_[at] = {at + 1, *def, sym, "mem"};  // (標點記憶, #83: typed as remembered)
     });
     auto_commit();
 }
@@ -6831,6 +7253,8 @@ void Composer::do_commit() {
     undo.lm_context = lm_context_;
     undo.lm_units = lm_units_;
     undo.ja_context = ja_context_;
+    undo.ja_sent = ja_sent_;
+    undo.ja_predicted = ja_predicted_;  // (findings #202)
     undo.ja_lm_context = ja_lm_context_;
     undo.ja_pins = ja_pins_;
     for (auto& t : tokens)
@@ -6840,7 +7264,10 @@ void Composer::do_commit() {
     undo.term_picks = term_picks_;
     user.simp_dropped.clear();  // (what a pick in Traditional mode takes of Simplified mode's memory, #32)
     undo.terms = learn_terms(false);  // (saved with the picks below: one save a commit, #32)
-    if (!undo.terms.empty() && overrides_.empty()) user.save();
+    undo.mark_from = mark_from_;
+    // (#78: what is sent as the memory had it is used - before the picks below learn, so undo puts back in turn)
+    undo.touched = user.touch_phrases(sent_units(static_cast<int>(raw.size())));
+    if ((!undo.terms.empty() || !undo.touched.empty()) && overrides_.empty()) user.save();
     if (!overrides_.empty()) {
         auto old_phrases = user.phrases;
         auto old_used = user.phrase_used;
@@ -6877,6 +7304,7 @@ void Composer::do_commit() {
     if (last && last->kind == Kind::Zh && !segments_.empty()) context_word_ = segments_.back().phrase;
     else context_word_.reset();
     ja_context_ = ja_context_after(last);  // (中日混打, plan 5)
+    ja_sent_ = ends_japanese(last);
     ja_lm_context_ = ja_lm_after(last);    // (plan 5b)
     {  // (接續前文選字, #37)
         std::vector<ustr> phrases;
@@ -6884,7 +7312,13 @@ void Composer::do_commit() {
         ustr units = token_units();
         sent(phrases, &units);
     }
-    undo.corrected = learn_corrections(static_cast<int>(raw.size()));
+    undo.corrected = touch_corrections(static_cast<int>(raw.size()));
+    {
+        auto learned = learn_corrections(static_cast<int>(raw.size()));
+        undo.corrected.insert(undo.corrected.end(), learned.begin(), learned.end());
+    }
+    undo.marks = learn_marks(static_cast<int>(raw.size()));  // (標點記憶, #83)
+    undo.ja_learned = ja_learn(static_cast<int>(raw.size()));  // (中日混打's phrases, plan 6)
     undo.dropped = user.simp_dropped;
     clear_input();
     commit = text;
@@ -7200,18 +7634,22 @@ ustr Composer::undo_commit() {
     literal_ = undo.literal;
     caps_ = undo.caps;
     fixed_ = undo.fixed;
+    mark_from_ = undo.mark_from;
     overrides_ = undo.overrides;
     digits_as_zhuyin_ = undo.digits_as_zhuyin;
     context_word_ = undo.context_word;
     lm_context_ = undo.lm_context;
     lm_units_ = undo.lm_units;
     ja_context_ = undo.ja_context;
+    ja_sent_ = undo.ja_sent;
+    ja_predicted_ = undo.ja_predicted;
     ja_lm_context_ = undo.ja_lm_context;
     ja_pins_ = undo.ja_pins;
     after_english_ = undo.after_english;
     term_picks_ = undo.term_picks;
-    if (!undo.learned.empty() || !undo.dropped.empty()) {  // picked by mistake: nothing learned or forgotten after all
+    if (!undo.learned.empty() || !undo.dropped.empty() || !undo.touched.empty()) {  // picked by mistake: nothing learned
         user.restore_phrases(undo.learned);
+        user.restore_touched(undo.touched);  // (#78: the renewal before the picks, put back after them)
         user.restore_simplified(undo.dropped);  // (nor taken of Simplified mode's memory, #32)
         user.save();
     }
@@ -7226,6 +7664,8 @@ ustr Composer::undo_commit() {
         user.save();
     }
     if (!undo.corrected.empty()) user.corrections.restore(undo.corrected);  // (校正記憶 the same)
+    if (!undo.marks.empty()) user.punct.restore(undo.marks);  // (標點記憶, #83)
+    if (!undo.ja_learned.empty()) user.ja_phrases.restore(undo.ja_learned);  // (中日混打's phrases, plan 6)
     caret_.reset();
     commit.clear();
     refresh(&undo.syllables);  // (the syllables the picks are numbered by)
@@ -7551,7 +7991,11 @@ void Composer::commit_head() {
     overrides_ = std::move(moved);
     replaced_.clear();
     drop_orphans();
+    if (!user.touch_phrases(sent_units(tok_start)).empty()) user.save();  // (#78)
+    touch_corrections(tok_start);
     learn_corrections(tok_start);  // (what is sent of them, while the marks are where they were)
+    learn_marks(tok_start);  // (標點記憶, #83)
+    ja_learn(tok_start);  // (中日混打's phrases, plan 6)
     for (auto* set : {&forced_, &chinese_, &breaks_, &exact_, &literal_, &caps_}) {
         std::set<int> kept;
         for (int x : *set)
@@ -7567,6 +8011,14 @@ void Composer::commit_head() {
         for (auto& [a, v] : taken_)
             if (a >= tok_start) taken[a - tok_start] = {v.first - tok_start, v.second};
         taken_ = std::move(taken);
+        std::map<int, std::tuple<int, ustr, ustr, std::string>> marks;  // (標點記憶, #83)
+        for (auto& [a, v] : mark_from_)
+            if (a >= tok_start) {
+                auto w = v;
+                std::get<0>(w) -= tok_start;
+                marks[a - tok_start] = w;
+            }
+        mark_from_ = std::move(marks);
         std::map<int, std::pair<std::string, ustr>> pending;
         for (auto& [x, v] : pending_)
             if (x >= tok_start) pending[x - tok_start] = v;
@@ -7576,12 +8028,17 @@ void Composer::commit_head() {
             for (auto& x : tokens)
                 if (x.start < tok_start) before = &x;
             ja_context_ = ja_context_after(before);
+            ja_sent_ = ends_japanese(before);
             ja_lm_context_ = ja_lm_after(before);
         }
         std::map<int, std::pair<ustr, std::vector<JaPin>>> ja_pins;  // (中日混打's picks move too - findings #165)
         for (auto& [x, v] : ja_pins_)
             if (x >= tok_start) ja_pins[x - tok_start] = v;
         ja_pins_ = std::move(ja_pins);
+        std::map<int, std::tuple<int, int, std::vector<JaPhrase>>> predicted;
+        for (auto& [x, v] : ja_predicted_)
+            if (x >= tok_start) predicted[x - tok_start] = v;
+        ja_predicted_ = std::move(predicted);
     }
     for (auto& seg : segments_)
         if (seg.start + seg.length == b) {
@@ -7611,7 +8068,7 @@ void Composer::commit_head() {
 
 // ---- key entry point -------------------------------------------------------------------
 
-bool Composer::key(std::optional<char32_t> ch, const std::string& special, bool caps) {
+bool Composer::key(std::optional<char32_t> ch, const std::string& special_key, bool caps) {
     LmAction action(lm_action_depth_);  // (the model's caches keep what this key and the one before used, #59)
     commit.clear();
     last_commit_.reset();
@@ -7620,6 +8077,9 @@ bool Composer::key(std::optional<char32_t> ch, const std::string& special, bool 
         refresh();
     }
     if (ch) caps_lock_ = caps;  // (special keys carry no Caps Lock state)
+    // (#86: with a box open Ctrl+Backspace is Backspace)
+    const std::string special = special_key == "CTRL_BACK" && (fill_ || symbol_page || !candidates.empty() || repl_index >= 0)
+                                    ? std::string("BACK") : special_key;
     if (fill_) return key_fill(ch, special);
     if (symbol_page) return key_symbols(ch, special);
     if (!candidates.empty()) return key_candidates(ch, special);
@@ -7638,10 +8098,14 @@ bool Composer::key(std::optional<char32_t> ch, const std::string& special, bool 
         // nothing being typed, and a key that is neither zhuyin nor English ([ ' = ?): out
         // right away, like the ASUS IME (in a sentence it stays, to go with it)
         auto p = PUNCT().find(c);
-        ustr text = lit_text(p != PUNCT().end() ? p->second : ustr(1, *ch), std::string(1, c));
+        ustr base = lit_base(p != PUNCT().end() ? p->second : ustr(1, *ch), std::string(1, c));
+        bool japanese = japanese_side();
+        ustr text = japanese ? base : remembered(base);  // (findings #186)
         commit = config.flag("full_width") && p == PUNCT().end() ? to_full_width(text) : text;
+        touch_mark(base, text);  // (標點記憶 used, #83 / #78)
         context_word_.reset();
         ja_context_ = -1;
+        ja_sent_ = japanese;  // (findings #189)
         ja_lm_context_.clear();
         after_english_ = false;
         return true;
@@ -7710,6 +8174,46 @@ bool Composer::type_literal(char32_t ch) {
     return true;
 }
 
+bool Composer::shows_chinese(const Token& t) const {
+    // a syllable, a romaji piece shown as kana in 中日混打, a joined symbol or literal that is a CJK character or kana -
+    // not a mark (、 。 are no characters), letters, digits (engine/composer.py _shows_chinese)
+    if (t.kind == Kind::Zh || is_romaji(t)) return true;
+    if (t.kind != Kind::Fix && t.kind != Kind::Lit) return false;
+    for (char32_t c : t.value)
+        if ((c >= 0x3041 && c <= 0x30FF) || (c >= 0x3400 && c <= 0x9FFF) || (c >= 0xF900 && c <= 0xFAFF)) return true;
+    return false;
+}
+
+void Composer::ctrl_back() {
+    // Ctrl+Backspace (#86, a user's request; the user's boundaries 2026-11-26): the run of tokens before the caret that
+    // show no Chinese - English, digits, marks, spaces, unfinished zhuyin, symbols - goes, back to the Chinese (or the
+    // start); the text after the caret stays. A Chinese character (or kana) right before the caret: as Backspace. The
+    // picks after the cut stay, following their keys (keep_picks_around: no syllable in the run). (engine/composer.py _ctrl_back)
+    int end = caret_ ? *caret_ : static_cast<int>(raw.size());
+    int p = end;
+    std::vector<const Token*> before;
+    for (auto& t : tokens)
+        if (t.start < end) before.push_back(&t);
+    std::sort(before.begin(), before.end(), [](const Token* a, const Token* b) { return a->start > b->start; });
+    for (const Token* t : before) {
+        if (shows_chinese(*t)) break;
+        p = t->start;
+    }
+    if (p == end) {
+        key_special("BACK");
+        return;
+    }
+    bool had_caret = caret_.has_value();
+    auto take = [&] {
+        splice(p, end, "");
+        if (had_caret && p < static_cast<int>(raw.size())) caret_ = p;
+        else caret_.reset();
+    };
+    // (no syllable in the run: the picks after it stay, following their keys - as Backspace on a joined mark; splice
+    // alone dropped them, findings #206)
+    keep_picks_around(p, take);
+}
+
 bool Composer::key_special(const std::string& special) {
     if (raw.empty()) return false;
     if (special == "TAB" || special == "STAB") {
@@ -7724,6 +8228,8 @@ bool Composer::key_special(const std::string& special) {
         do_commit();
     } else if (special == "ESC") {
         clear_input();
+    } else if (special == "CTRL_BACK") {
+        ctrl_back();
     } else if ((special == "BACK" || special == "DEL") && caret_) {
         // in the middle: the key (or Chinese character) before / after the caret
         int at = special == "DEL" ? *caret_ : *caret_ - 1;
