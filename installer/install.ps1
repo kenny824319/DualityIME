@@ -117,6 +117,7 @@ try {
                "data\english_complete.txt", "data\LICENSE-english-complete.txt",
                # 日文 (#36): Mozc's dictionary, connection costs, 文節 rules, romaji table and licence
                "data\ja_dict.bin", "data\ja_conn.bin", "data\ja_seg.bin", "data\ja_romaji.tsv", "data\LICENSE-Mozc.txt",
+               "data\ja_bigram.bin",  # (...and its word bigram, plan 5)
                # 簡體輸出 (#32): OpenCC's tables and their licence
                "data\opencc\TSPhrases.txt", "data\opencc\TSCharacters.txt", "data\opencc\TWVariantsRev.txt",
                "data\opencc\TWVariantsRevPhrases.txt", "data\opencc\TWPhrasesRev.txt", "data\opencc\TWPhrases.txt",

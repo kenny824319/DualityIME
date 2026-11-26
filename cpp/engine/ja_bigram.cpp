@@ -53,22 +53,39 @@ std::unique_ptr<JaBigram> JaBigram::load_file(const std::wstring& path, const Ja
     b->a_ = b->sid_ + b->n_map_;
     b->b_ = b->a_ + b->n_pairs_;
     b->bonus_ = reinterpret_cast<const uint16_t*>(b->b_ + b->n_pairs_);
+    // (the lookups the conversion makes per node and per predecessor, as arrays: no search while typing)
+    uint32_t n_sid = 0;
+    b->sid_of_.assign(d.n_entries(), -1);
+    for (uint32_t i = 0; i < b->n_map_; ++i) {
+        if (b->entry_[i] >= d.n_entries()) return nullptr;
+        b->sid_of_[b->entry_[i]] = static_cast<int32_t>(b->sid_[i]);
+        n_sid = std::max(n_sid, b->sid_[i] + 1);
+    }
+    for (uint32_t i = 0; i < b->n_pairs_; ++i) n_sid = std::max(n_sid, b->a_[i] + 1);
+    b->first_.assign(n_sid + 1, 0);
+    for (uint32_t i = 0; i < b->n_pairs_; ++i) ++b->first_[b->a_[i] + 1];
+    for (uint32_t s = 0; s < n_sid; ++s) b->first_[s + 1] += b->first_[s];
     return b;
 }
 
 int JaBigram::sid(uint32_t entry) const {
-    const uint32_t* end = entry_ + n_map_;
-    const uint32_t* it = std::lower_bound(entry_, end, entry);
-    return it != end && *it == entry ? static_cast<int>(sid_[it - entry_]) : -1;
+    return entry < sid_of_.size() ? sid_of_[entry] : -1;
+}
+
+std::pair<uint32_t, uint32_t> JaBigram::range(int a) const {
+    if (a < 0 || static_cast<size_t>(a) + 1 >= first_.size()) return {0, 0};
+    return {first_[a], first_[a + 1]};
+}
+
+int JaBigram::bonus_in(std::pair<uint32_t, uint32_t> r, int b) const {
+    if (b < 0 || r.first >= r.second) return 0;
+    const uint32_t* it = std::lower_bound(b_ + r.first, b_ + r.second, static_cast<uint32_t>(b));
+    return it != b_ + r.second && *it == static_cast<uint32_t>(b) ? bonus_[it - b_] : 0;
 }
 
 int JaBigram::bonus(int a, int b) const {
     if (a < 0 || b < 0) return 0;
-    const uint32_t* end = a_ + n_pairs_;
-    auto range = std::equal_range(a_, end, static_cast<uint32_t>(a));
-    size_t lo = range.first - a_, hi = range.second - a_;
-    const uint32_t* it = std::lower_bound(b_ + lo, b_ + hi, static_cast<uint32_t>(b));
-    return it != b_ + hi && *it == static_cast<uint32_t>(b) ? bonus_[it - b_] : 0;
+    return bonus_in(range(a), b);
 }
 
 }  // namespace sz

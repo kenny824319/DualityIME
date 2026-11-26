@@ -93,14 +93,17 @@ std::pair<std::vector<JaNode>, int64_t> ja_convert(const ustr& kana, const JaDic
     ends[0].push_back(0);
     int64_t order = 0;
     std::vector<Cell> starting;
-    std::vector<int> with_sid;
+    std::vector<std::pair<int, std::pair<uint32_t, uint32_t>>> with_sid;  // (cell, the pairs its word begins)
     for (int begin = 0; begin < n; ++begin) {
         std::vector<int> preds = groups(cells, ends[begin]);
         if (preds.empty() || inside[begin]) continue;
         with_sid.clear();
         if (bigram)
             for (int c : ends[begin])
-                if (cells[c].sid >= 0) with_sid.push_back(c);
+                if (cells[c].sid >= 0) {  // (only words that begin a pair can give a bonus)
+                    auto r = bigram->range(cells[c].sid);
+                    if (r.first < r.second) with_sid.push_back({c, r});
+                }
         starting.clear();
         int pin = pin_at[begin];
         if (pin >= 0) {
@@ -128,8 +131,8 @@ std::pair<std::vector<JaNode>, int64_t> ja_convert(const ustr& kana, const JaDic
                 }
             }
             if (node.sid >= 0) {
-                for (int p : with_sid) {  // (a pair with a bonus: compared at its real cost, ties to the earlier node)
-                    int bonus = bigram->bonus(cells[p].sid, node.sid);
+                for (auto& [p, r] : with_sid) {  // (a pair with a bonus: at its real cost, ties to the earlier node)
+                    int bonus = bigram->bonus_in(r, node.sid);
                     if (!bonus) continue;
                     int64_t t = cells[p].total + d.cost(cells[p].rid, node.lid) - bonus;
                     if (t < best_total || (t == best_total && cells[p].order < cells[best].order)) {

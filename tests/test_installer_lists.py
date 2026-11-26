@@ -45,6 +45,19 @@ class InstallerListsTest(unittest.TestCase):
         self.assertEqual(sorted(p - i), [], "packed by build.ps1, not copied by install.ps1")
         self.assertEqual(sorted(i - p), [], "copied by install.ps1, not packed by build.ps1")
 
+    def test_every_data_file_ships(self):
+        # (a data file the engine reads that the installer leaves out works here and is missing for users - #36
+        # plan 5's ja_bigram.bin was the next one to add; the model tiers ship through build.ps1's optional list)
+        import subprocess
+        tracked = subprocess.run(["git", "ls-files", "data"], cwd=ROOT, capture_output=True, text=True,
+                                 check=True).stdout.split()
+        s = read("installer", "build.ps1")
+        optional = re.search(r'foreach \(\$f in @\(("lm_plus\.bin"[^)]*)\)\)', s)
+        shipped = packed() | {"data\\" + f for f in re.findall(r'"([^"]+)"', optional.group(1) if optional else "")}
+        files = {"data\\" + f[len("data/"):].replace("/", "\\") for f in tracked}
+        self.assertIn("data\\lm_max.bin", shipped)  # (the optional list was read at all)
+        self.assertEqual(sorted(files - shipped), [], "in data\\ (git) but not in the installer")
+
 
 if __name__ == "__main__":
     unittest.main()

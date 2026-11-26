@@ -74,6 +74,8 @@ foreach ($f in @("lexicon.txt", "names.txt", "bigram.bin", "lm.bin", "english.tx
                   # 日文 (#36): Mozc's dictionary, connection costs, 文節 rules and romaji table (tools/build_ja_dict.py)
                   # and Mozc's licence
                   "ja_dict.bin", "ja_conn.bin", "ja_seg.bin", "ja_romaji.tsv", "LICENSE-Mozc.txt",
+                  # ...and its word bigram (plan 5, tools/build_ja_bigram.py: counted from Wikipedia and CC-100 ja)
+                  "ja_bigram.bin",
                   # 簡體輸出 (#32): OpenCC's tables (tools/build_opencc.py) and their licence
                   "opencc\TSPhrases.txt", "opencc\TSCharacters.txt", "opencc\TWVariantsRev.txt", "opencc\TWVariantsRevPhrases.txt",
                   "opencc\TWPhrasesRev.txt", "opencc\TWPhrases.txt", "opencc\mainland_words.txt", "LICENSE-OpenCC.txt")) {
