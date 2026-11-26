@@ -14,6 +14,7 @@
 #include "config.h"
 #include "ja_composer.h"
 #include "ja_mixed.h"
+#include "ja_user.h"
 #include "lexicon.h"
 #include "lm.h"
 #include "util.h"
@@ -272,6 +273,7 @@ private:
         std::map<int, std::tuple<int, int, std::vector<JaPhrase>>> ja_predicted;  // (what Tab took, findings #202)
         std::vector<CorrectionMemory::Change> marks;    // 標點記憶 (#83): what this commit learned, as it was
         std::vector<CorrectionMemory::Change> ja_learned;  // 中日混打's phrases (plan 6) learned, as they were
+        std::vector<CorrectionMemory::Change> ja_picked;   // ...and its picks (選字學習, plan 7), as they were
     };
 
     void clear_input();
@@ -290,6 +292,8 @@ private:
     bool japanese_mark(const Token& tok) const;   // the mark token tok is on the Japanese side (#186, #189)
     ustr lit_shown(const Token& tok) const;       // a typed punctuation key as shown (標點記憶 unless Japanese side)
     mutable std::map<int, std::vector<JaNode>> ja_memo_;  // token start -> its path, during one render (#176)
+    mutable std::shared_ptr<JaUser> ja_user_;  // (#36 plan 7: 自訂詞彙 and 選字學習 over this composer's UserModel)
+    JaUser* ja_user() const;                   // ...made on first use, its custom words read again when changed
     bool ja_memo_on_ = false;
     ustr ja_text(const Token& t) const;
     bool is_romaji(const Token& t) const;      // shown as Japanese: it has a lowercase letter (#162)
@@ -345,7 +349,8 @@ private:
     void take_ja(const Action& a);
     void pick_ja_alt(const Action& a);          // another prediction over what Tab took (findings #196)
     int ja_cut(const Token& t, const ustr& kana, int offset) const;  // raw offset of the keys making kana[:offset], -1
-    std::vector<CorrectionMemory::Change> ja_learn(int upto);
+    // picked (plan 7, may be null): the picks' changes (選字學習 learned with 預測提示 off too)
+    std::vector<CorrectionMemory::Change> ja_learn(int upto, std::vector<CorrectionMemory::Change>* picked = nullptr);
     int syl_offset(int c) const;
     std::vector<int> stops() const;
     int caret_index() const;

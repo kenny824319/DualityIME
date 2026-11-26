@@ -5552,6 +5552,26 @@ class ForgetListTest(unittest.TestCase):
         self.assertNotIn("ㄋㄧˇ", self.read("keys.json")["standard"]["picks"].get("si3", {}))
         self.assertEqual(self.read("forgot.json"), {"format": 1, "applied": 5})
 
+    def test_japanese_kinds_go(self):
+        # (#36 plan 7: the 日文 tab's rows - 選字學習 and 常打的詞組 - each from its own file)
+        u = self.c.user
+        u.ja_picks.learn("はし", "箸")
+        u.ja_phrases.learn("ありがとう", "ありがとう")
+        u.ja_phrases.learn("ありがとう", "ありがとう")
+        u.ja_picks.save(); u.ja_phrases.save()
+        self.forget(("ja_pick", "はし", "箸"), ("ja_phrase", "ありがとう", "ありがとう"))
+        self.assertIsNone(u.ja_picks.choice("はし"))
+        self.assertIsNone(u.ja_phrases.choice("ありがとう"))
+        self.assertNotIn("はし", self.read("ja_picks.json")["picks"])
+        self.assertNotIn("ありがとう", self.read("ja_phrases.json")["picks"])
+
+    def test_forget_all_takes_the_japanese_picks(self):
+        u = self.c.user
+        u.ja_picks.learn("はし", "箸")
+        u.ja_picks.save()
+        u.forget_words(u.forgot + 1)
+        self.assertIsNone(u.ja_picks.choice("はし"))
+
     def test_relearned_after_deleting_stays(self):
         u = self.c.user
         u.learn_word("a@example.com")
@@ -5627,7 +5647,8 @@ class ForgetListTest(unittest.TestCase):
             want = json.load(f)
         want.pop("_about")
         with tempfile.TemporaryDirectory() as d:
-            for name in ("user.json", "keys.json", "user_simplified.json", "punct.json"):  # (標點, #83)
+            for name in ("user.json", "keys.json", "user_simplified.json", "punct.json", "ja_picks.json",
+                         "ja_phrases.json"):  # (標點 #83, 日文 #36 plan 7)
                 shutil.copy(os.path.join(here, name), d)
             u = UserModel(os.path.join(d, "user.json"), today=lambda: 20800)
             self.assertEqual(u.memory_list(autocorrect=True), want)

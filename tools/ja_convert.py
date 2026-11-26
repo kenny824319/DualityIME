@@ -8,7 +8,7 @@ Romaji lines: each UTF-8 line in gives one line out:
 (to_kana's kana and pending, the cheapest path over that kana with its cost, finish(romaji), and for each two
 neighbouring words of the path 1 when they are in different 文節, else 0).
 --keys: each line is a key script (tests/ja_scripts.txt: letters as typed, {NAME} a special key, {SPACE},
-{HIRA} {KATA} {AUTO}, {FLUSH}, {SPACECONV}, {NOFKEYS}) typed into a fresh JaComposer (ja_enabled on); after every key
+{HIRA} {KATA} {AUTO}, {FLUSH}, {SPACECONV}, {NOFKEYS}, {NOLMCONTEXT}) typed into a fresh JaComposer (ja_enabled on); after every key
 one line
     used<TAB>composition<TAB>cursor<TAB>commit<TAB>page candidates joined by |<TAB>index in page<TAB>all candidates
 and "--" after each script.
@@ -50,11 +50,13 @@ def line_out(romaji, table, d, bigram=None, nbest=False, lm=None):
     return f"{kana}\t{pending}\t{'|'.join(n.surface for n in path)}\t{cost}\t{table.finish(romaji)}\t{cuts}"
 
 
-def run_script(script, table, d, bigram=None, lm=None, predictor=None, phrases=None):
-    """The state lines of one key script (plan 6: with the hint at the end)."""
+def run_script(script, table, d, bigram=None, lm=None, predictor=None, phrases=None, user=None):
+    """The state lines of one key script (plan 6: with the hint at the end; plan 7: user - a ja_user.JaUser - the
+    user's words and picks)."""
     cfg = Config()
     cfg.values["ja_enabled"] = True
-    c = JaComposer(table, d, cfg, bigram, lm=lm, lm_weight=lm_weight_of(lm), predictor=predictor, phrases=phrases)
+    c = JaComposer(table, d, cfg, bigram, lm=lm, lm_weight=lm_weight_of(lm), predictor=predictor, phrases=phrases,
+                   user=user)
     out = []
     for tok in TOKEN.findall(script):
         if tok == "{SPACECONV}":
@@ -62,6 +64,9 @@ def run_script(script, table, d, bigram=None, lm=None, predictor=None, phrases=N
             continue
         if tok == "{NOFKEYS}":
             cfg.values["ja_fkeys"] = False
+            continue
+        if tok == "{NOLMCONTEXT}":  # (#89: 參考剛送出的字 off from here on)
+            cfg.values["ja_lm_context"] = False
             continue
         if tok == "{SPACE}":
             used = c.key(" ")
@@ -90,6 +95,7 @@ def main():
     ap.add_argument("--lm")  # (plan 5b: the Japanese model)
     ap.add_argument("--predict")  # (plan 6: the phrase table, key scripts only)
     ap.add_argument("--memory")  # (...and the user's phrases, a file learned into; the day 20000)
+    ap.add_argument("--user")  # (plan 7: a folder - its ja_dictionary.json read, ja_picks.json learned into; day 20000)
     a = ap.parse_args()
     table = RomajiTable.load(os.path.join(a.data, "ja_romaji.tsv"))
     d = JaDict.load(os.path.join(a.data, "ja_dict.bin"))  # (ja_conn.bin, ja_seg.bin beside it)
@@ -107,6 +113,11 @@ def main():
     if a.memory:
         from engine.lexicon import JaPhraseMemory
         phrases = JaPhraseMemory(a.memory, lambda: 20000)
+    user = None
+    if a.user:
+        from engine.ja_user import JaUser
+        from engine.lexicon import UserModel
+        user = JaUser(UserModel(os.path.join(a.user, "user.json"), lambda: 20000))
     lm = None
     if a.lm:
         lm = load_lm(a.lm)
@@ -115,7 +126,7 @@ def main():
     out = sys.stdout.buffer
     for raw in sys.stdin.buffer:
         line = raw.decode("utf-8").rstrip("\r\n")
-        lines = run_script(line, table, d, bigram, lm, predictor, phrases) if a.keys else \
+        lines = run_script(line, table, d, bigram, lm, predictor, phrases, user) if a.keys else \
             [line_out(line, table, d, bigram, a.nbest, lm)]
         out.write("".join(x + "\n" for x in lines).encode("utf-8"))
 

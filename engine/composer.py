@@ -2343,17 +2343,34 @@ class Composer:
         kana, pending, spaces = self._ja_piece(t)
         bigram = getattr(self.ja, "bigram", None)
         prev = self._ja_prev_sid(t) if bigram is not None else -1
+        user = self._ja_user()
         lm = getattr(self.ja, "lm", None)
         if not kana:
             path = []
-        elif lm is not None:  # (plan 5b: the lattice's best sentences rescored by the model)
+        elif lm is not None and self.config.values.get("ja_lm", True):  # (plan 5b: rescored by the model; plan 7:
+            # its 長句選字加強 setting)
             from .ja_composer import NBEST_K, NBEST_N
             from .ja_convert import nbest, rescore
-            paths = nbest(kana, self.ja.d, self._ja_pins_of(t, kana), (), bigram, prev, k=NBEST_K, n=NBEST_N)
-            path = paths[rescore(paths, lm.view(self._ja_prev_units(t)), self.ja.lm_weight)][0]
+            paths = nbest(kana, self.ja.d, self._ja_pins_of(t, kana), (), bigram, prev, k=NBEST_K, n=NBEST_N,
+                          user=user)
+            view = lm.view(self._ja_prev_units(t))
+            path = paths[rescore(paths, view, self.ja.lm_weight)][0]
+            if path:  # (#36 plan 7: the user's ways of writing, after the model; a pick where it says so)
+                path = user.apply(path, self._ja_pins_of(t, kana), self.ja.d, view, lm)
         else:
-            path = ja_convert(kana, self.ja.d, self._ja_pins_of(t, kana), (), bigram, prev)[0]
+            path = ja_convert(kana, self.ja.d, self._ja_pins_of(t, kana), (), bigram, prev, user=user)[0]
+            if path:
+                path = user.apply(path, self._ja_pins_of(t, kana), self.ja.d)
         return kana, pending, spaces, path
+
+    def _ja_user(self):
+        """The user's words (#36 plan 7: ja_user.JaUser over this composer's UserModel), read again when changed."""
+        from .ja_user import JaUser
+        u = getattr(self, "_ja_user_layer", None)
+        if u is None or u.model is not self.user:
+            u = self._ja_user_layer = JaUser(self.user)
+        u.refresh()
+        return u
 
     def _ja_prev_units(self, t):
         """The model's context of a romaji token (plan 5b), as _ja_prev_sid's: the units of the Japanese token right
@@ -2361,8 +2378,8 @@ class Composer:
         from .ja_composer import LM_CONTEXT
         from .ja_convert import ja_units
         i = next((k for k, x in enumerate(self.tokens) if x.start == t.start), 0)
-        if i == 0:
-            return self._ja_lm_context
+        if i == 0:  # (#89: 參考剛送出的字 off - not the Japanese sent before; the token before in this text still counts)
+            return self._ja_lm_context if self.config.values.get("ja_lm_context", True) else ""
         before = self.tokens[i - 1]
         if not self._is_romaji(before):
             return ""
@@ -2429,7 +2446,7 @@ class Composer:
         kana, pending, spaces, path = self._ja_path(t)
         if not path:
             return [], []
-        jc = JaComposer(self.ja.table, self.ja.d, self.config)
+        jc = JaComposer(self.ja.table, self.ja.d, self.config, user=self._ja_user())
         jc.kana, jc._path = kana, path
         jc.pins = self._ja_pins_of(t, kana)
         segs = jc.segments()
@@ -2462,6 +2479,10 @@ class Composer:
             self._pick_ja_alt(action)
             return
         _, start, kana, pin = action
+        t = next((x for x in self.tokens if x.start == start), None)
+        if t is not None:  # (#36 plan 7: what it teaches when sent, from the words it replaces - as 純日文's _pick)
+            from .ja_user import learned_from_pick
+            pin = pin._replace(learn=learned_from_pick(kana, self._ja_path(t)[3], pin, self.ja.d))
         kept, pins = self._ja_pins.get(start, (kana, []))
         pins = [p for p in pins if (p.end <= pin.begin or p.begin >= pin.end) and kana[:p.end] == kept[:p.end]]
         self._ja_pins[start] = (kana, sorted(pins + [pin], key=lambda p: p.begin))
@@ -3472,11 +3493,13 @@ class Composer:
 
     def _ja_learn(self, upto):
         """中日混打 (plan 6): the phrases of the romaji tokens before raw offset upto being sent into the user's phrases
-        (as 純日文's flush learns them). Returns what changed, for undo_commit."""
+        (as 純日文's flush learns them), and (plan 7) their picks into 選字學習. Returns what changed in each, for
+        undo_commit."""
         from .ja_predict import phrase_ok
-        if self.ja is None or not self.config.ja_predict:
-            return []
-        changes = []
+        if self.ja is None:
+            return [], []
+        changes, picked = [], []
+        user = self._ja_user()
         for t in self.tokens:
             if t.start >= upto:
                 break
@@ -3485,6 +3508,10 @@ class Composer:
             kana, pending, spaces, path, jc = self._ja_state(t)
             if not path:
                 continue
+            # (選字學習, plan 7: with 預測提示 off too; under a kana lock nothing renewed, findings #225)
+            picked += user.learn_sent(path, self._ja_pins_of(t, kana), self.ja_lock == "auto")
+            if not self.config.ja_predict:
+                continue
             items = [(kana[x.begin:x.end], x.surface) for x in jc.segments()]
             items += [(a[0] + b[0], a[1] + b[1]) for a, b in zip(items, items[1:])]
             for reading, surface in items:
@@ -3492,7 +3519,7 @@ class Composer:
                     changes += self.user.ja_phrases.learn(reading, surface)
         if changes:
             self.user.ja_phrases.save()
-        return changes
+        return changes, picked
 
     def _take_suggestion(self):
         action = self._sugg_actions[self.sugg_index]
@@ -4759,7 +4786,7 @@ class Composer:
         if self._cand_actions[i][0] == "punct":  # (#53: a mark from its row - nothing else to do, nothing learned)
             self._swap_punct(self._cand_actions[i])
             return
-        if self._cand_actions[i][0] == "ja":  # (中日混打, #36: a Japanese 文節 picked - nothing learned in this plan)
+        if self._cand_actions[i][0] == "ja":  # (中日混打, #36: a Japanese 文節 picked - learned when sent, plan 7)
             self._pick_ja(self._cand_actions[i])
             return
         self._settle_soft()
@@ -5662,8 +5689,10 @@ class Composer:
             self.user.corrections.restore(corrected)
         if marks:  # (標點記憶, #83)
             self.user.punct.restore(marks)
-        if ja_learned:  # (中日混打's phrases, #36 plan 6)
-            self.user.ja_phrases.restore(ja_learned)
+        if ja_learned and ja_learned[0]:  # (中日混打's phrases, #36 plan 6)
+            self.user.ja_phrases.restore(ja_learned[0])
+        if ja_learned and ja_learned[1]:  # (...and its picks, plan 7)
+            self.user.ja_picks.restore(ja_learned[1])
         self.caret = None
         self.commit = ""
         self._refresh(syllables)

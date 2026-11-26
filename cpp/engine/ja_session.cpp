@@ -81,7 +81,8 @@ JaSession::Mixed JaSession::mixed(const Json& req, JaData& data, const Config& c
     return m;
 }
 
-Json JaSession::handle(const Json& req, JaData& data, const Config& config, CorrectionMemory* phrases) {
+Json JaSession::handle(const Json& req, JaData& data, const Config& config, CorrectionMemory* phrases,
+                       UserModel* user) {
     const Json* opv = req.get("op");
     std::string op = opv && opv->is_string() ? opv->as_string() : "";
     if (!config.flag("ja_enabled") || !data.ready()) {
@@ -92,9 +93,12 @@ Json JaSession::handle(const Json& req, JaData& data, const Config& config, Corr
         o["ja_off"] = Json(true);
         return o;
     }
-    if (!c_)
+    if (!c_) {
+        if (user && (!user_ || user_->model() != user)) user_ = std::make_unique<JaUser>(user);
         c_ = std::make_unique<JaComposer>(*data.table, *data.dict, config, data.bigram.get(), data.lm.get(),
-                                          data.lm ? ja_lm_weight(*data.lm) : 0, data.predict.get(), phrases);
+                                          data.lm ? ja_lm_weight(*data.lm) : 0, data.predict.get(), phrases,
+                                          user ? user_.get() : nullptr);
+    }
     JaComposer& c = *c_;
     bool handled = true;
     ustr commit;

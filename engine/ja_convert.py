@@ -79,15 +79,17 @@ def word_sid(d, bigram, node):
     return bigram.sid(node.entry) if node.entry >= 0 else _pin_sid(d, bigram, node.reading, node.surface)
 
 
-def _starting(kana, begin, d, bigram, pin, reach):
+def _starting(kana, begin, d, bigram, pin, reach, user=None):
     """The nodes starting at begin, in node order, each with its word number: a pin's one node, or every entry of every
-    reading kana[begin:begin+k] then the character's fallback node (convert and nbest share it)."""
+    reading kana[begin:begin+k] (and the user's way of writing it, ja_user.JaUser.entries - #36 plan 7) then the
+    character's fallback node (convert and nbest share it)."""
     out = []
     if pin is not None:
         node = Node(begin, pin.end, kana[begin:pin.end], pin.surface, pin.lid, pin.rid, 0)
         return [(node, _pin_sid(d, bigram, node.reading, pin.surface) if bigram is not None else -1)]
     by_index = hasattr(d, "lookup_ix")
-    for k in range(1, min(d.max_reading_len, reach - begin) + 1):
+    longest = max(d.max_reading_len, user.max_len()) if user is not None else d.max_reading_len
+    for k in range(1, min(longest, reach - begin) + 1):
         reading = kana[begin:begin + k]
         if by_index:
             start, end = d.lookup_ix(reading)
@@ -98,12 +100,16 @@ def _starting(kana, begin, d, bigram, pin, reach):
         else:
             for e in d.lookup(reading):
                 out.append((Node(begin, begin + k, reading, e.surface, e.lid, e.rid, e.cost), -1))
+        if user is not None:
+            for surface, lid, rid, cost in user.entries(reading, d):
+                out.append((Node(begin, begin + k, reading, surface, lid, rid, cost),
+                            _pin_sid(d, bigram, reading, surface) if bigram is not None else -1))
     ch = kana[begin]
     out.append((Node(begin, begin + 1, ch, ch, d.unknown_id, d.unknown_id, FALLBACK_COST), -1))
     return out
 
 
-def nbest(kana, d, pins=(), cuts=(), bigram=None, prev_sid=-1, k=5, n=10):
+def nbest(kana, d, pins=(), cuts=(), bigram=None, prev_sid=-1, k=5, n=10, user=None):
     """Up to n distinct sentences of the lattice, best first, as (path, cost) - the rescoring model's candidates (plan 5b).
     Each node keeps its k best partial paths ordered by (cost, predecessor's node order, its rank there): the first is
     exactly convert's path. The endings are taken in the same order, a text seen before skipped. cpp ja_nbest the same."""
@@ -120,7 +126,7 @@ def nbest(kana, d, pins=(), cuts=(), bigram=None, prev_sid=-1, k=5, n=10):
             continue
         preds = [cells[i] for i in ends[begin]]
         idx = list(ends[begin])
-        for node, sid in _starting(kana, begin, d, bigram, pin_at.get(begin), reach[begin]):
+        for node, sid in _starting(kana, begin, d, bigram, pin_at.get(begin), reach[begin], user):
             cands = []
             for p, pi in zip(preds, idx):
                 step = d.cost(p["node"].rid, node.lid)
@@ -183,7 +189,7 @@ def rescore(paths, view, w):
     return best
 
 
-def convert(kana, d, pins=(), cuts=(), bigram=None, prev_sid=-1):
+def convert(kana, d, pins=(), cuts=(), bigram=None, prev_sid=-1, user=None):
     """(the cheapest path as Nodes, its cost): BOS and EOS are id 0; cost = sum of node cost + connection cost
     (- the bigram's bonuses). pins: spans whose text is fixed (begin, end, surface, lid, rid - ja_composer.Pin): the
     only node over its span, cost 0; cuts: kana offsets no word crosses; bigram: engine/ja_bigram.JaBigram (or None),
@@ -200,7 +206,7 @@ def convert(kana, d, pins=(), cuts=(), bigram=None, prev_sid=-1):
         if not preds or inside[begin]:
             continue
         with_sid = [c for c in ends[begin] if c.sid >= 0] if bigram is not None else []
-        for node, sid in _starting(kana, begin, d, bigram, pin_at.get(begin), reach[begin]):
+        for node, sid in _starting(kana, begin, d, bigram, pin_at.get(begin), reach[begin], user):
             best, best_total = None, 0
             for p in preds:
                 t = p.total + d.cost(p.node.rid, node.lid)

@@ -11,6 +11,7 @@ Runs tools/ja_convert.py and cpp\\build\\x64-Release\\sz_ja.exe on both and prin
 difference; exit 1 on one.
 """
 import argparse
+import json
 import os
 import random
 import subprocess
@@ -18,6 +19,8 @@ import tempfile
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 日文自訂詞彙 (plan 7) in both sides' folders, as tools/compare.py's
+JA_WORDS = {"format": 1, "words": [["優衣", "ゆい"], ["華寅", "ふぁとら"], ["写る", "うつる"], ["鬱る", "うつる"]]}  # (one reading, two words: 鬱る far down the dictionary's list)
 ALPHABET = "abcdefghijklmnopqrstuvwxyz-',./?!zAB3@"  # (? ! : the symbol rules build_ja_dict.py adds, findings #154)
 SCRIPT_KEYS = (list("aiueokstnhmyrwgzdbpjcfv") * 3 + list("-,.? 123456789") +
                ["{%s}" % k for k in ("BACK", "DEL", "ENTER", "ESC", "LEFT", "RIGHT", "HOME", "END", "UP", "DOWN",
@@ -195,9 +198,20 @@ def main():
         py = run([sys.executable, convert] + extra, lines)
         cpp = run([a.exe, data] + extra, lines)
         keys = [line.rstrip("\r\n") for line in open(a.scripts, encoding="utf-8")] if a.scripts else scripts()
-        # (with a bigram the composer's commits give the next conversion its context: the scripts have ENTERs)
-        py_k = groups(run([sys.executable, convert, "--keys"] + extra, keys))
-        cpp_k = groups(run([a.exe, data, "--keys"] + extra, keys))
+        # (with a bigram the composer's commits give the next conversion its context: the scripts have ENTERs;
+        # plan 7: each side's folder with the same custom words, its picks learned there and compared after)
+        users = {}
+        for side in ("py", "cpp"):
+            users[side] = os.path.join(tmp, "user_" + side)
+            os.makedirs(users[side])
+            with open(os.path.join(users[side], "ja_dictionary.json"), "w", encoding="utf-8") as f:
+                json.dump(JA_WORDS, f, ensure_ascii=False)
+        py_k = groups(run([sys.executable, convert, "--keys", "--user", users["py"]] + extra, keys))
+        cpp_k = groups(run([a.exe, data, "--keys", "--user", users["cpp"]] + extra, keys))
+        picked = [open(os.path.join(users[s], "ja_picks.json"), encoding="utf-8").read()
+                  if os.path.exists(os.path.join(users[s], "ja_picks.json")) else None for s in ("py", "cpp")]
+        if picked[0] is not None and picked[1] is not None:
+            picked = [json.loads(x) for x in picked]
     if len(py) != len(lines) or len(cpp) != len(lines):
         sys.exit(f"DIFFERENT: {len(lines)} lines in, Python {len(py)} out, C++ {len(cpp)} out")
     diff = [(r, p, c) for r, p, c in zip(lines, py, cpp) if p != c]
@@ -210,6 +224,9 @@ def main():
         at = next((i for i, (x, y) in enumerate(zip(p, c)) if x != y), min(len(p), len(c)))
         print(f"script {s}\n  key {at + 1}\n  py:  {p[at] if at < len(p) else '(none)'}\n"
               f"  cpp: {c[at] if at < len(c) else '(none)'}")
+    if picked[0] != picked[1]:
+        print(f"DIFFERENT ja_picks.json:\n  py:  {picked[0]}\n  cpp: {picked[1]}")
+        sys.exit(1)
     if diff or kdiff:
         print(f"DIFFERENT: {len(diff)} of {len(lines)} lines, {len(kdiff)} of {len(keys)} scripts")
         sys.exit(1)

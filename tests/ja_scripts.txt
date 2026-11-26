@@ -34,3 +34,12 @@ sorehaii!dakedo/nani[kore]
 kyouhaiitenkidesune{HOME}{RIGHT}watasimo{END}{ENTER}
 ittekimasu{LEFT}{F7}{HOME}{F6}{ENTER}
 gakkounoshukudaiwoshita{HOME}{DOWN}3{RIGHT}{DOWN}{ENTER}{F8}{FLUSH}
+yui{ENTER}yuigon{ENTER}fatora{ENTER}
+hasi{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}hasi{ENTER}hasiwo{ENTER}
+hasi{DOWN}{DOWN}{ENTER}{ENTER}hasi{ENTER}hasiwo{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}
+kyouhaiitenki{ENTER}{NOLMCONTEXT}hasiwotukau{ENTER}
+uturu{ENTER}uturu{DOWN}{DOWN}{ENTER}{ENTER}uturu{ENTER}syasinnniuturu{ENTER}uturu{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}uturu{ENTER}
+hasi{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}hasiwowataru{ENTER}kawanohasi{ENTER}hasidetaberu{ENTER}
+kaeru{DOWN}{DOWN}{ENTER}{ENTER}kaeru{ENTER}irowokaeru{ENTER}ienikaeru{ENTER}yoteiwokaeru{ENTER}
+te{DOWN}{DOWN}{ENTER}{ENTER}te{ENTER}tabete{ENTER}
+hasi{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}{HIRA}hasi{ENTER}{AUTO}hasi{ENTER}

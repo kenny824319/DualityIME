@@ -23,11 +23,13 @@ import unicodedata
 from . import candlayout
 from .ja_convert import convert, ja_units, nbest, rescore, word_sid
 from .ja_predict import phrase_ok, predict
+from .ja_user import learned_from_pick
 
 NBEST_K, NBEST_N = 5, 10  # plan 5b: the partial paths a node keeps, the sentences the model rescores
 LM_CONTEXT = 32  # ...the units of Japanese sent before that the model reads
 
-Pin = collections.namedtuple("Pin", "begin end surface lid rid")
+Pin = collections.namedtuple("Pin", "begin end surface lid rid learn", defaults=(None,))
+# (learn: the (reading, way of writing) a ↓ pick teaches when sent - ja_user.learned_from_pick, plan 7; None: nothing)
 Segment = collections.namedtuple("Segment", "begin end surface")
 FULL_SPACE = "　"
 LOCKS = ("auto", "hira", "kata")
@@ -65,8 +67,9 @@ def to_half_katakana(s):
 
 
 class JaComposer:
-    def __init__(self, table, d, config, bigram=None, lm=None, lm_weight=0, predictor=None, phrases=None):
+    def __init__(self, table, d, config, bigram=None, lm=None, lm_weight=0, predictor=None, phrases=None, user=None):
         self.table, self.d, self.config = table, d, config
+        self.user = user            # plan 7: ja_user.JaUser (自訂詞彙, 選字學習), or None
         self.predictor = predictor  # plan 6: engine/ja_predict.JaPredict (the phrase table), or None
         self.phrases = phrases      # ...the user's phrases (lexicon.JaPhraseMemory), or None: nothing learned
         self.bigram = bigram        # plan 5: engine/ja_bigram.JaBigram, or None
@@ -111,13 +114,25 @@ class JaComposer:
 
     def _convert(self):
         cuts = {b for b, _ in self.spans} | {e for _, e in self.spans}
+        user = self.user
+        if user is not None:
+            user.refresh()
         if not self.kana:
             self._path = []
-        elif self.lm is not None:  # (plan 5b: the lattice's best sentences rescored by the model)
-            paths = nbest(self.kana, self.d, self.pins, cuts, self.bigram, self.context_sid, k=NBEST_K, n=NBEST_N)
-            self._path = paths[rescore(paths, self.lm.view(self.lm_context), self.lm_weight)][0]
+        elif self.lm is not None and self._setting("ja_lm", True):  # (plan 5b: rescored by the model; plan 7: its
+            # 長句選字加強 setting)
+            paths = nbest(self.kana, self.d, self.pins, cuts, self.bigram, self.context_sid, k=NBEST_K, n=NBEST_N,
+                          user=user)
+            # (#89: 參考剛送出的字 off - the Japanese sent before is not the model's context)
+            sent = self.lm_context if self._setting("ja_lm_context", True) else ""
+            view = self.lm.view(sent)
+            self._path = paths[rescore(paths, view, self.lm_weight)][0]
+            if user is not None:  # (plan 7: the user's ways of writing, after the model; a pick where it says so)
+                self._path = user.apply(self._path, self.pins, self.d, view, self.lm)
         else:
-            self._path = convert(self.kana, self.d, self.pins, cuts, self.bigram, self.context_sid)[0]
+            self._path = convert(self.kana, self.d, self.pins, cuts, self.bigram, self.context_sid, user=user)[0]
+            if user is not None:
+                self._path = user.apply(self._path, self.pins, self.d)
 
     def segments(self):
         """The 文節 of what is typed (kana offsets) with the text each shows."""
@@ -319,6 +334,10 @@ class JaComposer:
                 out.append((text, pin))
 
         add(seg.surface, Pin(b, e, seg.surface, first_lid, last_rid))
+        if self.user is not None:  # (自訂詞彙: all the words of the reading next, the user 2026-11-26)
+            for w in self.user.customs(reading):
+                ent = next((x for x in d.lookup(reading) if x.surface == w), None)
+                add(w, Pin(b, e, w, ent.lid, ent.rid) if ent is not None else Pin(b, e, w, first_lid, last_rid))
         for _, _, text, pin in options:
             add(text, pin)
         add(reading, Pin(b, e, reading, first_lid, last_rid))
@@ -357,8 +376,8 @@ class JaComposer:
         if isinstance(pin, tuple) and pin[0] == "alt":  # (another prediction over what Tab took)
             b, e, preds = self.predicted
             self._put_phrase(b, e, pin[1], preds)
-        else:
-            self._pin(pin)
+        else:  # (plan 7: what it teaches when sent, from the words it replaces)
+            self._pin(pin._replace(learn=learned_from_pick(self.kana, self._path, pin, self.d)))
         self._render()
         return True
 
@@ -413,6 +432,8 @@ class JaComposer:
         self._render()
         out = self.composition
         self._learn(self.segments())
+        if self.user is not None:  # (plan 7: the picks sent, and the ones used as remembered renewed)
+            self.user.learn_sent(self._path, self.pins, self.kana_lock == "auto")
         # (what is sent is the next conversion's context: its last word; none after a sentence end or kana as typed)
         last = self._path[-1] if self._path and self.kana_lock == "auto" and out and out[-1] not in "。？！" else None
         self.context_sid = word_sid(self.d, self.bigram, last)

@@ -31,8 +31,9 @@ const api = (() => {
     simplified: false, simplified_hotkey: false, simplified_key: "Ctrl+F1",
     // (#36 design: 日文 off as it comes; a key straight to each mode and to each kana choice)
     ja_enabled: false, ja_switch_key: "Ctrl+F2", ja_hira_key: "Ctrl+F6", ja_kata_key: "Ctrl+F7",
-    ja_auto_key: "Ctrl+F8", ja_fkeys: true, ja_space_convert: false, ja_predict: true
+    ja_auto_key: "Ctrl+F8", ja_fkeys: true, ja_space_convert: false, ja_predict: true, ja_lm: true, ja_lm_context: true
   };
+  let jaWords = [["優衣", "ゆい"], ["推し", "おし"]];  // (日文自訂詞彙 samples, #36 plan 7)
   const dict = { words: [["華碩", "ㄏㄨㄚˊ ㄕㄨㄛˋ"]], shortcuts: [["addr", "台北市信義區…"]] };
   const images = {};  // 自訂外觀's photos: file -> data: URL
   // (the samples a new install starts with, #33: Settings.cs QuickFillSamples)
@@ -68,12 +69,18 @@ const api = (() => {
     // (#83 標點記憶: the mark as typed, what it types now)
     punct: [mem("punct", "「", "『", "「", "『", 3, [11, 26], ""), mem("punct", "，", "、", "，", "、", 2, [11, 25], ""),
       mem("punct", "？", "！", "？", "！", 2, [11, 20], "")],
+    // (#36 plan 7: 日文 - 選字學習 and 常打的詞組 in effect, the 日文 tab while 日文輸入 is on)
+    ja: [mem("ja_pick", "はし", "箸", "箸", "はし", 1, [11, 26], "選字"),
+      mem("ja_phrase", "ありがとう", "ありがとう", "ありがとう", "ありがとう", 5, [11, 26], "常打的詞組"),
+      mem("ja_pick", "ゆうき", "勇気", "勇気", "ゆうき", 2, [11, 22], "選字"),
+      mem("ja_phrase", "よろしくおねがいします", "よろしくお願いします", "よろしくお願いします", "よろしくおねがいします", 3, [11, 21], "常打的詞組")],
     simplified: [mem("simp_pick", "ㄓㄜˋ", "這", "這", "ㄓㄜˋ", 6, [11, 24], "簡體選字"),
       mem("simp_term", "軟體", "軟件", "軟體", "軟件", 3, [11, 23], "大陸用詞")]
   };
   const remembered = () => ({ remembered: memory.picks.length + memory.words.length + memory.keys.length,
     rememberedEmails: memory.emails.length, rememberedSimplified: memory.simplified ? memory.simplified.length : null });
   const rememberedAll = () => { const r = remembered(); r.remembered += memory.punct.length; return r; };  // (#83)
+  // (#36 plan 7: Settings.cs RememberedCount adds the 日文 rows while 日文輸入 is on - the preview's count leaves them out)
   // 符號鍵盤自訂 (#69): the table as settings.exe keeps it (symbols.json), the built-in pages as engine/symbols.py PAGES
   const BUILTIN_SYMBOL_NAMES = ["一般", "數學", "特殊"];
   const BUILTIN_SYMBOL_KEYS = ["`1234567890-=《》〈〉“”【】（）〔〕＼※＊○●「」『』：；、！？…‥—｛｝，。／",
@@ -86,7 +93,8 @@ const api = (() => {
   const demo = new URLSearchParams(location.search).get("update") || "";
   return async (op, args = {}) => {
     switch (op) {
-      case "state": return { config, version: "2.1.0", dataDir: "C:\\Users\\you\\AppData\\Roaming\\DualityIME",
+      case "state": return { jaWords: jaWords.length,  // (#36 design: 日文詞彙)
+        config, version: "2.1.0", dataDir: "C:\\Users\\you\\AppData\\Roaming\\DualityIME",
         ...rememberedAll(), words: dict.words.length, shortcuts: dict.shortcuts.length, quickFill: quickFill.length, beta: false, canUpdate: true, hasPime: false, dark: false };
       case "setConfig": config[args.key] = args.value; return config;
       case "forgetWords":  // (全部清除: the typing memory, the e-mails when ticked)
@@ -99,6 +107,18 @@ const api = (() => {
       case "setSystem": sys[args.action] = args.on; return wait(300, sys);
       case "dictionary": return dict;
       case "saveDictionary": dict[args.kind] = args.rows; return args.rows.length;
+      // 日文自訂詞彙 (#36 plan 7): as Settings.cs checks them - a reading of hiragana (ー a long vowel), at most 30
+      case "jaWords": return jaWords;
+      case "saveJaWords": {
+        const rows = (args.rows || []).map(([w, r]) => [String(w).trim(), String(r).trim()]);
+        for (const [w, r] of rows) {
+          const problem = !w ? "請輸入詞" : !/^[\u3041-\u3096\u30fc]+$/.test(r) ? "讀音只能用平假名（長音用ー）" :
+            w.length > 30 || r.length > 30 ? "最多 30 個字" : null;
+          if (problem) return { error: `${w}（${r}）：${problem}` };
+        }
+        jaWords = rows;
+        return rows.length;
+      }
       case "quickFill": return quickFill.map((r) => [...r]);
       case "symbols": return wait(100, { pages: JSON.parse(JSON.stringify(symbolPages)), builtinNames: BUILTIN_SYMBOL_NAMES });
       case "saveSymbols": symbolPages = JSON.parse(JSON.stringify(args.pages)); return wait(100, true);

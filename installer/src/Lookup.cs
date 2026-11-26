@@ -25,7 +25,7 @@ using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
-static class Lookup {
+public static class Lookup {  // (public: tools\lookup_test.cs tests its Japanese, #36 plan 7)
     const int MaxPhrase = 8, MaxWord = 8, MaxText = 255, MaxKeys = 8;
     static readonly string DataDir = Path.Combine(
         Environment.GetEnvironmentVariable("APPDATA") ?? Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -171,6 +171,276 @@ static class Lookup {
         return string.Join(" ", parts);
     }
 
+    // ---- 日文 (#36 plan 7): only with 日文輸入 on (the user 2026-11-24) ----------------------------------------------
+    public static bool JapaneseOn() { return Setting("ja_enabled", "False") == "True"; }
+
+    static string DataFile(string name) {
+        string here = AppDomain.CurrentDomain.BaseDirectory;
+        foreach (string p in new[] { Path.Combine(here, "data", name), Path.Combine(here, "..", "data", name) })
+            if (File.Exists(p)) return p;
+        return null;
+    }
+    static bool IsKana(char c) { return c >= 0x3041 && c <= 0x3096 || c >= 0x30A1 && c <= 0x30F6 || c == 0x30FC; }
+    public static bool HasKana(string s) { return s.Any(IsKana); }
+    // A selection read as Japanese - the Japanese voice, no 注音 - when it has kana, whether a reading came or not (digits,
+    // a long passage: findings #219)
+    public static bool IsJapanese(string text, bool japaneseOn) { return japaneseOn && JapaneseKana(text ?? ""); }
+    // Kana that make a selection Japanese: more than a lone の or ノ - Chinese written 好吃の店 has one (findings #220)
+    static bool JapaneseKana(string s) {
+        var kana = s.Where(IsKana).ToList();
+        return kana.Count >= 2 || kana.Any(c => c != 'の' && c != 'ノ');
+    }
+    // The Chinese row (注音, 朗讀 in Chinese, 加入自訂詞彙) too: a selection with 注音 that is not Japanese, or Japanese no
+    // reading came for - a lone の in Chinese (好吃の店) is no reason to drop it (findings #220)
+    public static bool ChineseRow(string text, bool japaneseOn) {
+        return ChineseRow(Zhuyin(text ?? ""), IsJapanese(text, japaneseOn), JaReadings(text, japaneseOn));
+    }
+    // (the window's own call, with what it has worked out already - the same rule, findings #229)
+    public static bool ChineseRow(string zhuyin, bool japanese, List<string> readings) {
+        return zhuyin.Length > 0 && (!japanese || readings.Count == 0);
+    }
+    static string Hiragana(string s) {
+        return new string(s.Select(c => c >= 0x30A1 && c <= 0x30F6 ? (char)(c - 0x60) : c).ToArray());
+    }
+
+    // The Japanese readings of a selection (hiragana), or none: all kana - itself in hiragana; else the words of
+    // data\ja_dict.bin written exactly so, their readings cheapest first, at most 3 (tools/build_ja_dict.py's JD01 layout)
+    // - the marks around it kept (大丈夫？, findings #216); else, with kana in it (the spec's 有假名的, findings #209:
+    // 日本語を話します, ありがとう。), the reading of the cheapest way to cut it into words: each word's cost and the
+    // connection costs between them (data\ja_conn.bin), as the engine's conversion does it the other way round
+    // (findings #218: 見に行こう reads いこう, not each word's own cheapest), a kana no word holds as itself, 。、？！ kept,
+    // other marks, spaces, letters and emoji left out; none when a kanji is in no word, or with digits (a number's
+    // reading is not the digits', findings #217).
+    const int PieceMax = 12, SentenceMax = 60;  // (the longest word tried at a place; a longer selection is not read)
+    const int PieceFallback = 20000;  // (a character no word holds, as engine/ja_convert.py FALLBACK_COST)
+    static bool IsMark(char c) { return char.IsPunctuation(c) || char.IsSymbol(c) || char.IsWhiteSpace(c); }
+
+    sealed class PieceCell {
+        public long Cost;
+        public int Rid;
+        public PieceCell Prev;
+        public string Reading;
+    }
+
+    public static List<string> JaReadings(string text, bool japaneseOn) {
+        var none = new List<string>();
+        text = (text ?? "").Trim();
+        if (!japaneseOn || text.Length == 0) return none;
+        if (text.All(IsKana)) return new List<string> { Hiragana(text) };
+        int a = 0, b = text.Length;
+        while (a < b && IsMark(text[a])) a++;
+        while (b > a && IsMark(text[b - 1])) b--;
+        string core = text.Substring(a, b - a);
+        if (core.Length == 0) return none;
+        string lead = new string(text.Substring(0, a).Where(RomajiPunct.ContainsKey).ToArray());
+        string trail = new string(text.Substring(b).Where(RomajiPunct.ContainsKey).ToArray());
+        string path = DataFile("ja_dict.bin");
+        if (path == null) return none;
+        byte[] d;
+        try { d = File.ReadAllBytes(path); } catch (Exception) { return none; }
+        if (d.Length < 16 || Encoding.ASCII.GetString(d, 0, 4) != "JD01") return none;
+        int nRead = BitConverter.ToInt32(d, 4), nEnt = BitConverter.ToInt32(d, 8), unknown = BitConverter.ToUInt16(d, 14);
+        int pos = 16, roff = pos, estart = roff + 4 * (nRead + 1), ents = estart + 4 * (nRead + 1);
+        int rUnitsAt = ents + 12 * nEnt;
+        int rUnits = BitConverter.ToInt32(d, rUnitsAt), rblob = rUnitsAt + 4;
+        int sraw = rblob + 2 * rUnits + 4;
+        bool piece = JapaneseKana(text) && text.Length <= SentenceMax && !text.Any(char.IsDigit);
+        // (the words a reading could be made of: every part of the selection up to PieceMax long - and the word itself)
+        var parts = new HashSet<string> { core };
+        if (piece)
+            for (int i = 0; i < text.Length; i++)
+                for (int len = 1; len <= PieceMax && i + len <= text.Length; len++) parts.Add(text.Substring(i, len));
+        var lengths = new HashSet<int>(parts.Select(p => p.Length));
+        var found = new List<KeyValuePair<int, string>>();  // (cost, reading) of the words written as the word itself
+        var words = new Dictionary<string, List<int[]>>();  // part -> its entries: lid, rid, cost, reading's index
+        var readingOf = new List<string>();
+        for (int i = 0; i < nRead; i++) {
+            int e0 = BitConverter.ToInt32(d, estart + 4 * i), e1 = BitConverter.ToInt32(d, estart + 4 * (i + 1));
+            for (int e = e0; e < e1; e++) {
+                int at = ents + 12 * e;
+                int slen = BitConverter.ToUInt16(d, at + 6);
+                if (!lengths.Contains(slen)) continue;
+                string surface = Encoding.Unicode.GetString(d, sraw + 2 * BitConverter.ToInt32(d, at + 8), 2 * slen);
+                if (!parts.Contains(surface)) continue;
+                int r0 = BitConverter.ToInt32(d, roff + 4 * i), r1 = BitConverter.ToInt32(d, roff + 4 * (i + 1));
+                string reading = Encoding.Unicode.GetString(d, rblob + 2 * r0, 2 * (r1 - r0));
+                if (!reading.All(IsKana)) continue;
+                int cost = BitConverter.ToInt16(d, at + 4);
+                if (surface == core) found.Add(new KeyValuePair<int, string>(cost, reading));
+                List<int[]> list;
+                if (!words.TryGetValue(surface, out list)) words[surface] = list = new List<int[]>();
+                readingOf.Add(reading);
+                list.Add(new[] { BitConverter.ToUInt16(d, at), BitConverter.ToUInt16(d, at + 2), cost, readingOf.Count - 1 });
+            }
+        }
+        if (found.Count > 0)
+            return found.OrderBy(f => f.Key).Select(f => lead + f.Value + trail).Distinct().Take(3).ToList();
+        if (!piece) return none;
+        // the connection costs (JC01: uint16 n, uint16 0, int16 cost[rid * n + lid]); none there: the words' costs alone
+        byte[] conn = null;
+        int n = 0;
+        string cpath = DataFile("ja_conn.bin");
+        try {
+            if (cpath != null) {
+                conn = File.ReadAllBytes(cpath);
+                if (conn.Length < 8 || Encoding.ASCII.GetString(conn, 0, 4) != "JC01") conn = null;
+                else n = BitConverter.ToUInt16(conn, 4);
+            }
+        } catch (Exception) { conn = null; }
+        Func<int, int, int> link = (rid, lid) =>
+            conn != null && rid < n && lid < n ? BitConverter.ToInt16(conn, 8 + 2 * (rid * n + lid)) : 0;
+        var ends = new Dictionary<int, PieceCell>[text.Length + 1];  // position -> right id -> the cheapest way there
+        for (int i = 0; i <= text.Length; i++) ends[i] = new Dictionary<int, PieceCell>();
+        ends[0][0] = new PieceCell { Cost = 0, Rid = 0, Reading = "" };
+        for (int i = 0; i < text.Length; i++) {
+            if (ends[i].Count == 0) continue;
+            var nodes = new List<Tuple<int, int, int, int, string>>();  // (length, lid, rid, cost, reading)
+            for (int len = 1; len <= PieceMax && i + len <= text.Length; len++) {
+                List<int[]> list;
+                if (words.TryGetValue(text.Substring(i, len), out list))
+                    foreach (int[] w in list) nodes.Add(Tuple.Create(len, w[0], w[1], w[2], readingOf[w[3]]));
+            }
+            char c = text[i];
+            bool pair = char.IsHighSurrogate(c) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]);
+            if (IsKana(c)) nodes.Add(Tuple.Create(1, unknown, unknown, PieceFallback, Hiragana(c.ToString())));
+            else if (RomajiPunct.ContainsKey(c)) nodes.Add(Tuple.Create(1, unknown, unknown, PieceFallback, c.ToString()));
+            else if (pair) {  // (a kanji outside the BMP - U+20000..U+3FFFF - no word holds: none, findings #213; an emoji
+                              // left out, #214)
+                int cp = char.ConvertToUtf32(c, text[i + 1]);
+                if (cp < 0x20000 || cp > 0x3FFFF) nodes.Add(Tuple.Create(2, unknown, unknown, PieceFallback, ""));
+            } else if (!IsHan(c)) nodes.Add(Tuple.Create(1, unknown, unknown, PieceFallback, ""));  // (a mark, a letter)
+            foreach (var node in nodes)
+                foreach (PieceCell prev in ends[i].Values) {
+                    long total = prev.Cost + link(prev.Rid, node.Item2) + node.Item4;
+                    PieceCell was;
+                    var into = ends[i + node.Item1];
+                    if (!into.TryGetValue(node.Item3, out was) || total < was.Cost)
+                        into[node.Item3] = new PieceCell { Cost = total, Rid = node.Item3, Prev = prev, Reading = node.Item5 };
+                }
+        }
+        PieceCell end = null;
+        long endCost = 0;
+        foreach (PieceCell cell in ends[text.Length].Values) {
+            long total = cell.Cost + link(cell.Rid, 0);
+            if (end == null || total < endCost) { end = cell; endCost = total; }
+        }
+        if (end == null) return none;  // (a kanji no word holds)
+        var pieces = new List<string>();
+        for (PieceCell cell = end; cell != null && cell.Prev != null; cell = cell.Prev) pieces.Add(cell.Reading);
+        pieces.Reverse();
+        string joined = string.Concat(pieces);
+        return joined.Length > 0 ? new List<string> { joined } : none;
+    }
+
+    // 加入自訂詞彙（日文） from a selection (findings #212): the word without its marks, symbols and spaces (everything else
+    // kept - a kanji of two UTF-16 halves, 〇: findings #213), the reading its hiragana and ー - a pieced reading keeps
+    // 。、？！, which a 日文自訂詞彙's reading may not hold.
+    public static Tuple<string, string> JaWordToAdd(string text, string reading) {
+        // (and the invisible format characters a page's text carries - a zero-width space, a soft hyphen: findings #214;
+        // outside the BMP, as the pieced reading: a kanji kept, an emoji left out - findings #215)
+        var word = new StringBuilder();
+        text = text ?? "";
+        for (int i = 0; i < text.Length; i++) {
+            char c = text[i];
+            if (char.IsHighSurrogate(c) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1])) {
+                int cp = char.ConvertToUtf32(c, text[i + 1]);
+                if (cp >= 0x20000 && cp <= 0x3FFFF) word.Append(c).Append(text[i + 1]);
+                i++;
+            } else if (!char.IsSurrogate(c) && !char.IsPunctuation(c) && !char.IsSymbol(c) && !char.IsSeparator(c) &&
+                       !char.IsWhiteSpace(c) && !char.IsControl(c) && CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.Format)
+                word.Append(c);
+        }
+        string kana = new string((reading ?? "").Where(c => c >= 0x3041 && c <= 0x3096 || c == 'ー').ToArray());
+        return Tuple.Create(word.ToString(), kana);
+    }
+
+    // The keys that type a reading (engine/ja_romaji.py to_romaji over romaji_table, data\ja_romaji.tsv): ん nn, っ the
+    // next spelling's first letter (xtu before a vowel or n), ー - and 。、？！ as typed; "" when a character has none.
+    static Dictionary<string, string> spellings;
+    static readonly Dictionary<char, string> RomajiPunct = new Dictionary<char, string> {
+        { '。', "." }, { '、', "," }, { '？', "?" }, { '！', "!" }, { 'ー', "-" } };
+    static void LoadSpellings() {
+        if (spellings != null) return;
+        spellings = new Dictionary<string, string>();
+        string path = DataFile("ja_romaji.tsv");
+        if (path == null) return;
+        Func<string, Tuple<bool, int, string>> key = inp => Tuple.Create(inp.Any(c => "cqxlv".IndexOf(c) >= 0), inp.Length, inp);
+        foreach (string line in File.ReadLines(path, Encoding.UTF8)) {
+            string[] f = line.Split('\t');
+            if (f.Length < 2 || (f.Length > 2 && f[2].Length > 0)) continue;  // (a rule leaving letters pending: none)
+            string inp = f[0], outp = f[1];
+            if (inp.Length == 0 || !inp.All(c => c >= 'a' && c <= 'z') || outp == "ん" || outp == "っ") continue;
+            string cur;
+            if (!spellings.TryGetValue(outp, out cur) || Comparer<Tuple<bool, int, string>>.Default.Compare(key(inp), key(cur)) < 0)
+                spellings[outp] = inp;
+        }
+    }
+    public static string Romaji(string reading) {
+        LoadSpellings();
+        var outp = new StringBuilder();
+        int i = 0;
+        while (i < reading.Length) {
+            char c = reading[i];
+            if (c == 'ん') { outp.Append("nn"); i++; continue; }
+            if (c == 'っ') {
+                string next = null;
+                foreach (int k in new[] { 2, 1 })
+                    if (i + 1 + k <= reading.Length && spellings.TryGetValue(reading.Substring(i + 1, k), out next)) break;
+                    else next = null;
+                outp.Append(next != null && "aiueon".IndexOf(next[0]) < 0 ? next.Substring(0, 1) : "xtu");
+                i++;
+                continue;
+            }
+            string p;
+            if (RomajiPunct.TryGetValue(c, out p)) { outp.Append(p); i++; continue; }
+            bool done = false;
+            foreach (int k in new[] { 2, 1 }) {
+                string sp;
+                if (i + k <= reading.Length && spellings.TryGetValue(reading.Substring(i, k), out sp)) {
+                    outp.Append(sp);
+                    i += k;
+                    done = true;
+                    break;
+                }
+            }
+            if (!done) return "";
+        }
+        return outp.ToString();
+    }
+
+    // 加入自訂詞彙（日文）: into ja_dictionary.json (the file the settings window's 日文 自訂詞彙 edits - Settings.cs
+    // SaveJaWords, the same rules); one reading may hold several words (the user 2026-11-26): a word of a reading there
+    // already goes after its words, the same word and reading once
+    public static string AddJaWord(string word, string reading) { return AddJaWord(word, reading, DataDir); }
+    public static string AddJaWord(string word, string reading, string dir) {
+        word = (word ?? "").Trim();
+        reading = (reading ?? "").Trim();
+        if (word.Length == 0 || word.Length > 30) return "「" + word + "」不能加入自訂詞彙（日文）";
+        if (reading.Length == 0 || reading.Length > 30 || !reading.All(c => c >= 0x3041 && c <= 0x3096 || c == 0x30FC))
+            return "讀音只能用平假名（長音用ー）";
+        string path = Path.Combine(dir, "ja_dictionary.json");
+        var rows = new List<object>();
+        try {
+            var j = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(path, Encoding.UTF8));
+            object w;
+            if (j != null && j.TryGetValue("words", out w) && w is ArrayList)
+                foreach (object r in (ArrayList)w) {
+                    var pair = r as ArrayList;
+                    if (pair != null && pair.Count == 2 && pair[0] is string && pair[1] is string) rows.Add(new object[] { pair[0], pair[1] });
+                }
+        } catch (Exception) { }
+        foreach (object[] r in rows)
+            if ((string)r[0] == word && (string)r[1] == reading)
+                return "「" + word + "」（" + reading + "）已經在自訂詞彙（日文）裡";
+        rows.Add(new object[] { word, reading });
+        try {
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(path, new JavaScriptSerializer().Serialize(new Dictionary<string, object> { { "format", 1 }, { "words", rows } }),
+                              new UTF8Encoding(false));
+        } catch (Exception ex) { return "無法加入：" + ex.Message; }
+        return "已加入自訂詞彙（日文）：" + word + "（" + reading + "）";
+    }
+
     // ---- 個人詞庫 (the same file the settings window edits) ------------------------------------
     static string DictionaryPath { get { return Path.Combine(DataDir, "dictionary.json"); } }
     static Dictionary<string, object> ReadDictionary() {
@@ -276,6 +546,7 @@ static class Lookup {
 
 class LookupWindow : Form {
     readonly string text, zhuyin;
+    readonly List<string> ja;  // (#36 plan 7: its Japanese readings, with 日文輸入 on)
     readonly Label status;
     readonly Color bg, fg, sub, accent, line;
     SpeechSynthesizer voice;
@@ -284,6 +555,9 @@ class LookupWindow : Form {
     public LookupWindow(string text) {
         this.text = text.Length > 255 ? text.Substring(0, 255) : text;
         zhuyin = Lookup.Zhuyin(this.text);
+        bool japaneseOn = Lookup.JapaneseOn();
+        ja = Lookup.JaReadings(this.text, japaneseOn);
+        bool kana = Lookup.IsJapanese(this.text, japaneseOn);  // (with kana: Japanese - its reading, not 注音)
         bool dark = Lookup.DarkMode();
         bg = dark ? Color.FromArgb(0x2b, 0x2b, 0x2b) : Color.White;
         fg = dark ? Color.FromArgb(0xf3, 0xf3, 0xf3) : Color.FromArgb(0x1b, 0x1b, 0x1b);
@@ -315,20 +589,41 @@ class LookupWindow : Form {
             int h = this.text.Length > 12 ? px(64) : px(36);
             add(MakeLabel(this.text, big, fg, px(16), y, w - px(32), h));
             y += h + px(4);
-            bool chinese = zhuyin.Length > 0;
-            string reading = chinese ? zhuyin : (IsEnglish(this.text) ? "英文" : "");
+            bool chinese = Lookup.ChineseRow(zhuyin, kana, ja);  // (findings #220, #229)
+            string reading = chinese ? zhuyin : kana ? "" : (IsEnglish(this.text) ? "英文" : "");
             if (reading.Length > 0) {
                 add(MakeLabel(reading, new Font(Font.FontFamily, 12f * zoom), accent, px(16), y, w - px(32), px(28)));
                 y += px(34);
             }
+            // 日文 (#36 plan 7): its reading and the romaji that types it - under the 注音 of kanji alone (今日 →
+            // ㄐㄧㄣ ㄖˋ, then きょう kyou), in its place for text with kana
+            // (the commonest reading alone, as the design's example: three ran past the window with rare ones - 今日 いまたち)
+            string jaLine = ja.Count > 0 ? (ja[0] + " " + Lookup.Romaji(ja[0])).Trim() : "";
+            if (jaLine.Length > 0) {
+                add(MakeLabel(jaLine, new Font(Font.FontFamily, 12f * zoom), accent, px(16), y, w - px(32), px(28)));
+                y += px(34);
+            }
             int x = px(16);
-            x = AddButton("🔊 朗讀", x, y, px(96), px(32), (s, e) => Speak());
             string word = Lookup.AsWord(this.text);
-            if (Lookup.CanBeWord(word))
-                x = AddButton("加入自訂詞彙", x, y, px(120), px(32), (s, e) => Report(Lookup.AddWord(word, Lookup.Zhuyin(word))));
-            if (Lookup.CanBeShortcutText(this.text))
-                AddButton("加入映射詞彙", x, y, px(120), px(32), (s, e) => AskShortcut());
-            y += px(40);
+            if (!kana || chinese) {
+                x = AddButton("🔊 朗讀", x, y, px(96), px(32), (s, e) => Speak(zhuyin.Length > 0 ? "zh-TW" : "en-US"));
+                if (Lookup.CanBeWord(word))
+                    x = AddButton("加入自訂詞彙", x, y, px(120), px(32), (s, e) => Report(Lookup.AddWord(word, Lookup.Zhuyin(word))));
+                if (Lookup.CanBeShortcutText(this.text))
+                    AddButton("加入映射詞彙", x, y, px(120), px(32), (s, e) => AskShortcut());
+                y += px(40);
+                x = px(16);
+            }
+            if (ja.Count > 0 || kana) {  // (the Japanese buttons: alone for text with kana, a row of their own under kanji
+                // alone; no reading - digits, a long passage - the voice alone, findings #219)
+                bool alone = kana && !chinese;  // (the Japanese row alone: 朗讀 is the Japanese voice)
+                x = AddButton(alone ? "🔊 朗讀" : "🔊 日文朗讀", x, y, px(alone ? 96 : 120), px(32), (s, e) => Speak("ja-JP"));
+                if (ja.Count > 0) {
+                    var toAdd = Lookup.JaWordToAdd(this.text, ja[0]);
+                    AddButton("加入自訂詞彙（日文）", x, y, px(170), px(32), (s, e) => Report(Lookup.AddJaWord(toAdd.Item1, toAdd.Item2)));
+                }
+                y += px(40);
+            }
         }
         status = MakeLabel("", Font, sub, px(16), y, w - px(32), px(24));
         add(status);
@@ -384,14 +679,14 @@ class LookupWindow : Form {
     }
     void Report(string message) { status.Text = message; }
 
-    void Speak() {
+    void Speak(string culture) {
         try {
             if (voice == null) voice = new SpeechSynthesizer();
-            string culture = zhuyin.Length > 0 ? "zh-TW" : "en-US";
             var v = voice.GetInstalledVoices().FirstOrDefault(x => x.Enabled && x.VoiceInfo.Culture.Name == culture)
                  ?? voice.GetInstalledVoices().FirstOrDefault(x => x.Enabled && x.VoiceInfo.Culture.Name.StartsWith(culture.Substring(0, 2)));
             if (v == null) {
-                Report(culture == "zh-TW" ? "沒有安裝中文語音（設定 > 時間與語言 > 語音）" : "沒有安裝英文語音");
+                Report(culture == "zh-TW" ? "沒有安裝中文語音（設定 > 時間與語言 > 語音）" :
+                       culture == "ja-JP" ? "沒有安裝日文語音（設定 > 時間與語言 > 語音）" : "沒有安裝英文語音");
                 return;
             }
             voice.SelectVoice(v.VoiceInfo.Name);

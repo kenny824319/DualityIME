@@ -70,6 +70,12 @@ CASES = [
     "a1,000{ENTER}kyouTokyo{ENTER}kyouhaiitenki{LEFT}x{ENTER}kyoukonn{LEFT}{LEFT}{DOWN}{ENTER}{ENTER}"
     "kyouhaiitenki{HOME}{RIGHT}{RIGHT}{RIGHT}{RIGHT}x{ENTER}kyouhaiitenkin{LEFT}{LEFT}{ENTER}"
     "ji3arigatou,{CTRL_BACK}{CTRL_BACK}{ENTER}"  # (#86: kana stops Ctrl+Backspace, then it is Backspace)
+    # (plan 7: the custom words - alone, inside a longer word, a reading the dictionary lacks - and 選字學習: 箸 picked
+    # for はし, typed again; picked back; undone)
+    "yui{ENTER}yuigon{ENTER}fatora{ENTER}hasi{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}hasi{ENTER}hasiwo{ENTER}"
+    "hasi{DOWN}{DOWN}{ENTER}{ENTER}hasi{ENTER}hasi{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}{UNDO}{ESC}hasi{ENTER}"
+    # (one reading, two custom words: ↓ lists both first, the one picked among them typed next; a pick in a sentence)
+    "uturu{DOWN}{DOWN}{ENTER}{ENTER}uturu{ENTER}hasiwowataru{ENTER}"
     "ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3ji3"
     "hasi{DOWN}{DOWN}{ENTER}su3cl3su3cl3{ENTER}"
     # (plan 6: the Japanese hint taken with Tab, after Chinese and alone; a phrase sent twice predicted first - ja_phrases)
@@ -563,9 +569,12 @@ CONFIGS = [
                      {"id": 3, "kind": "email", "key": "a@example.com", "value": ""},
                      {"id": 4, "kind": "correction", "key": "si3", "value": "ㄋㄧˇ"},
                      {"id": 5, "kind": "english", "key": "mp3", "value": ""},
-                     {"id": 6, "kind": "bogus", "key": "x", "value": ""}, "garbage"]},
+                     {"id": 6, "kind": "bogus", "key": "x", "value": ""},
+                     {"id": 7, "kind": "ja_pick", "key": "はし", "value": "箸"}, "garbage"]},  # (ja_pick: #36 plan 7)
     {"lm_context": False},  # 接續前文選字 off ({} above: on, the default; #37)
     {"ja_mixed": True},  # (not a setting: 中日混打, #36 - the letters read as romaji and shown as Japanese)
+    {"ja_mixed": True, "ja_lm": False},  # (...with the Japanese 長句選字加強 off: no rescoring, #36 plan 7)
+    {"ja_mixed": True, "ja_lm_context": False},  # (...and its 參考剛送出的字 off: no Japanese sent before, #89)
     # 選字模型 (#41), each tier twice (the spec: its default and 接續前文選字 off); its default here reads 64 characters,
     # plus with 注音自動校正 on too, so the order check reads 64 as well (a tier without its file uses light's model)
     {"lm_model": "plus", "lm_context_len_plus": 64, "autocorrect": True},
@@ -607,7 +616,13 @@ IMPORTED = {"phrases": {"ㄊㄞˊ-ㄨㄢ": {"臺灣": 30}, "ㄋㄧˇ-ㄏㄠˇ": 
             # 簡體輸出's own memory (#32): merged into user_simplified.json (compared below)
             "simplified": {"format": 1, "phrases": {"ㄖㄨㄢˇ-ㄊㄧˇ": {"軟體": 2}},
                            "used": {"phrases": {"ㄖㄨㄢˇ-ㄊㄧˇ": {"軟體": 20000}}},
-                           "replacements": {"影片": {"視頻": 3}}, "replacements_used": {"影片": {"視頻": 20000}}}}
+                           "replacements": {"影片": {"視頻": 3}}, "replacements_used": {"影片": {"視頻": 20000}}},
+            # 日文選字學習 (findings #210): はし picked later in the backup (箸 replaces 橋 here), かえる later here (帰る stays)
+            "ja_picks": {"format": 1, "picks": {"はし": {"箸": 1}, "かえる": {"変える": 1}},
+                         "used": {"はし": {"箸": 19995}, "かえる": {"変える": 19990}}}}
+# (...and what this computer had picked, the import_memory setting's ja_picks.json)
+JA_PICKS_HERE = {"format": 1, "picks": {"はし": {"橋": 1}, "かえる": {"帰る": 1}},
+                 "used": {"はし": {"橋": 19990}, "かえる": {"帰る": 19995}}}
 
 
 # 記憶清單 (#65): the memory the forget_list setting deletes from (user.json; keys.json is AUTOCORRECT as always)
@@ -615,6 +630,8 @@ IMPORTED = {"phrases": {"ㄊㄞˊ-ㄨㄢ": {"臺灣": 30}, "ㄋㄧˇ-ㄏㄠˇ": 
 # do not undo it), so 中日混打's Japanese side - where it must not hold, findings #186, #189, #191 - is compared with it on;
 # used 10 days before the tools' day: renewed when used (#78)
 PUNCT_MEMORY = {"format": 1, "picks": {"「": {"『": 50}}, "used": {"「": {"『": 19990}}}
+# 日文自訂詞彙 (#36 plan 7) for every setting: ゆい typed alone is 優衣, ふぁとら (no such reading in the dictionary) 華寅
+JA_WORDS = {"format": 1, "words": [["優衣", "ゆい"], ["華寅", "ふぁとら"], ["写る", "うつる"], ["鬱る", "うつる"]]}  # (one reading, two words: 鬱る far down the dictionary's list)
 
 SEEDED_USER = {"phrases": {"ㄋㄧˇ": {"妳": 10}, "ㄕˋ-ㄩㄥˋ": {"適用": 8}}, "english": ["mp3", "up"],
                "words": {"python": 5, "refactor": 3}, "emails": {"kazumasan@example.com": 3, "a@example.com": 1},
@@ -658,7 +675,7 @@ def compare(cases, config, tmp):
     for side in ("py", "cpp"):  # each its own files: 全形 on/off is saved in config.json
         os.makedirs(os.path.join(tmp, side), exist_ok=True)
         for name in ("user.json", "keys.json", "custom_picks.json", "user_simplified.json", "forgot.json", "punct.json",
-                     "ja_phrases.json"):
+                     "ja_phrases.json", "ja_picks.json"):
             if os.path.exists(os.path.join(tmp, side, name)):
                 os.remove(os.path.join(tmp, side, name))
         settings = {k: v for k, v in config.items() if k not in ("no_quick_fill", "seed_user", "custom_symbols")}
@@ -676,8 +693,10 @@ def compare(cases, config, tmp):
             files.append(("quick_fill.json", QUICK_FILL))
         if config.get("import_memory"):
             files.append(("import-memory.json", IMPORTED))
+            files.append(("ja_picks.json", JA_PICKS_HERE))
         files.append(("keys.json", AUTOCORRECT))
         files.append(("punct.json", PUNCT_MEMORY))
+        files.append(("ja_dictionary.json", JA_WORDS))
         for name, data in files:
             with open(os.path.join(tmp, side, name), "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False)
@@ -700,7 +719,7 @@ def compare(cases, config, tmp):
         sys.exit(f"DIFFERENT number of lines: python {len(py)}, c++ {len(cc)}")
     # both learned the same things, 校正記憶 and 代碼記憶 too (keys.json) - a file neither wrote (a sample of a few
     # hand-written cases, --cases, may learn nothing) is the same on both sides, one only one side wrote is not
-    for name in ("user.json", "keys.json", "punct.json", "ja_phrases.json"):  # (標點記憶 #83, 日文 phrases plan 6)
+    for name in ("user.json", "keys.json", "punct.json", "ja_phrases.json", "ja_picks.json"):  # (#83, 日文 plans 6, 7)
         learned = []
         for side in ("py", "cpp"):
             path = os.path.join(tmp, side, name)

@@ -591,8 +591,9 @@ const std::unordered_set<std::string>& CorrectionMemory::codes() const {
     return codes_;
 }
 
-CorrectionMemory::CorrectionMemory(std::wstring path, std::function<int()> today, bool flat, size_t keep)
-    : flat_(flat), keep_(keep), path_(std::move(path)), today_(std::move(today)) {
+CorrectionMemory::CorrectionMemory(std::wstring path, std::function<int()> today, bool flat, size_t keep,
+                                   double min_uses)
+    : flat_(flat), keep_(keep), min_uses_(min_uses), path_(std::move(path)), today_(std::move(today)) {
     if (flat_) load();  // (標點記憶: always on)
 }
 
@@ -654,7 +655,7 @@ std::optional<ustr> CorrectionMemory::choice(const std::string& keys) const {
     std::vector<std::pair<double, ustr>> counts;
     for (auto& [c, _] : k->second) counts.emplace_back(count(keys, c), c);
     std::sort(counts.begin(), counts.end(), [](auto& a, auto& b) { return a > b; });  // (as Python's reverse sort)
-    if (counts[0].first >= CORRECTION_MIN_USES && (counts.size() == 1 || counts[0].first > counts[1].first))
+    if (counts[0].first >= min_uses_ && (counts.size() == 1 || counts[0].first > counts[1].first))
         return counts[0].second;
     return std::nullopt;
 }
@@ -715,6 +716,35 @@ void CorrectionMemory::forget() {
     save();
 }
 
+std::vector<CorrectionMemory::Change> CorrectionMemory::learn_only(const std::string& keys, const ustr& choice) {
+    load();
+    auto now = this->choice(keys);
+    if (now && *now == choice) return touch(keys, choice);
+    std::vector<Change> changes;
+    auto p = data_.picks.find(keys);
+    if (p != data_.picks.end()) {
+        std::vector<ustr> others;
+        for (auto& [c, _] : p->second)
+            if (c != choice) others.push_back(c);
+        for (auto& o : others) {
+            std::optional<int> day;
+            auto u = data_.used.find(keys);
+            if (u != data_.used.end()) {
+                auto d = u->second.find(o);
+                if (d != u->second.end()) {
+                    day = d->second;
+                    u->second.erase(d);
+                }
+            }
+            changes.emplace_back(keys, o, p->second[o], day);
+            p->second.erase(o);
+        }
+    }
+    auto rec = record(keys, choice);
+    changes.insert(changes.end(), rec.begin(), rec.end());
+    return changes;
+}
+
 bool CorrectionMemory::forget_choice(const std::string& keys, const ustr& choice) {
     // 記憶清單 (#65): one choice of these keys deleted; true when it was there (the caller saves)
     load();
@@ -731,13 +761,44 @@ bool CorrectionMemory::forget_choice(const std::string& keys, const ustr& choice
     return true;
 }
 
-void CorrectionMemory::merge(const Json& raw) {
-    // the higher count and the later day of each: the same backup twice adds nothing
+void CorrectionMemory::merge(const Json& raw, bool last_wins) {
+    // the higher count and the later day of each: the same backup twice adds nothing; last_wins (engine/lexicon.py
+    // JaPickMemory.merge): of each reading the backup's latest way only, taken when it is here already or later than
+    // every way here (then it replaces them), else what is here stays
     load();
     ++version_;
     int today = today_();
     Part theirs = parse(raw, flat_);
-    for (auto& [keys, choices] : theirs.picks)
+    for (auto& [keys, choices] : theirs.picks) {
+        if (last_wins) {
+            if (choices.empty()) continue;
+            auto u = theirs.used.find(keys);
+            auto day_of = [&](const ustr& c) {
+                if (u != theirs.used.end())
+                    if (auto d = u->second.find(c); d != u->second.end()) return d->second;
+                return today;
+            };
+            const ustr* best = nullptr;
+            for (auto& [c, n] : choices)  // (max by day, then count, then the choice: Python's max over the same key)
+                if (!best || std::make_tuple(day_of(c), n, c) > std::make_tuple(day_of(*best), choices.at(*best), *best))
+                    best = &c;
+            double n = choices.at(*best);
+            int day = day_of(*best);
+            auto mine = data_.picks.find(keys);
+            if (mine != data_.picks.end() && !mine->second.empty() && !mine->second.count(*best)) {
+                int my_day = 0;
+                if (auto mu = data_.used.find(keys); mu != data_.used.end())
+                    for (auto& [_, d] : mu->second) my_day = std::max(my_day, d);
+                if (day <= my_day) continue;
+                data_.picks[keys].clear();
+                data_.used[keys].clear();
+            }
+            double& count = data_.picks[keys][*best];
+            count = std::max(count, n);
+            int& my_day = data_.used[keys][*best];
+            my_day = std::max(my_day, day);
+            continue;
+        }
         for (auto& [c, n] : choices) {
             double& mine = data_.picks[keys][c];
             mine = std::max(mine, n);
@@ -747,6 +808,7 @@ void CorrectionMemory::merge(const Json& raw) {
             int& my_day = data_.used[keys][c];
             my_day = std::max(my_day, day);
         }
+    }
     save();
 }
 
@@ -904,6 +966,7 @@ UserModel::UserModel(const std::wstring& path, std::function<int()> today)
       custom_picks(next_to(path, L"custom_picks.json"), [this] { return today_(); }),
       punct(next_to(path, L"punct.json"), [this] { return today_(); }, true),
       ja_phrases(next_to(path, L"ja_phrases.json"), [this] { return today_(); }, true, 5000),  // (findings #194)
+      ja_picks(next_to(path, L"ja_picks.json"), [this] { return today_(); }, true, 5000, 1),  // (#36 plan 7: once)
       path_(path), today_(std::move(today)) {
     if (!path.empty()) {
         size_t slash = path.find_last_of(L"\\/");
@@ -911,6 +974,7 @@ UserModel::UserModel(const std::wstring& path, std::function<int()> today)
         quick_fill_path_ = (slash == std::wstring::npos ? std::wstring() : path.substr(0, slash + 1)) + L"quick_fill.json";
         simplified_path_ = (slash == std::wstring::npos ? std::wstring() : path.substr(0, slash + 1)) + L"user_simplified.json";
         symbols_path_ = (slash == std::wstring::npos ? std::wstring() : path.substr(0, slash + 1)) + L"symbols.json";
+        ja_words_path_ = (slash == std::wstring::npos ? std::wstring() : path.substr(0, slash + 1)) + L"ja_dictionary.json";
     }
     reload_custom();
     reload_quick_fill();
@@ -1058,6 +1122,52 @@ const std::unordered_set<std::string>& UserModel::sure_english() const {
 // Chinese characters only (肯德基): a side of 映射詞彙 found in the text shown
 static bool is_han_text(const ustr& s) {
     return !s.empty() && std::all_of(s.begin(), s.end(), [](char32_t c) { return is_han(c); });
+}
+
+namespace {
+// Python's str.strip(): the characters str.isspace() is true for
+bool py_space(char32_t c) {
+    return c == U' ' || (c >= 0x09 && c <= 0x0D) || (c >= 0x1C && c <= 0x1F) || c == 0x85 || c == 0xA0 || c == 0x1680 ||
+           (c >= 0x2000 && c <= 0x200A) || c == 0x2028 || c == 0x2029 || c == 0x202F || c == 0x205F || c == 0x3000;
+}
+ustr py_strip(const ustr& s) {
+    size_t b = 0, e = s.size();
+    while (b < e && py_space(s[b])) ++b;
+    while (e > b && py_space(s[e - 1])) --e;
+    return s.substr(b, e - b);
+}
+}  // namespace
+
+const std::map<ustr, std::vector<ustr>>& UserModel::ja_words() {
+    // {"format": 1, "words": [[word, reading], ...]} (the settings tool's): a reading not hiragana (ー for a long vowel)
+    // or a word empty is left out; one reading may hold several words, in the file's order, a word given twice once
+    // (engine/lexicon.py UserModel.ja_words)
+    if (ja_words_path_.empty()) return ja_words_;
+    long long mtime = 0;
+    long long now = file_mtime(ja_words_path_, mtime) ? mtime : -1;
+    if (now == ja_words_mtime_) return ja_words_;
+    ja_words_mtime_ = now;
+    ja_words_.clear();
+    std::string text;
+    if (now != -1 && read_file(ja_words_path_, text)) {
+        bool ok = false;
+        Json data = Json::parse(text, &ok);
+        if (ok && data.is_object())
+            if (auto* list = data.get("words"); list && list->is_array())
+                for (auto& row : list->items()) {
+                    if (!row.is_array() || row.items().size() != 2 || !row.items()[0].is_string() ||
+                        !row.items()[1].is_string())
+                        continue;
+                    ustr word = py_strip(from_utf8(row.items()[0].as_string()));
+                    ustr reading = py_strip(from_utf8(row.items()[1].as_string()));
+                    bool kana = !reading.empty();
+                    for (char32_t ch : reading) kana = kana && ((ch >= 0x3041 && ch <= 0x3096) || ch == 0x30FC);
+                    if (word.empty() || !kana) continue;
+                    auto& ws = ja_words_[reading];
+                    if (std::find(ws.begin(), ws.end(), word) == ws.end()) ws.push_back(word);
+                }
+    }
+    return ja_words_;
 }
 
 bool UserModel::reload_quick_fill() {
@@ -1461,6 +1571,7 @@ void UserModel::forget_words(int counter) {
         custom_picks.forget();
         punct.forget();  // (標點記憶, #83)
         ja_phrases.forget();  // (日文's phrases, #36 plan 6)
+        ja_picks.forget();    // (日文選字學習, #36 plan 7)
     }
 }
 
@@ -1663,9 +1774,10 @@ bool UserModel::forget_items(const Json& items) {
     if (top <= forgot_applied) return false;
     bool was_simplified = simplified;
     set_simplified(false);  // (the shared memory itself, not the view Simplified mode lays over it)
-    bool changed = false, keys_changed = false, simp_changed = false, punct_changed = false;
+    bool changed = false, keys_changed = false, simp_changed = false, punct_changed = false, ja_picks_changed = false,
+         ja_phrases_changed = false;
     static const std::set<std::string> kinds = {"pick", "word", "email", "correction", "english", "simp_pick", "simp_term",
-                                                "punct"};
+                                                "punct", "ja_pick", "ja_phrase"};
     for (auto& it : items.items()) {
         int id;
         if (!id_of(it, id) || id <= forgot_applied) continue;
@@ -1699,12 +1811,18 @@ bool UserModel::forget_items(const Json& items) {
             simp_changed |= drop_nested(replacements, replacement_used, from_utf8(key8), from_utf8(value8));
         } else if (k == "punct") {  // (標點記憶, #83: the mark types its default again)
             punct_changed |= punct.forget_choice(key8, from_utf8(value8));
+        } else if (k == "ja_pick") {  // (日文選字學習, #36 plan 7: the reading converts as the dictionary has it again)
+            ja_picks_changed |= ja_picks.forget_choice(key8, from_utf8(value8));
+        } else if (k == "ja_phrase") {  // (日文's phrases, #36 plan 7: no longer predicted first)
+            ja_phrases_changed |= ja_phrases.forget_choice(key8, from_utf8(value8));
         }
     }
     if (changed) save();
     if (simp_changed && !simplified_path_.empty()) save_simplified();
     if (keys_changed) corrections.save();
     if (punct_changed) punct.save();
+    if (ja_picks_changed) ja_picks.save();
+    if (ja_phrases_changed) ja_phrases.save();
     set_simplified(was_simplified);
     forgot_applied = top;
     if (!keep_files_) {
@@ -1713,7 +1831,7 @@ bool UserModel::forget_items(const Json& items) {
         out["applied"] = Json(top);
         write_file_atomic(forgot_path, out.dump());
     }
-    return changed || keys_changed || simp_changed || punct_changed;
+    return changed || keys_changed || simp_changed || punct_changed || ja_picks_changed || ja_phrases_changed;
 }
 
 void UserModel::import_memory(int counter) {
@@ -1783,6 +1901,8 @@ void UserModel::import_memory_now(int counter) {
     if (auto* cp = data.get("custom_picks"); cp) custom_picks.merge(*cp);  // 自訂詞彙 taken with Tab: its own file
     if (auto* pm = data.get("punct"); pm) punct.merge(*pm);  // 標點記憶 (#83): its own file
     if (auto* jp = data.get("ja_phrases"); jp) ja_phrases.merge(*jp);  // 日文's phrases (#36 plan 6): its own file
+    if (auto* jk = data.get("ja_picks"); jk) ja_picks.merge(*jk, true);  // 日文選字學習 (#36 plan 7): its own file, the
+    // last way picked of each reading kept (findings #210)
     if (auto* simp = data.get("simplified"); simp && simp->is_object()) {
         // 簡體輸出's own memory (#32): the higher count and the later day, as above (see lexicon.py)
         const Json* simp_used = simp->get("used");

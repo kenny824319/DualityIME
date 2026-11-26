@@ -19,6 +19,8 @@ const ICONS = {
   typing: '<rect x="2" y="4.5" width="14" height="9" rx="1.5"/><path d="M5 7.5h1M8.5 7.5h1M12 7.5h1M6 10.5h6"/>',
   complete: '<path d="M9 2.5a4.5 4.5 0 0 1 2.5 8.2V13h-5v-2.3A4.5 4.5 0 0 1 9 2.5zM7 15.5h4"/>',
   dict: '<rect x="4" y="2.5" width="10" height="13" rx="1.5"/><path d="M6.5 6h5M6.5 9h5"/>',
+  // (#36 design: あ in a rounded square, the other icons' line weight - the user 2026-11-24 "日文這一類別你還沒補一個小圖案")
+  japanese: '<rect x="2.5" y="2.5" width="13" height="13" rx="2.5"/><text x="9" y="12.6" text-anchor="middle" font-size="9.5" font-weight="600" fill="currentColor" stroke="none" font-family="Yu Gothic UI, Meiryo UI, sans-serif">あ</text>',
   look: '<circle cx="9" cy="9" r="6.5"/><path d="M9 2.5v13M2.5 9h13"/>',
   help: '<path d="M9 5c-1.6-1.2-3.8-1.6-6.5-1.3v10c2.7-.3 4.9.1 6.5 1.3 1.6-1.2 3.8-1.6 6.5-1.3v-10C12.8 3.4 10.6 3.8 9 5zM9 5v10"/>',
   faq: '<path d="M2.5 4.5a1.5 1.5 0 0 1 1.5-1.5h6a1.5 1.5 0 0 1 1.5 1.5v3.5A1.5 1.5 0 0 1 10 9.5H6.5L4 11.5v-2A1.5 1.5 0 0 1 2.5 8z"/><path d="M13 6.5h1a1.5 1.5 0 0 1 1.5 1.5v3.5A1.5 1.5 0 0 1 14 13v2l-2.5-2H8a1.5 1.5 0 0 1-1.5-1.5v-.5"/>',
@@ -321,7 +323,7 @@ async function editList(kind) {
 
 // ---- pages --------------------------------------------------------------------------------------
 const PAGES = [
-  ["general", "一般"], ["typing", "打字"], ["complete", "補字與記憶"], ["dict", "個人詞庫"], ["look", "外觀"], ["help", "使用說明"], ["faq", "常見問題"], ["about", "關於"]
+  ["general", "一般"], ["typing", "打字"], ["complete", "補字與記憶"], ["dict", "個人詞庫"], ["japanese", "日文"], ["look", "外觀"], ["help", "使用說明"], ["faq", "常見問題"], ["about", "關於"]
 ];
 
 function pageGeneral() {
@@ -330,7 +332,14 @@ function pageGeneral() {
     card(
       row("設為預設輸入法", "", systemToggle("default_ime", "設為預設輸入法")),
       row("預設輸入模式", "開啟新程式或切換至本輸入法時的初始模式",
-        cfgSegments("start_mode", [["mixed", "中英混打"], ["english", "純英文"]], "預設輸入模式"))),
+        // (#36 design: with 日文 on, its two modes too - the user 2026-11-24)
+        // (日文 off with a Japanese mode chosen: the IME starts in 中英混打 - shown so; the setting stays for when 日文 is
+        // on again - the user's boundary 2026-11-26, the preview's mistake the user caught 2026-11-26)
+        segments(S.config.ja_enabled
+          ? [["mixed", "中英混打"], ["ja_mixed", "中日混打"], ["ja_only", "純日文"], ["english", "純英文"]]
+          : [["mixed", "中英混打"], ["english", "純英文"]],
+          !S.config.ja_enabled && ["ja_mixed", "ja_only"].includes(S.config.start_mode) ? "mixed" : S.config.start_mode,
+          (v) => setConfig("start_mode", v), "預設輸入模式"))),
     h("h2", {}, "切換設定"),
     card(
       row("Shift 切換輸入模式", "按一下 Shift 切換至純英文模式，再按一下切回中英混打模式", cfgToggle("shift_toggle", "Shift 切換輸入模式")),
@@ -340,20 +349,31 @@ function pageGeneral() {
   ];
 }
 
-// From 使用說明 / 常見問題 to the setting itself: that page, the row lit up with a 「在這裡」 tag
-function goTo(page, title) {
+// From 使用說明 / 常見問題 to the setting itself: that page, the row lit up with a 「在這裡」 tag (nth: the row of that
+// title to light, counted from 0 - 個人詞庫 has 自訂詞彙 twice, the Chinese one and the Japanese one)
+function goTo(page, title, nth = 0) {
   show(page);
-  const t = [...document.querySelectorAll(".row-title")].find((e) => e.textContent === title);
-  const r = t && t.closest(".row");
+  const t = [...document.querySelectorAll(".row-title")].filter((e) => e.textContent === title)[nth];
+  // (no row of that title: a button saying it, its card lit - 關於's 檢查更新 sits in the version card, the user 2026-11-26)
+  const b = !t && [...document.querySelectorAll("button")].find((e) => e.textContent === title);
+  const r = t ? t.closest(".row") : b && b.closest(".card");
   if (!r) return;
   r.scrollIntoView({ block: "center" });
   r.classList.add("spotlight");
-  t.append(h("span", { class: "here" }, "此處"));
-  setTimeout(() => { r.classList.remove("spotlight"); const tag = t.querySelector(".here"); if (tag) tag.remove(); }, 3200);
+  const tag = h("span", { class: "here" }, "此處");
+  if (t) t.append(tag);
+  else b.after(tag);
+  setTimeout(() => { r.classList.remove("spotlight"); tag.remove(); }, 3200);
 }
 
-const goButton = ([page, title]) =>
-  ({ text: "前往設定", left: true, click: (c) => { c(true); goTo(page, title); } });
+// A link [page, title, nth, "ja"]: a row usable only while 日文輸入 is on (個人詞庫's Japanese section, the 日文 page's rows) - while it is off
+// the button says so and turns it on first (the user 2026-11-26: one button, 「打開日文輸入並前往」)
+const goText = (link) => link[3] === "ja" && !S.config.ja_enabled ? "打開日文輸入並前往" : "前往設定";
+async function follow([page, title, nth, needs]) {
+  if (needs === "ja" && !S.config.ja_enabled) await setConfig("ja_enabled", true);
+  goTo(page, title, nth);
+}
+const goButton = (link) => ({ text: goText(link), left: true, click: (c) => { c(true); follow(link); } });
 
 // 功能總覽's dialog: a paragraph is its bold lead and the text after it, on one line if they fit,
 // else the lead on a line of its own above the text
@@ -405,14 +425,17 @@ const LM_TIERS_SHIPPED = ["light", "plus", "max"];
 const LM_LATENCY_MS = { "light-32": "1.1", "plus-32": "1.2", "plus-64": "1.2", "max-32": "1.2", "max-64": "1.2" };
 const LM_TIER_NAMES = { light: "輕量", plus: "加強", max: "最強" };
 
-// 長句選字加強 and, under it, 接續前文選字 (#37), 選字模型 and, for 加強／最強, 前文長度 (#41): greyed while
-// 長句選字加強 is off (they are its settings)
+// 長句選字加強 and, under it, 選字模型, 參考剛送出的字 (#37's 接續前文選字 renamed, #89) and, for 加強／最強, 前文長度
+// (#41) - the model's settings in that order (the user 2026-11-26: the model decides, the other two are what it reads):
+// greyed while 長句選字加強 is off
 function longSentenceRows() {
   const sub = toggle(S.config.lm_context, (v) => setConfig("lm_context", v),
-    { label: "接續前文選字", disabled: !S.config.long_sentence });
-  const subRow = row("接續前文選字", "選字時參考剛送出、游標前面的字，讓接著打的句子選得更準。", sub);
+    { label: "參考剛送出的字", disabled: !S.config.long_sentence });
+  const subText = (n) => `選字時也看剛送出、游標還緊接在後面的字，最多看 ${n} 個字。`;
+  const subRow = row("參考剛送出的字", subText(32), sub);
   subRow.classList.add("row-sub");
-  const model = modelRows();
+  // (#89: its number follows the model and 前文長度 chosen - light 32, plus / max their 32 or 64 - changed at once)
+  const model = modelRows((n) => { subRow.querySelector(".row-desc").textContent = subText(n); });
   const grey = (off) => {
     sub.querySelector("input").disabled = off;
     for (const r of [subRow, ...model.rows]) r.classList.toggle("off", off);  // (the whole row greyed: a switch's track
@@ -420,12 +443,14 @@ function longSentenceRows() {
   };
   const main = toggle(S.config.long_sentence, (v) => { setConfig("long_sentence", v); grey(!v); }, { label: "長句選字加強" });
   grey(!S.config.long_sentence);
-  return [row("長句選字加強", "看整句的意思選字，長句更準確。電腦較舊、打字覺得變慢時可以關閉。", main), subRow, ...model.rows];
+  return [row("長句選字加強", "看整句的意思選字，長句更準確。電腦較舊、打字覺得變慢時可以關閉。", main),
+    ...model.rows.slice(0, 1), subRow, ...model.rows.slice(1)];
 }
 
 // 選字模型 (buttons 輕量｜加強｜最強, the tiers released) and 前文長度 (32 字｜64 字, shown for 加強／最強, each tier its own
 // setting); one latency line, in 選字模型's description, for the tier and length chosen. Nothing when one tier alone.
-function modelRows() {
+function modelRows(onLength = () => {}) {
+  // (onLength(n): the characters the model reads with the tier and length chosen - 參考剛送出的字's words, #89)
   if (LM_TIERS_SHIPPED.length < 2) return { rows: [], disable() {} };
   const lenKey = (t) => (t === "plus" ? "lm_context_len_plus" : "lm_context_len_max");
   const lenOf = (t) => (t !== "light" && Number(S.config[lenKey(t)]) === 64 ? 64 : 32);
@@ -436,6 +461,7 @@ function modelRows() {
     lenRow.style.display = tier === "light" ? "none" : "";
     // (the tier's own length, and measured again now it is shown: while hidden its buttons had no width)
     if (tier !== "light") pickLen.select(lenOf(tier));
+    onLength(lenOf(tier));
   };
   const pickTier = segments(LM_TIERS_SHIPPED.map((t) => [t, LM_TIER_NAMES[t]]), tier,
     (v) => { tier = v; setConfig("lm_model", v); draw(); }, "選字模型");
@@ -447,7 +473,7 @@ function modelRows() {
     setConfig(lenKey(tier), v);
     draw();
   }, "前文長度");
-  const lenRow = row("前文長度", "看越多前文選字越準，也會越慢", pickLen);
+  const lenRow = row("前文長度", "模型從游標往前看幾個字，含這句前面的字，開著上一項時也含剛送出的字；越多越準也越慢", pickLen);
   lenRow.classList.add("row-sub", "row-sub2");
   draw();
   const disable = (off) => { for (const b of [...pickTier.querySelectorAll("button"), ...pickLen.querySelectorAll("button")]) b.disabled = off; };
@@ -556,14 +582,18 @@ const MEMORY_TABS = [
   ["keys", "按鍵", ["按鍵", "會打成", "說明", "選過", "最近使用"], (r) => [r.shown, r.reading || r.shown, r.note, memoryCount(r), memoryDay(r)]],
   // (#83 標點記憶, the user 2026-11-26: a mark swapped twice is what its key types; only the ones in effect listed)
   ["punct", "標點", ["標點", "會打成", "選過", "最近使用"], (r) => [r.shown, r.reading, memoryCount(r), memoryDay(r)]],
+  // (#36 plan 7: 日文 - 選字學習 and 常打的詞組, while 日文輸入 is on; the data stays when it is off)
+  ["ja", "日文", ["字詞", "讀音", "種類", "選過", "最近使用"], (r) => [r.shown, r.reading, r.note, memoryCount(r), memoryDay(r)]],
   ["simplified", "簡體模式", ["字詞", "對應", "種類", "選過", "最近使用"], (r) => [r.shown, r.reading, r.note, memoryCount(r), memoryDay(r)]]
 ];
+const MEMORY_TABS_ALL = MEMORY_TABS;  // (#36 plan 7: memoryPanel's draw keeps the 日文 tab only while 日文 is on)
 
 function memoryPanel(deleted) {
   // deleted(): after a 刪除, so 已記憶項目 above follows (the settings tool counts the rows the engine is about to remove
   // as gone). (On the page itself, below 已記憶項目: the user 2026-11-24 "我不喜歡要點開才能看 直接列在下面就好")
   let data = { picks: [], words: [], emails: [], keys: [], simplified: null };
   data.punct = [];  // (#83 標點記憶)
+  data.ja = [];  // (#36 plan 7)
   let tab = "picks";
   const id = (r) => r.kind + "\u0000" + r.key + "\u0000" + r.value;
   const picked = new Set();  // id() of the rows ticked
@@ -579,6 +609,8 @@ function memoryPanel(deleted) {
     return (data[tab] || []).filter((r) => !q || cellsOf(r).some((c) => String(c).toLowerCase().includes(q)));
   }
   function draw() {
+    // (#36 plan 7: the 日文 tab only while 日文輸入 is on - the tabs below read this one list)
+    const MEMORY_TABS = MEMORY_TABS_ALL.filter(([k]) => k !== "ja" || S.config.ja_enabled);
     const shownTabs = MEMORY_TABS.filter(([k]) => k !== "simplified" || (data.simplified || []).length);
     if (!shownTabs.some(([k]) => k === tab)) tab = "picks";  // (簡體模式 emptied by a 刪除: its tab is gone - findings #117)
     tabs.replaceChildren(...shownTabs.map(([k, name]) =>
@@ -636,6 +668,8 @@ async function forgetMemory() {
   const body = h("div", {},
     h("p", { class: "row-desc", style: "font-size:14px" },
       "確定要清除所有打字記憶（選字習慣、記住的英文、自動校正與標點的習慣）嗎？設定與個人詞庫會保留。此操作無法復原。"),
+    // (#36 plan 7: with 日文 on, what it clears there too)
+    S.config.ja_enabled ? h("p", { class: "row-desc", style: "font-size:14px" }, "日文的選字與常打的詞組也會一起清除。") : null,
     h("label", { class: "check" }, emails, "一併清除記住的 Email"));
   const ok = await dialog("清除所有記憶項目", body, [{ text: "取消", value: false }, { text: "確定清除", kind: "danger", value: true }]);
   if (!ok) return;
@@ -735,9 +769,17 @@ async function editQuickFill() {
 function pageDict() {
   return [
     h("h1", {}, "個人詞庫"),
+    // (#36 design: sections 中文 / 日文 / 通用, the user 2026-11-24 - 映射詞彙 is Chinese words and codes, 快速填入 works in every mode)
+    h("h2", {}, "中文"),
     card(
       row("自訂詞彙", `打字時優先選用設定的詞彙。目前已設定 ${S.words} 筆`, h("button", { class: "btn", onclick: () => editList("words") }, "編輯")),
-      row("映射詞彙", `可自定義詞彙映射關係。目前已設定 ${S.shortcuts} 筆`, h("button", { class: "btn", onclick: () => editList("shortcuts") }, "編輯")),
+      row("映射詞彙", `可自定義詞彙映射關係。目前已設定 ${S.shortcuts} 筆`, h("button", { class: "btn", onclick: () => editList("shortcuts") }, "編輯"))),
+    // (日文 while 日文 is on)
+    ...(S.config.ja_enabled ? [h("h2", {}, "日文"), card(
+      row("自訂詞彙", `打日文時優先選用設定的詞彙（人名、專有名詞等）。目前已設定 ${S.jaWords || 0} 筆`,
+        h("button", { class: "btn", onclick: () => editJaWords() }, "編輯")))] : []),
+    h("h2", {}, "通用"),
+    card(
       row("快速填入", `打字時按 \` 再按空白，叫出常用的 Email、地址等內容。目前已設定 ${S.quickFill || 0} 筆`,
         h("button", { class: "btn", onclick: () => editQuickFill() }, "編輯"))),
     h("h2", {}, "框選查詢"),
@@ -1048,7 +1090,7 @@ const TOPICS = [
   ["長句選字加強", "看整句意思選字，長句更準確", [
     ["整句選字", "用看整句意思的小型語言模型幫忙選字（預設開啟）；電腦較舊、打字覺得變慢時可以關閉。"],
     ["選字模型", "輕量、加強、最強三種，越強選字越準，每按一鍵也越慢；加強和最強可以選參考前面 32 或 64 個字。"],
-    ["接續前文選字", "選字時也參考剛送出、游標還緊接在後面的字，接著打的句子選得更準。"]],
+    ["參考剛送出的字", "選字時也看剛送出、游標還緊接在後面的字，接著打的句子選得更準；最多看幾個字照前文長度。"]],
    ["typing", "長句選字加強"]],
   ["注音自動校正", "按錯鍵、漏打聲調也能打對", [
     ["自動改正", "開啟後（預設關閉），按到旁邊的鍵、漏打聲調、注音順序打錯、同一個鍵按兩次、ㄣ／ㄥ 或 ㄢ／ㄤ 打反，都會改成整句最通順的字（例如 si3cl3 是「你好」）。英文和個人詞庫的詞不會被改。"],
@@ -1110,13 +1152,13 @@ const TOPICS = [
    ["general", "遊戲中 Shift 交給遊戲"]],
 ];
 const FAQ = [
-  ["打出來都是英文字母，打不出中文？", "請檢查工作列的輸入法圖示。若目前處於英文模式，請按一下 Shift 鍵（或用滑鼠左鍵點擊圖示）即可切回中文模式。"],
+  ["打出來都是英文字母，打不出中文？", "請檢查工作列的輸入法圖示。若目前處於英文模式，請按一下 Shift 鍵（或用滑鼠左鍵點擊圖示）即可切回中文模式。", ["general", "Shift 切換輸入模式"]],
   ["系統自動選錯字了，該怎麼修改？", "在按 Enter 送出文字前，用方向鍵 ← → 將游標移到錯字上，按 ↓ 叫出候選字視窗並按數字鍵選字。系統會記住您的選擇，下次就會優先出現。"],
   ["想打數字「94」，卻變成中文字「愛」？", "有打聲調的數字會被當成注音。此時只需在該字上按 ↑，從上方替換列選擇原本的數字即可；或者直接使用鍵盤右側的數字鍵盤，輸出就一定會是數字。"],
   ["想打英文縮寫（如 pm、dj），卻被拼成中文？", "拼得成注音的小寫英文會被當成注音。可以用大寫打（PM），或按 Shift 切到純英文模式；已經變成中文的，在那個字前面按 ↑，從替換列選回原本的英文字母，選過的下次會記住。"],
   ["打字變慢、按鍵有延遲怎麼辦？", "選字模型越強，每按一鍵也越慢，較舊或省電的電腦較明顯。請到「打字」頁把「選字模型」改成「加強」或「輕量」；仍覺得慢，可以關閉「長句選字加強」。", ["typing", "選字模型"]],
   ["注音打錯（按到旁邊的鍵、漏打聲調）能自動改正嗎？", "可以。到「打字」頁開啟「注音自動校正」（預設關閉），按到旁邊的鍵、漏打聲調、注音順序打錯、同一個鍵按兩次、ㄣ／ㄥ 或 ㄢ／ㄤ 打反，都會改成整句最通順的字。英文和個人詞庫的詞不會被改；改錯了在那個字按 ↓ 選回原本的音，同樣的按鍵改回 2 次後就照您打的讀。", ["typing", "注音自動校正"]],
-  ["前面剛打的句子，會影響接下來的選字嗎？", "會。輸入法本來就會參考剛送出的最後一個詞；「接續前文選字」開啟時，還會參考剛送出、游標還緊接在後面的更多字，接著打的句子選得更準。不需要的話可以在「打字」頁關閉「接續前文選字」。", ["typing", "接續前文選字"]],
+  ["前面剛打的句子，會影響接下來的選字嗎？", "會。輸入法本來就會參考剛送出的最後一個詞；「參考剛送出的字」開啟時，還會參考剛送出、游標還緊接在後面的更多字，接著打的句子選得更準。不需要的話可以在「打字」頁關閉「參考剛送出的字」。", ["typing", "參考剛送出的字"]],
   ["人名、專有名詞老是選錯？", "請到「個人詞庫」頁的「自訂詞彙」加入這個詞，打字時就會優先出現。注音可以按「自動填入注音」帶入，破音字再自己修改。", ["dict", "自訂詞彙"]],
   ["選錯的字或打錯的英文一直被記住、一直出現？", "選錯的字：在那個字按 ↓ 選對的字，系統會改記您選的。要刪掉某一筆記住的選字、英文字或 Email，請到「補字與記憶」頁的「記憶清單」搜尋、勾選後按「刪除」，下一個按鍵起就不再出現。很久沒用的紀錄會慢慢淡掉；要清掉所有打字記憶，按同一頁的「全部清除」（個人詞庫與設定會保留；記住的 Email 預設留著，勾選才一起清除）。", ["complete", "記憶清單"]],
   ["Email 要打幾次才會被記住？", "只要在中英混打模式下完整輸入並送出 1 次就會自動記住。下次只需打出開頭前 3 個字元，後方就會浮現完整提示，按 Tab 鍵即可補完。", ["complete", "自動記憶常用英文與 Email"]],
@@ -1128,9 +1170,16 @@ const FAQ = [
   ["怎麼打出 ★ ※ ← 這類符號？", "按 ` 叫出符號鍵盤（一般／數學／特殊三頁，Tab 換頁），按鍵盤上對應的鍵或用滑鼠點選即可。預設連按兩下 ` 打出 `；改過第一頁 ` 鍵的話，打出改後的符號。每個鍵的符號、類別與順序可以在「外觀」頁的「符號鍵盤內容」自訂，emoji 也行。", ["look", "符號鍵盤內容"]],
   ["程式裡的 Ctrl + , 這類快捷鍵沒反應？", "「Ctrl + 標點打全形」開啟時，中英混打模式下的 Ctrl + , . ; 等組合會打出全形標點，程式用這些組合的快捷鍵就會失效。需要的話請到「打字」頁關閉。", ["typing", "Ctrl + 標點打全形"]],
   ["輸入法的視窗太大或太小，想換顏色或照片？", "「外觀」頁可以調整候選字視窗大小，排成一欄、一排或格子；「自訂外觀」可以換顏色或放照片，每個視窗都能分別調整。", ["look", "候選字視窗大小"]],
-  ["怎麼更新到新版？", "到「關於」頁按「檢查更新」，有新版時按「立即更新」，就會下載並更新。"],
+  ["怎麼更新到新版？", "到「關於」頁按「檢查更新」，有新版時按「立即更新」，就會下載並更新。", ["about", "檢查更新"]],
   ["玩遊戲時按鍵被輸入法攔截怎麼辦？", "「一般」頁的「遊戲中 Shift 交給遊戲」預設開啟，遊戲裡的按鍵會直接交給遊戲。若仍被攔截，可能是 Windows 沒有把它認成遊戲（請改用全螢幕，或讓 Windows 遊戲列記住它）。", ["general", "遊戲中 Shift 交給遊戲"]],
-  ["遊戲聊天框打不出中文？", "大部分遊戲的聊天框是遊戲自己畫的，輸入法分辨不出那是輸入框。請到「一般」頁關閉「遊戲中 Shift 交給遊戲」，遊戲就和一般程式一樣可以按 Shift 切換打中文。", ["general", "遊戲中 Shift 交給遊戲"]]
+  ["遊戲聊天框打不出中文？", "大部分遊戲的聊天框是遊戲自己畫的，輸入法分辨不出那是輸入框。請到「一般」頁關閉「遊戲中 Shift 交給遊戲」，遊戲就和一般程式一樣可以按 Shift 切換打中文。", ["general", "遊戲中 Shift 交給遊戲"]],
+  // (#36 plan 7: the Japanese topics the user picked, 2026-11-26)
+  ["怎麼打日文？", "到「日文」頁打開「日文輸入」，之後按 Ctrl + F2 在中文和日文之間切換。在日文時單按 Shift，可以在「中日混打」（注音照樣打中文，羅馬字轉成日文）和「純日文」之間切換。直接打羅馬字，邊打邊轉成漢字與假名，按 Enter 送出。", ["japanese", "日文輸入"]],
+  ["日文選錯漢字怎麼改？會記住嗎？", "把游標移到那個詞前面按 ↓，選對的寫法。選過的會記住，下次同樣的讀音直接出現；但前後文明顯要另一種寫法時，會照前後文（例如選過「箸」，打「橋を渡る」還是「橋」）。要不管前後文都出現某個寫法，請加進「個人詞庫」日文區的「自訂詞彙」。", ["dict", "自訂詞彙", 1, "ja"]],
+  ["怎麼打成片假名或平假名？", "平假名、片假名本來就照詞自動決定。要換某個詞，把游標移到那個詞上按 F6（平假名）、F7（全形片假名）或 F8（半形片假名）；要整段只打平假名或片假名，按 Ctrl + F6 或 Ctrl + F7，按 Ctrl + F8 回到自動判斷。這些熱鍵都可以在「日文」頁更改。", ["japanese", "F6／F7／F8 轉換", 0, "ja"]],
+  ["中日混打時打不出英文？", "中日混打模式下，英文字母都當成羅馬字轉成日文，不會打出英文。要打英文，請按 Ctrl + F2 切回中文的中英混打。", ["japanese", "中文／日文切換", 0, "ja"]],
+  ["日文的人名、專有名詞老是選錯？", "打開日文輸入後，到「個人詞庫」頁日文區的「自訂詞彙」加入這個詞和它的讀音（平假名），打出讀音就是這個詞；同一個讀音可以加好幾個詞。也可以選取文字後連按兩次 Ctrl，在框選查詢按「加入自訂詞彙（日文）」直接加入。", ["dict", "自訂詞彙", 1, "ja"]],
+  ["打日文覺得變慢？", "「日文」頁的「長句選字加強」可以單獨關掉，只影響日文，中文不受影響。關掉後選字比較不看整句的意思，可能比較常需要按 ↓ 改字。", ["japanese", "長句選字加強", 0, "ja"]]
 ];
 
 let helpTab = "lessons";
@@ -1157,11 +1206,18 @@ function pageHelp() {
   return [h("h1", {}, "使用說明"), tabs, body];
 }
 
+function faqOne(e) {  // (toggle does not bubble: each question has it)
+  const d = e.currentTarget;
+  if (!d.open) return;
+  for (const o of d.parentNode.querySelectorAll("details.faq[open]")) if (o !== d) o.open = false;
+}
+
 function pageFaq() {
   return [
     h("h1", {}, "常見問題"),
-    h("div", { class: "card" }, ...FAQ.map(([q, a, link]) => h("details", { class: "faq" }, h("summary", {}, q), h("p", {}, a),
-      link ? h("div", { class: "faq-go" }, h("button", { class: "btn", onclick: () => goTo(...link) }, goButton(link).text)) : null))),
+    // (one open at a time: opening one closes the one open before, the user 2026-11-26)
+    h("div", { class: "card" }, ...FAQ.map(([q, a, link]) => h("details", { class: "faq", ontoggle: faqOne }, h("summary", {}, q), h("p", {}, a),
+      link ? h("div", { class: "faq-go" }, h("button", { class: "btn", onclick: () => follow(link) }, goText(link))) : null))),
     h("p", { class: "foot" }, "想了解詳細的打字技巧與功能操作，請參閱左側選單的「使用說明」。")
   ];
 }
@@ -1326,7 +1382,128 @@ function pageAbout() {
   ];
 }
 
-const BUILD = { general: pageGeneral, typing: pageTyping, complete: pageComplete, dict: pageDict, look: pageLook, help: pageHelp, faq: pageFaq, about: pageAbout };
+// ---- 日文 (#36 design, being discussed 2026-11-24): a page of its own - the user "日文要獨立一個頁面" ----------
+function keyBoxFor(key, label) {
+  // a combination key read from the keyboard, as 繁簡切換快捷鍵 (scriptRows)
+  const box = h("button", { class: "text-input key-box", type: "button", "aria-label": label }, S.config[key]);
+  let listening = false;
+  const stop = () => { listening = false; box.textContent = S.config[key]; };
+  box.addEventListener("click", () => { listening = true; box.textContent = "請按下組合鍵…"; });
+  box.addEventListener("blur", stop);
+  box.addEventListener("keydown", async (e) => {
+    if (!listening) return;
+    e.preventDefault();
+    if (e.key === "Escape") return stop();
+    if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) return;
+    const code = /^Key([A-Z])$/.exec(e.code) || /^Digit([0-9])$/.exec(e.code) || /^(F(?:[1-9]|1[0-2]))$/.exec(e.code);
+    const parts = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Win", code ? code[1] : e.key].filter(Boolean);
+    try {  // (a failed save says so and puts the box back, as scriptRows - findings #226)
+      S.config = await api("setConfig", { key, value: parts.join("+") });
+      toast("設定已儲存並自動套用");
+    } catch (err) {
+      toast(err && err.message ? err.message : "儲存失敗，請再試一次");
+    } finally {
+      stop();
+    }
+  });
+  return box;
+}
+
+function pageJapanese() {
+  const on = S.config.ja_enabled;
+  const master = toggle(on, async (v) => { await setConfig("ja_enabled", v); show("japanese"); }, { label: "日文輸入" });
+  // (off as it comes - existing users unchanged, the user 2026-11-24: the rest is shown but can't be used until it is on)
+  // (...and not by the keyboard either: its switches, boxes and buttons disabled - findings #227)
+  const rest = (...nodes) => {
+    const box = h("div", { class: on ? "" : "ja-off", "aria-disabled": on ? "false" : "true",
+      style: on ? "" : "opacity:.45;pointer-events:none" }, ...nodes);
+    if (!on) for (const el of box.querySelectorAll("input, button, select, textarea")) el.disabled = true;
+    return box;
+  };
+  return [
+    h("h1", {}, "日文"),
+    card(row("日文輸入", "用羅馬字打日文，邊打邊轉成漢字與假名。開啟後可以用熱鍵切換到中日混打與純日文。", master)),
+    rest(
+      h("h2", {}, "切換設定"),
+      // (one key between Chinese and Japanese, Shift as in Chinese: 中日混打 <-> 純日文 - the user 2026-11-25, after the
+      // two direct keys of 2026-11-24; one key each for 平／片／自動, a hint by the caret that fades, as 繁／簡)
+      card(
+        row("中文／日文切換", "按一下在中文和日文之間切換，回到那邊上次的模式。在日文時，Shift 在中日混打和純日文之間切換，就像中文的中英混打和純英文。開啟後，程式中相同組合的快捷鍵會失效。",
+          keyBoxFor("ja_switch_key", "中文／日文切換的組合鍵"))),
+      h("h2", {}, "平假名與片假名"),
+      card(
+        row("只打平假名", "在日文時，之後打的日文都出平假名，直到按「自動判斷」。切換時游標旁會短暫顯示「あ」。", keyBoxFor("ja_hira_key", "只打平假名的組合鍵")),
+        row("只打片假名", "之後打的日文都出片假名，直到按「自動判斷」；工作列的圖示也會變成片假名。切換時游標旁會短暫顯示「ア」。", keyBoxFor("ja_kata_key", "只打片假名的組合鍵")),
+        row("自動判斷", "平假名、片假名照詞自動決定（預設）。切回中文時也會回到自動判斷。切換時游標旁會短暫顯示「自動」。", keyBoxFor("ja_auto_key", "自動判斷的組合鍵")),
+        row("F6／F7／F8 轉換", "按 F6、F7、F8 把游標所在的詞換成平假名、全形片假名、半形片假名。開啟後，程式中的 F6、F7、F8 在打日文時會失效。",
+          cfgToggle("ja_fkeys", "F6／F7／F8 轉換"))),
+      h("h2", {}, "純日文"),
+      card(
+        row("空白鍵轉換", "按空白鍵列出游標所在這個詞的候選，再按一下換下一個。關閉時空白鍵打出空格。",
+          cfgToggle("ja_space_convert", "空白鍵轉換"))),
+      // (one hint after the caret, Tab completes it, as 中文 Tab 智慧補字; another one: caret before it, ↓ - the user 2026-11-24)
+      h("h2", {}, "預測"),
+      card(
+        row("預測提示", "邊打邊在游標後方提示最可能接下來的詞或句子，按 Tab 補完；要換別的，把游標移到詞前面按 ↓。",
+          cfgToggle("ja_predict", "預測提示"))),
+      // (#36 plan 7, #89: the Japanese model's switch and, under it, 參考剛送出的字 - as the Chinese 輕量: one model, its
+      // context fixed at 32; 選字模型 and 前文長度 come with more tiers, #85)
+      h("h2", {}, "選字"),
+      card(...jaLongSentenceRows()))
+  ];
+}
+
+function jaLongSentenceRows() {
+  const sub = toggle(S.config.ja_lm_context, (v) => setConfig("ja_lm_context", v),
+    { label: "參考剛送出的字", disabled: !S.config.ja_lm });
+  const subRow = row("參考剛送出的字", "選字時也看剛送出、游標還緊接在後面的日文，最多看 32 個字。", sub);  // (#85: more tiers, as the Chinese one)
+  subRow.classList.add("row-sub");
+  const grey = (off) => { sub.querySelector("input").disabled = off; subRow.classList.toggle("off", off); };
+  const main = toggle(S.config.ja_lm, (v) => { setConfig("ja_lm", v); grey(!v); }, { label: "長句選字加強" });
+  grey(!S.config.ja_lm);
+  return [row("長句選字加強", "看整句意思挑日文的寫法，長句更準確。只影響日文；中文的在「打字」頁。", main), subRow];
+}
+
+// 日文詞彙 (#36 design, 単語登録): a word and its reading in hiragana
+async function editJaWords() {
+  // (#36 plan 7: ja_dictionary.json through jaWords / saveJaWords, checked as Settings.cs checks them)
+  const saved = await api("jaWords");
+  const tbody = h("tbody");
+  const error = h("div", { class: "error-line", role: "alert" });
+  const HIRAGANA = /^[ぁ-ゖー]+$/;
+  function addRow(a = "", b = "") {
+    const ia = h("input", { value: a, "aria-label": "詞彙", maxlength: 30 });
+    const ib = h("input", { value: b, "aria-label": "讀音（平假名）", placeholder: "例：すずきいちろう", maxlength: 30 });
+    const tr = h("tr", {}, h("td", { style: "width:42%" }, ia), h("td", {}, ib),
+      h("td", { style: "width:36px" }, h("button", { class: "icon-btn", "aria-label": "刪除這一行", onclick: () => tr.remove() }, "✕")));
+    tbody.append(tr);
+    return ia;
+  }
+  for (const [a, b] of saved || []) addRow(a, b);
+  const rows = () => [...tbody.rows].map((r) => [r.cells[0].firstChild.value.trim(), r.cells[1].firstChild.value.trim()])
+    .filter(([a, b]) => a || b);
+  const body = h("div", {},
+    h("p", { class: "row-desc" }, "打日文時，打出讀音就是這個詞。同一個讀音可以有好幾個詞，打出排在前面的，其他的按 ↓ 選，選過的下次直接出現。讀音請用平假名（長音用「ー」）。"),
+    h("table", { class: "list" }, h("thead", {}, h("tr", {}, h("th", {}, "詞彙"), h("th", {}, "讀音（平假名）"), h("th"))), tbody),
+    h("button", { class: "btn", style: "margin-top:8px", onclick: () => addRow().focus() }, "＋ 新增一筆"),
+    error);
+  await dialog("自訂詞彙（日文）", body, [
+    { text: "取消", value: false },
+    { text: "儲存", kind: "primary", click: async (close) => {
+      const list = rows();
+      const bad = list.find(([a, b]) => !a || !HIRAGANA.test(b));
+      if (bad) { error.textContent = !bad[0] ? "有一行沒有填詞彙" : `「${bad[0]}」的讀音只能用平假名（長音用ー）`; return; }
+      const r = await api("saveJaWords", { rows: list });
+      if (r && r.error) { error.textContent = r.error; return; }
+      S.jaWords = r;
+      toast("已儲存");
+      close(true);
+      show("dict");
+    } }
+  ]);
+}
+
+const BUILD = { general: pageGeneral, typing: pageTyping, complete: pageComplete, dict: pageDict, japanese: pageJapanese, look: pageLook, help: pageHelp, faq: pageFaq, about: pageAbout };
 let current = "general";
 
 function show(name) {

@@ -2,6 +2,7 @@
 // lattice, order and ties).
 #pragma once
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -23,7 +24,10 @@ struct JaPin {
     int begin, end;
     ustr surface;
     int lid, rid;
+    // the (reading, way of writing) a ↓ pick teaches when sent (ja_learned_from_pick, #36 plan 7); none: nothing
+    std::optional<std::pair<ustr, ustr>> learn = std::nullopt;
 };
+class JaUser;
 
 constexpr int JA_FALLBACK_COST = 20000;
 
@@ -34,7 +38,7 @@ std::vector<std::pair<std::vector<JaNode>, int64_t>> ja_nbest(const ustr& kana, 
                                                               const std::vector<JaPin>& pins = {},
                                                               const std::vector<int>& cuts = {},
                                                               const JaBigram* bigram = nullptr, int prev_sid = -1,
-                                                              int k = 5, int n_best = 10);
+                                                              int k = 5, int n_best = 10, const JaUser* user = nullptr);
 class LmScorer;
 // the Japanese model's units of a candidate sentence (engine/ja_convert.py ja_units): a run of ASCII or full-width
 // letters/digits one EN_MARK, kana (ー 々) and kanji kept, the rest dropped
@@ -50,10 +54,12 @@ int ja_pin_sid(const JaDict& d, const JaBigram& bigram, const ustr& reading, con
 // -1 none or no bigram - the context the next conversion starts from (engine/ja_convert.py word_sid)
 int ja_word_sid(const JaDict& d, const JaBigram* bigram, const JaNode& node);
 // pins: fixed spans (not overlapping); cuts: kana offsets no word crosses; bigram (plan 5, may be null): its bonuses
-// between neighbouring words, prev_sid its word number of the word before (the context)
+// between neighbouring words, prev_sid its word number of the word before (the context); user (plan 7, may be null):
+// the user's words as more words of their readings (ja_user.h)
 std::pair<std::vector<JaNode>, int64_t> ja_convert(const ustr& kana, const JaDict& d,
                                                    const std::vector<JaPin>& pins = {},
                                                    const std::vector<int>& cuts = {},
-                                                   const JaBigram* bigram = nullptr, int prev_sid = -1);
+                                                   const JaBigram* bigram = nullptr, int prev_sid = -1,
+                                                   const JaUser* user = nullptr);
 
 }  // namespace sz

@@ -1,4 +1,4 @@
-// 使用說明的演示動畫：四課，自動一格一格播放（按鍵、組字、候選字、替換列、補字小框），播完換下一課。
+// 使用說明的演示動畫：五課，自動一格一格播放（按鍵、組字、候選字、替換列、補字小框），播完換下一課。
 "use strict";
 
 const LESSONS = (() => {
@@ -50,6 +50,17 @@ const LESSONS = (() => {
         { key: "Tab", comp: "台灣人" },
         { key: "Enter", sent: "台灣人", comp: "" }
       ]
+    },
+    {
+      // (#36 plan 7: each frame as the engine shows it - tools/ja_convert.py --keys with the bigram and the model,
+      // 2026-11-26)
+      tab: "打日文",
+      title: "邊打邊轉日文",
+      text: "在「日文」頁打開日文輸入後，按 Ctrl + F2 切到日文，直接打羅馬字，邊打邊轉成漢字與假名，按 Enter 送出；\n要換寫法，游標移到詞前面按 ↓。",
+      frames: typing(["k", "y", "o", "u", "h", "a", "i", "i", "t", "e", "n", "k", "i"],
+        ["k", "ky", "きょ", "今日", "今日h", "今日は", "今日はい", "今日はいい", "今日はいいt", "今日は良い手", "今日は良い手n",
+         "今日は良い点k", "今日はいい天気"])
+        .concat([{ key: "Enter", sent: "今日はいい天気", comp: "" }])
     }
   ];
 })();

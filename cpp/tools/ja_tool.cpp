@@ -31,6 +31,7 @@
 #include "ja_predict.h"
 #include "ja_romaji.h"
 #include "lexicon.h"
+#include "ja_user.h"
 #include "util.h"
 
 namespace {
@@ -68,10 +69,11 @@ std::vector<sz::ustr> tokens(const sz::ustr& script) {
 
 void run_script(const sz::ustr& script, const sz::RomajiTable& table, const sz::JaDict& dict, bool timing,
                 const sz::JaBigram* bigram = nullptr, const sz::LmScorer* lm = nullptr,
-                const sz::JaPredict* predictor = nullptr, sz::CorrectionMemory* phrases = nullptr) {
+                const sz::JaPredict* predictor = nullptr, sz::CorrectionMemory* phrases = nullptr,
+                sz::JaUser* user = nullptr) {
     sz::Config cfg;
     cfg.set("ja_enabled", sz::Json(true));
-    sz::JaComposer c(table, dict, cfg, bigram, lm, lm ? sz::ja_lm_weight(*lm) : 0, predictor, phrases);
+    sz::JaComposer c(table, dict, cfg, bigram, lm, lm ? sz::ja_lm_weight(*lm) : 0, predictor, phrases, user);
     std::vector<long long> times;
     for (auto& tok : tokens(script)) {
         std::string t = sz::to_utf8(tok);
@@ -81,6 +83,10 @@ void run_script(const sz::ustr& script, const sz::RomajiTable& table, const sz::
         }
         if (t == "{NOFKEYS}") {
             cfg.set("ja_fkeys", sz::Json(false));
+            continue;
+        }
+        if (t == "{NOLMCONTEXT}") {  // (#89: 參考剛送出的字 off from here on)
+            cfg.set("ja_lm_context", sz::Json(false));
             continue;
         }
         auto a = clock_t_::now();
@@ -128,7 +134,7 @@ int wmain(int argc, wchar_t** argv) {
         return 2;
     }
     bool timing = false, keys = false, nbest = false;
-    std::wstring bigram_path, lm_path, predict_path, memory_path;
+    std::wstring bigram_path, lm_path, predict_path, memory_path, user_dir;
     for (int i = 2; i < argc; ++i) {
         timing = timing || std::wstring(argv[i]) == L"--time";
         keys = keys || std::wstring(argv[i]) == L"--keys";
@@ -137,6 +143,7 @@ int wmain(int argc, wchar_t** argv) {
         if (std::wstring(argv[i]) == L"--lm" && i + 1 < argc) lm_path = argv[++i];  // (plan 5b: the Japanese model)
         if (std::wstring(argv[i]) == L"--predict" && i + 1 < argc) predict_path = argv[++i];  // (plan 6)
         if (std::wstring(argv[i]) == L"--memory" && i + 1 < argc) memory_path = argv[++i];
+        if (std::wstring(argv[i]) == L"--user" && i + 1 < argc) user_dir = argv[++i];  // (plan 7: the user's words)
     }
     auto t0 = clock_t_::now();
     auto table = sz::RomajiTable::load(argv[1]);
@@ -161,6 +168,12 @@ int wmain(int argc, wchar_t** argv) {
         lm = std::make_unique<sz::LmScorer>(*lm_model);
     }
     std::ios::sync_with_stdio(false);
+    std::unique_ptr<sz::UserModel> user_model;  // (plan 7: --user <folder>: ja_dictionary.json, ja_picks.json)
+    std::unique_ptr<sz::JaUser> user_layer;
+    if (!user_dir.empty()) {
+        user_model = std::make_unique<sz::UserModel>(user_dir + L"\\user.json", [] { return 20000; });
+        user_layer = std::make_unique<sz::JaUser>(user_model.get());
+    }
     std::unique_ptr<sz::JaPredict> key_table;  // (plan 6: --keys with --predict / --memory)
     std::unique_ptr<sz::CorrectionMemory> key_memory;
     if (keys) {
@@ -207,7 +220,8 @@ int wmain(int argc, wchar_t** argv) {
         }
         sz::ustr input = sz::from_utf8(line);
         if (keys) {
-            run_script(input, *table, *dict, timing, bigram.get(), lm.get(), key_table.get(), key_memory.get());
+            run_script(input, *table, *dict, timing, bigram.get(), lm.get(), key_table.get(), key_memory.get(),
+                       user_layer.get());
             continue;
         }
         auto [kana, pending] = table->to_kana(input);

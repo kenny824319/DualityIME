@@ -12,6 +12,7 @@
 #include "ja_dict.h"
 #include "ja_mixed.h"
 #include "ja_romaji.h"
+#include "ja_user.h"
 #include "json.h"
 #include "lm.h"
 
@@ -37,8 +38,10 @@ public:
     // The reply: the state fields the IME reads (as the Chinese composer's: commit, composition, cursor, candidates...)
     // plus "ja": true and "kana_lock". With 日文輸入 off (or the data missing) what was typed is sent and the reply
     // says "ja_off": true with handled false: the IME goes back to Chinese.
-    // phrases: the user's phrases (UserModel::ja_phrases) the composer learns into and predicts from, or null
-    Json handle(const Json& req, JaData& data, const Config& config, CorrectionMemory* phrases = nullptr);
+    // phrases: the user's phrases (UserModel::ja_phrases) the composer learns into and predicts from, or null;
+    // user (plan 7): the user's model - 自訂詞彙 and 選字學習 (ja_user.h) - or null
+    Json handle(const Json& req, JaData& data, const Config& config, CorrectionMemory* phrases = nullptr,
+                UserModel* user = nullptr);
     // 中日混打's flag on a request to the Chinese composer ("ja_mixed", every one the IME sends): on - its letters read
     // as romaji - only with 日文輸入 on and the data there; ja_off when asked for but not possible (the IME goes back to
     // Chinese, as 純日文 does - findings #171)
@@ -59,6 +62,7 @@ public:
 
 private:
     std::unique_ptr<JaComposer> c_;
+    std::unique_ptr<JaUser> user_;  // (plan 7: over the UserModel given to the first handle)
 };
 
 }  // namespace sz

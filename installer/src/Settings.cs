@@ -219,7 +219,7 @@ public class Backend {
         { "simplified", false }, { "simplified_hotkey", false }, { "simplified_key", "Ctrl+F1" },  // 簡體輸出 (#32)
         { "ja_enabled", false }, { "ja_switch_key", "Ctrl+F2" }, { "ja_hira_key", "Ctrl+F6" },     // 日文 (#36)
         { "ja_kata_key", "Ctrl+F7" }, { "ja_auto_key", "Ctrl+F8" }, { "ja_fkeys", true },
-        { "ja_space_convert", false }, { "ja_predict", true }
+        { "ja_space_convert", false }, { "ja_predict", true }, { "ja_lm", true }, { "ja_lm_context", true }
     };
 
     public Backend(SettingsForm form, string data) {
@@ -261,6 +261,8 @@ public class Backend {
                 return true;
             case "dictionary": return ReadDictionary();
             case "saveDictionary": return SaveDictionary(a);
+            case "jaWords": return ReadJaWords();          // 日文自訂詞彙 (#36 plan 7)
+            case "saveJaWords": return SaveJaWords(a);
             case "quickFill": return ReadQuickFill();
             case "saveQuickFill": return SaveQuickFill(a);
             case "readings": return Readings(a);
@@ -359,6 +361,7 @@ public class Backend {
             { "rememberedSimplified", remembered[2] < 0 ? null : (object)remembered[2] },
             { "words", ((List<object>)dict["words"]).Count },
             { "shortcuts", ((List<object>)dict["shortcuts"]).Count },
+            { "jaWords", ReadJaWords().Count },  // (日文自訂詞彙, #36 plan 7)
             { "quickFill", ReadQuickFill().Count },
             { "beta", (Registry.GetValue(@"HKEY_CURRENT_USER\" + OurKey, "UpdateBranch", "") as string) == "develop" },
             { "canUpdate", File.Exists(Updater.InstalledPath()) },
@@ -381,12 +384,17 @@ public class Backend {
     }
 
     // 已記憶項目: { N, M, S } - the rows of 記憶清單 (#65, the user 2026-11-24: the count agrees with the list): N =
-    // 選字 + 英文字 + 按鍵 + 標點 (#83), M = Email, S = 簡體模式, -1 without user_simplified.json (簡體輸出 never used, #32).
-    public int[] RememberedCount() { return RememberedCount(MemoryList(Today())); }
+    // 選字 + 英文字 + 按鍵 + 標點 (#83) + 日文 (#36 plan 7: only while 日文輸入 is on - the tab is hidden otherwise),
+    // M = Email, S = 簡體模式, -1 without user_simplified.json (簡體輸出 never used, #32).
+    public int[] RememberedCount() {
+        object on;
+        return RememberedCount(MemoryList(Today()), ReadConfig().TryGetValue("ja_enabled", out on) && on is bool && (bool)on);
+    }
 
-    static int[] RememberedCount(Dictionary<string, object> list) {
+    static int[] RememberedCount(Dictionary<string, object> list, bool japanese = false) {
         Func<string, int> n = k => list[k] == null ? -1 : ((List<Dictionary<string, object>>)list[k]).Count;
-        return new[] { n("picks") + n("words") + n("keys") + n("punct"), n("emails"), n("simplified") };
+        return new[] { n("picks") + n("words") + n("keys") + n("punct") + (japanese ? n("ja") : 0), n("emails"),
+                       n("simplified") };
     }
 
     // ---- 記憶清單 (#65): what the memory holds that affects typing, as the engine reads it -------------------------
@@ -558,6 +566,32 @@ public class Backend {
                     punctRows.Add(MemoryRow("punct", k.Key, best, k.Key, best, top, DayOf(days, best), ""));
                 }
         }
+        // 日文 (#36 plan 7): 常打的詞組 (ja_phrases.json, sent twice and more than another way) and 選字學習
+        // (ja_picks.json, once) in effect - engine/lexicon.py memory_list's "ja"
+        var jaRows = new List<Dictionary<string, object>>();
+        if (!clearHabits)
+            foreach (var part in new[] { new { File = "ja_phrases.json", Kind = "ja_phrase", Min = (double)CorrectionMinUses, Note = "常打的詞組" },
+                                         new { File = "ja_picks.json", Kind = "ja_pick", Min = 1.0, Note = "選字" } }) {
+                var data = ReadData(part.File);
+                var jaPicks = Sub(data, "picks");
+                var jaUsed = Sub(data, "used");
+                if (jaPicks == null) continue;
+                foreach (var k in jaPicks) {
+                    var bucket = k.Value as Dictionary<string, object>;
+                    if (bucket == null || bucket.Count == 0) continue;
+                    var days = Sub(jaUsed, k.Key);
+                    string best = null;
+                    double top = double.NegativeInfinity, second = double.NegativeInfinity;
+                    foreach (var c in bucket) {
+                        double n = Num(c.Value);
+                        double f = double.IsNaN(n) || n == 0 ? 0 : Faded(n, DayOf(days, c.Key), today);
+                        if (f > top) { second = top; top = f; best = c.Key; }
+                        else if (f > second) second = f;
+                    }
+                    if (best == null || top < part.Min || top <= second) continue;
+                    jaRows.Add(MemoryRow(part.Kind, k.Key, best, best, k.Key, top, DayOf(days, best), part.Note));
+                }
+            }
         List<Dictionary<string, object>> simpRows = null;
         if (simpFile) {
             simpRows = new List<Dictionary<string, object>>();
@@ -594,7 +628,8 @@ public class Backend {
         return new Dictionary<string, object> {
             { "picks", Ordered(picks.Where(kept).ToList()) }, { "words", Ordered(words.Where(kept).ToList()) },
             { "emails", Ordered(emails.Where(kept).ToList()) }, { "keys", Ordered(keyRows.Where(kept).ToList()) },
-            { "punct", Ordered(punctRows.Where(kept).ToList()) }, { "simplified", simpRows }
+            { "punct", Ordered(punctRows.Where(kept).ToList()) }, { "ja", Ordered(jaRows.Where(kept).ToList()) },
+            { "simplified", simpRows }
         };
     }
 
@@ -749,6 +784,55 @@ public class Backend {
             }
         } catch { }
         return d;
+    }
+
+    // ---- 日文自訂詞彙 (#36 plan 7): ja_dictionary.json {"format": 1, "words": [["詞", "讀音"]...]}, a file of its own -
+    // the engines read it (engine/lexicon.py UserModel.ja_words): a reading is hiragana, ー for a long vowel
+    string JaDictPath { get { return Path.Combine(dataDir, "ja_dictionary.json"); } }
+    const int JaWordMax = 30;
+    static readonly System.Text.RegularExpressions.Regex JaReading =
+        new System.Text.RegularExpressions.Regex("^[\u3041-\u3096\u30FC]+$");
+
+    static List<object> JaWordRows(object[] rows) {
+        var out_ = new List<object>();
+        foreach (object r in rows ?? new object[0]) {
+            object[] pair = r as object[];
+            if (pair != null && pair.Length == 2 && pair[0] is string && pair[1] is string)
+                out_.Add(new object[] { ((string)pair[0]).Trim(), ((string)pair[1]).Trim() });
+        }
+        return out_;
+    }
+
+    List<object> ReadJaWords() {
+        try {
+            var j = json.DeserializeObject(File.ReadAllText(JaDictPath, Encoding.UTF8)) as Dictionary<string, object>;
+            return JaWordRows(j != null && j.ContainsKey("words") ? j["words"] as object[] : null);
+        } catch { return new List<object>(); }
+    }
+
+    // the problem with a row, or null: the page checks the same and shows it under the field
+    static string JaWordProblem(string word, string reading) {
+        if (word.Length == 0) return "請輸入詞";
+        if (reading.Length == 0 || !JaReading.IsMatch(reading)) return "讀音只能用平假名（長音用ー）";
+        if (word.Length > JaWordMax || reading.Length > JaWordMax) return "最多 30 個字";
+        return null;
+    }
+
+    void WriteJaWords(List<object> rows) {
+        Directory.CreateDirectory(dataDir);
+        File.WriteAllText(JaDictPath, json.Serialize(new Dictionary<string, object> { { "format", 1 }, { "words", rows } }),
+                          new UTF8Encoding(false));
+    }
+
+    object SaveJaWords(Dictionary<string, object> a) {
+        var rows = JaWordRows(a.ContainsKey("rows") ? a["rows"] as object[] : null);
+        foreach (object[] r in rows) {
+            string problem = JaWordProblem((string)r[0], (string)r[1]);
+            if (problem != null)
+                return new Dictionary<string, object> { { "error", (string)r[0] + "（" + (string)r[1] + "）：" + problem } };
+        }
+        WriteJaWords(rows);
+        return rows.Count;
     }
 
     object SaveDictionary(Dictionary<string, object> a) {
@@ -1225,10 +1309,10 @@ public class Backend {
                     if (Sub(simp, "replacements") != null) nested(Sub(simp, "replacements"), key, value);
                     if (Sub(simp, "replacements_used") != null) nested(Sub(simp, "replacements_used"), key, value);
                     break;
-                case "punct": {  // (標點記憶, #83)
-                    var punct = Sub(memory, "punct");
-                    if (Sub(punct, "picks") != null) nested(Sub(punct, "picks"), key, value);
-                    if (Sub(punct, "used") != null) nested(Sub(punct, "used"), key, value);
+                case "punct": case "ja_pick": case "ja_phrase": {  // (標點記憶 #83; 日文 #36 plan 7: each its own file)
+                    var part = Sub(memory, kind == "punct" ? "punct" : kind == "ja_pick" ? "ja_picks" : "ja_phrases");
+                    if (Sub(part, "picks") != null) nested(Sub(part, "picks"), key, value);
+                    if (Sub(part, "used") != null) nested(Sub(part, "used"), key, value);
                     break;
                 }
             }
@@ -1269,6 +1353,13 @@ public class Backend {
             if (memory == null) memory = new Dictionary<string, object>();
             memory["ja_phrases"] = jaPhrases;
         }
+        // 日文選字學習 (ja_picks.json, a file of its own, #36 plan 7) too
+        Dictionary<string, object> jaPicks = null;
+        try { jaPicks = json.DeserializeObject(File.ReadAllText(Path.Combine(dataDir, "ja_picks.json"), Encoding.UTF8)) as Dictionary<string, object>; } catch { }
+        if (jaPicks != null) {
+            if (memory == null) memory = new Dictionary<string, object>();
+            memory["ja_picks"] = jaPicks;
+        }
         // 簡體輸出's own memory (user_simplified.json, #32) too; the IME merges it on restore (import_memory)
         Dictionary<string, object> simplified = null;
         try { simplified = json.DeserializeObject(File.ReadAllText(Path.Combine(dataDir, "user_simplified.json"), Encoding.UTF8)) as Dictionary<string, object>; } catch { }
@@ -1277,9 +1368,14 @@ public class Backend {
             memory["simplified"] = simplified;
         }
         if (memory != null) DropWaiting(memory);  // 記憶清單 (#65): rows deleted, the engine not there yet
+        // 個人詞庫: dictionary.json's words and shortcuts, and the 日文自訂詞彙 (ja_dictionary.json) as "ja_words" - an older
+        // version restoring the backup reads words and shortcuts only (#36 plan 7)
+        var dictionary = ReadDictionary();
+        var jaWords = ReadJaWords();
+        if (jaWords.Count > 0) dictionary["ja_words"] = jaWords;
         var data = new Dictionary<string, object> {
             { "app", Migrate.AppName }, { "format", BackupFormat }, { "created", DateTime.Now.ToString("yyyy-MM-dd HH:mm") },
-            { "memory", memory ?? new Dictionary<string, object>() }, { "dictionary", ReadDictionary() }, { "config", config },
+            { "memory", memory ?? new Dictionary<string, object>() }, { "dictionary", dictionary }, { "config", config },
             { "appearance_images", BackupImages() }  // (自訂外觀's photos, #22: {file: base64}; restored with 設定)
         };
         // 快速填入 (#21: an older version reading the backup leaves it), only once saved: the samples shown before
@@ -1331,6 +1427,7 @@ public class Backend {
         return new Dictionary<string, object> {
             { "created", Str(data, "created") }, { "memory", learned },
             { "words", ((List<object>)dict["words"]).Count }, { "shortcuts", ((List<object>)dict["shortcuts"]).Count },
+            { "jaWords", BackupJaWords().Count },  // (日文自訂詞彙: with the 自訂詞彙 checkbox, #36 plan 7)
             { "quickFill", BackupQuickFill().Count },
             // 自訂外觀 (with its photos) and 符號鍵盤 have checkboxes of their own (#77): offered when the file has them
             { "appearance", theirConfig != null && theirConfig.ContainsKey("appearance") },
@@ -1351,6 +1448,13 @@ public class Backend {
     List<object> BackupQuickFill() {
         var j = backup != null ? new Dictionary<string, object> { { "items", backup.ContainsKey("quick_fill") ? backup["quick_fill"] : null } } : null;
         return QuickFillRows(j);
+    }
+
+    // the 日文自訂詞彙 of the backup opened, the rows the engine would take (#36 plan 7)
+    List<object> BackupJaWords() {
+        var j = backup != null && backup.ContainsKey("dictionary") ? backup["dictionary"] as Dictionary<string, object> : null;
+        var rows = JaWordRows(j != null && j.ContainsKey("ja_words") ? j["ja_words"] as object[] : null);
+        return rows.Where(r => JaWordProblem((string)((object[])r)[0], (string)((object[])r)[1]) == null).ToList();
     }
 
     Dictionary<string, object> BackupDictionary() {
@@ -1418,6 +1522,19 @@ public class Backend {
                     if (!maps.Any(m => string.Equals(cell(m, 0), cell(r, 0), StringComparison.OrdinalIgnoreCase) || cell(m, 1) == cell(r, 1))) { maps.Add(r); addedShortcuts++; }
             Directory.CreateDirectory(dataDir);
             File.WriteAllText(DictPath, json.Serialize(d), new UTF8Encoding(false));
+        }
+        if (words) {  // 日文自訂詞彙 (#36 plan 7): merged as 自訂詞彙 - one reading may hold several words (the user
+            // 2026-11-26): a word of a reading here already goes after it, the same word and reading once
+            var mineJa = ReadJaWords();
+            var theirJa = BackupJaWords();
+            int before = mineJa.Count;
+            foreach (object r in theirJa)
+                if (!mineJa.Any(m => (string)((object[])m)[0] == (string)((object[])r)[0] &&
+                                     (string)((object[])m)[1] == (string)((object[])r)[1])) mineJa.Add(r);
+            if (mineJa.Count > before) {
+                addedWords += mineJa.Count - before;
+                WriteJaWords(mineJa);
+            }
         }
         int addedQuickFill = 0;
         if (quickFill) {  // 快速填入: a 捷徑 already here is kept as it is

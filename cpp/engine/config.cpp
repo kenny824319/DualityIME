@@ -47,6 +47,8 @@ const Json& Config::defaults() {
         j["ja_fkeys"] = Json(true);
         j["ja_space_convert"] = Json(false);
         j["ja_predict"] = Json(true);
+        j["ja_lm"] = Json(true);  // (長句選字加強 of the Japanese side, plan 7)
+        j["ja_lm_context"] = Json(true);  // (參考剛送出的字 of the Japanese side, #89)
         return j;
     }();
     return d;

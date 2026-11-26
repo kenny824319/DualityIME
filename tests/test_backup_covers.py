@@ -18,6 +18,8 @@ EXPORTED = {
     "custom_picks.json": "custom_picks.json",  # 自訂詞彙 taken with Tab (memory["custom_picks"])
     "punct.json": "punct.json",                # 標點記憶 (#83, memory["punct"])
     "ja_phrases.json": "ja_phrases.json",      # 日文's phrases sent (#36 plan 6, memory["ja_phrases"])
+    "ja_picks.json": "ja_picks.json",          # 日文選字學習 (#36 plan 7, memory["ja_picks"])
+    "ja_dictionary.json": "ReadJaWords",        # 日文自訂詞彙 (#36 plan 7, dictionary["ja_words"])
     "dictionary.json": "ReadDictionary",       # 自訂詞彙、映射詞彙 (dictionary)
     "config.json": "ReadConfig",               # 設定, 自訂外觀 in it (config; the photos: appearance_images)
     "quick_fill.json": "SavedQuickFill",       # 快速填入 (quick_fill)
@@ -31,6 +33,8 @@ RESTORED = {
     "custom_picks.json": "import-memory.json",
     "punct.json": "import-memory.json",
     "ja_phrases.json": "import-memory.json",
+    "ja_picks.json": "import-memory.json",
+    "ja_dictionary.json": "BackupJaWords",
     "dictionary.json": "BackupDictionary",
     "config.json": "WriteConfig",
     "quick_fill.json": "BackupQuickFill",

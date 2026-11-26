@@ -1,5 +1,7 @@
 #include "composer.h"
 
+#include "ja_user.h"
+
 #include "candlayout.h"
 
 #include <algorithm>
@@ -3001,6 +3003,13 @@ std::vector<JaPin> Composer::ja_pins_of(const Token& t, const ustr& kana) const 
     return out;
 }
 
+JaUser* Composer::ja_user() const {
+    // (#36 plan 7, engine/composer.py _ja_user)
+    if (!ja_user_ || ja_user_->model() != &user) ja_user_ = std::make_shared<JaUser>(&user);
+    ja_user_->refresh();
+    return ja_user_.get();
+}
+
 std::vector<JaNode> Composer::ja_path(const Token& t, ustr& kana, ustr& pending, ustr& spaces) const {
     ja_piece(t, kana, pending, spaces);
     if (kana.empty()) return {};
@@ -3009,12 +3018,18 @@ std::vector<JaNode> Composer::ja_path(const Token& t, ustr& kana, ustr& pending,
         if (it != ja_memo_.end()) return it->second;
     }
     int prev = ja_->bigram ? ja_prev_sid(t) : -1;
+    JaUser* user_layer = ja_user();
     std::vector<JaNode> path;
-    if (ja_->lm) {  // (plan 5b: the lattice's best sentences rescored by the model)
-        auto paths = ja_nbest(kana, ja_->d, ja_pins_of(t, kana), {}, ja_->bigram, prev, JA_NBEST_K, JA_NBEST_N);
-        path = paths[ja_rescore(paths, *ja_->lm->view(ja_prev_units(t)), ja_->lm_weight)].first;
+    if (ja_->lm && config.flag("ja_lm")) {  // (plan 5b: rescored by the model; plan 7: its 長句選字加強 setting)
+        auto paths = ja_nbest(kana, ja_->d, ja_pins_of(t, kana), {}, ja_->bigram, prev, JA_NBEST_K, JA_NBEST_N,
+                              user_layer);
+        const LmScorer* view = ja_->lm->view(ja_prev_units(t));
+        path = paths[ja_rescore(paths, *view, ja_->lm_weight)].first;
+        // (plan 7: the user's ways of writing, after the model; a pick where it says so)
+        if (!path.empty()) path = user_layer->apply(path, ja_pins_of(t, kana), ja_->d, view, ja_->lm);
     } else {
-        path = ja_convert(kana, ja_->d, ja_pins_of(t, kana), {}, ja_->bigram, prev).first;
+        path = ja_convert(kana, ja_->d, ja_pins_of(t, kana), {}, ja_->bigram, prev, user_layer).first;
+        if (!path.empty()) path = user_layer->apply(path, ja_pins_of(t, kana), ja_->d);
     }
     if (ja_memo_on_) ja_memo_[t.start] = path;
     return path;
@@ -3038,7 +3053,8 @@ ustr Composer::ja_prev_units(const Token& t) const {
     // Japanese sent before; nothing after anything else (engine/composer.py _ja_prev_units)
     size_t i = 0;
     while (i < tokens.size() && tokens[i].start != t.start) ++i;
-    if (i == 0 || i == tokens.size()) return ja_lm_context_;
+    // (#89: 參考剛送出的字 off - not the Japanese sent before; the token before in this text still counts)
+    if (i == 0 || i == tokens.size()) return config.flag("ja_lm_context") ? ja_lm_context_ : ustr();
     const Token& before = tokens[i - 1];
     if (!is_romaji(before)) return ustr();
     ustr kana, pending, spaces, text;
@@ -3145,7 +3161,7 @@ void Composer::ja_candidates(std::vector<ustr>& labels, std::vector<Action>& act
     ustr kana, pending, spaces;
     auto path = ja_path(*t, kana, pending, spaces);
     if (path.empty()) return;
-    JaComposer jc(ja_->table, ja_->d, config);
+    JaComposer jc(ja_->table, ja_->d, config, nullptr, nullptr, 0, nullptr, nullptr, ja_user());  // (its custom words)
     jc.set_state(kana, path, ja_pins_of(*t, kana));
     auto segs = jc.segments();
     JaSegment seg = segs.back();
@@ -3264,7 +3280,13 @@ void Composer::pick_ja(const Action& a) {
         pick_ja_alt(a);
         return;
     }
-    const JaPin& pin = a.ja_pin;
+    JaPin pin = a.ja_pin;
+    for (auto& t : tokens)  // (#36 plan 7: what it teaches when sent, from the words it replaces - as 純日文's pick)
+        if (t.start == a.start) {
+            ustr kana, pending, spaces;
+            pin.learn = ja_learned_from_pick(a.ja_kana, ja_path(t, kana, pending, spaces), pin, ja_->d);
+            break;
+        }
     std::vector<JaPin> pins;
     auto it = ja_pins_.find(a.start);
     if (it != ja_pins_.end()) {
@@ -4831,16 +4853,21 @@ void Composer::take_ja(const Action& a) {
     ja_predicted_[a.start] = {b, static_cast<int>(new_kana.size()), a.ja_preds};  // (for ↓ on it, findings #196)
 }
 
-std::vector<CorrectionMemory::Change> Composer::ja_learn(int upto) {
+std::vector<CorrectionMemory::Change> Composer::ja_learn(int upto, std::vector<CorrectionMemory::Change>* picked) {
     // see engine/composer.py _ja_learn
     std::vector<CorrectionMemory::Change> changes;
-    if (!ja_ || !config.flag("ja_predict")) return changes;
+    if (!ja_) return changes;
+    JaUser* user_layer = ja_user();
     for (auto& t : tokens) {
         if (t.start >= upto) break;
         if (!is_romaji(t)) continue;
         ustr kana, pending, spaces;
         auto path = ja_path(t, kana, pending, spaces);
         if (path.empty()) continue;
+        // (選字學習, plan 7: with 預測提示 off too; under a kana lock nothing renewed, findings #225)
+        auto p = user_layer->learn_sent(path, ja_pins_of(t, kana), ja_lock_ == "auto");
+        if (picked) picked->insert(picked->end(), p.begin(), p.end());
+        if (!config.flag("ja_predict")) continue;
         JaComposer jc(ja_->table, ja_->d, config);
         jc.set_state(kana, path, ja_pins_of(t, kana));
         jc.kana_lock = ja_lock_;
@@ -7318,7 +7345,7 @@ void Composer::do_commit() {
         undo.corrected.insert(undo.corrected.end(), learned.begin(), learned.end());
     }
     undo.marks = learn_marks(static_cast<int>(raw.size()));  // (標點記憶, #83)
-    undo.ja_learned = ja_learn(static_cast<int>(raw.size()));  // (中日混打's phrases, plan 6)
+    undo.ja_learned = ja_learn(static_cast<int>(raw.size()), &undo.ja_picked);  // (中日混打's phrases and picks)
     undo.dropped = user.simp_dropped;
     clear_input();
     commit = text;
@@ -7666,6 +7693,7 @@ ustr Composer::undo_commit() {
     if (!undo.corrected.empty()) user.corrections.restore(undo.corrected);  // (校正記憶 the same)
     if (!undo.marks.empty()) user.punct.restore(undo.marks);  // (標點記憶, #83)
     if (!undo.ja_learned.empty()) user.ja_phrases.restore(undo.ja_learned);  // (中日混打's phrases, plan 6)
+    if (!undo.ja_picked.empty()) user.ja_picks.restore(undo.ja_picked);     // (...and its picks, plan 7)
     caret_.reset();
     commit.clear();
     refresh(&undo.syllables);  // (the syllables the picks are numbered by)

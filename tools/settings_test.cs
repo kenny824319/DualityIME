@@ -190,7 +190,7 @@ static class SettingsTest {
                 fixture = Path.Combine(fixture, "tests", "data", "memory_list");
                 string mdir = Path.Combine(dir, "memory_list");
                 Directory.CreateDirectory(mdir);
-                foreach (string name in new[] { "user.json", "keys.json", "user_simplified.json", "config.json", "punct.json" })
+                foreach (string name in new[] { "user.json", "keys.json", "user_simplified.json", "config.json", "punct.json", "ja_picks.json", "ja_phrases.json" })
                     File.Copy(Path.Combine(fixture, name), Path.Combine(mdir, name), true);
                 var want = (Dictionary<string, object>)json.DeserializeObject(File.ReadAllText(Path.Combine(fixture, "expected.json"), Encoding.UTF8));
                 want.Remove("_about");
@@ -340,6 +340,49 @@ static class SettingsTest {
                   shortcuts.Count == 1 && (string)((object[])shortcuts[0])[1] == "台北市 \"信義區\"\n101", json.Serialize(d));
             state = (Dictionary<string, object>)call("state", null);
             Check("state counts the dictionary", (int)state["words"] == 1 && (int)state["shortcuts"] == 1, json.Serialize(state));
+
+            // 日文自訂詞彙 (#36 plan 7): ja_dictionary.json {"format": 1, "words": [[word, reading], ...]}, checked here too
+            object saved36 = call("saveJaWords", new Dictionary<string, object> {
+                { "rows", new object[] { new object[] { " 優衣 ", "ゆい" }, new object[] { "華寅", "ふぁとらー" } } } });
+            var ja36 = (List<object>)call("jaWords", null);
+            Check("日文自訂詞彙 saved (trimmed) and read back", ja36.Count == 2 && (string)((object[])ja36[0])[0] == "優衣" &&
+                  (string)((object[])ja36[1])[1] == "ふぁとらー" && File.Exists(Path.Combine(dir, "ja_dictionary.json")),
+                  json.Serialize(saved36) + " " + json.Serialize(ja36));
+            var state36 = (Dictionary<string, object>)call("state", null);
+            Check("state counts the 日文自訂詞彙", state36.ContainsKey("jaWords") && (int)state36["jaWords"] == 2, json.Serialize(state36));
+            foreach (var bad36 in new[] {
+                         Tuple.Create("yui", "優衣", "讀音只能用平假名（長音用ー）"), Tuple.Create("ゆい１", "優衣", "讀音只能用平假名（長音用ー）"),
+                         Tuple.Create("ゆい", " ", "請輸入詞"), Tuple.Create("ゆい", new string('優', 31), "最多 30 個字"),
+                         Tuple.Create(new string('ゆ', 31), "優衣", "最多 30 個字") }) {
+                var err36 = call("saveJaWords", new Dictionary<string, object> {
+                    { "rows", new object[] { new object[] { bad36.Item2, bad36.Item1 } } } }) as Dictionary<string, object>;
+                Check("saveJaWords refuses " + bad36.Item1 + " / " + bad36.Item2 + ": " + bad36.Item3 + ", the file as it was",
+                      err36 != null && err36.ContainsKey("error") && ((string)err36["error"]).Contains(bad36.Item3) &&
+                      ((List<object>)call("jaWords", null)).Count == 2, json.Serialize(err36));
+            }
+            string backup36 = Path.Combine(dir, "backup36.json");
+            b.WriteBackup(backup36);
+            File.Delete(Path.Combine(dir, "ja_dictionary.json"));
+            var read36 = (Dictionary<string, object>)b.ReadBackup(backup36);
+            Check("the 匯入 window counts the 日文自訂詞彙", read36.ContainsKey("jaWords") && (int)read36["jaWords"] == 2, json.Serialize(read36));
+            b.RestoreBackup(false, false, false, false);
+            Check("a restore without 自訂詞彙 leaves the 日文自訂詞彙 out", !File.Exists(Path.Combine(dir, "ja_dictionary.json")), "");
+            b.ReadBackup(backup36);
+            b.RestoreBackup(false, true, false, false);
+            Check("a restore with 自訂詞彙 brings the 日文自訂詞彙 back", ((List<object>)call("jaWords", null)).Count == 2, "");
+            // (one reading, several words - the user 2026-11-26: a word of a reading here already is added after it, the
+            // same word and reading once)
+            call("saveJaWords", new Dictionary<string, object> {
+                { "rows", new object[] { new object[] { "写る", "うつる" }, new object[] { "映る", "うつる" } } } });
+            b.WriteBackup(backup36);
+            call("saveJaWords", new Dictionary<string, object> { { "rows", new object[] { new object[] { "写る", "うつる" } } } });
+            b.ReadBackup(backup36);
+            b.RestoreBackup(false, true, false, false);
+            var merged36 = (List<object>)call("jaWords", null);
+            Check("a restore adds a word of a reading here already, the same word once",
+                  merged36.Count == 2 && (string)((object[])merged36[0])[0] == "写る" && (string)((object[])merged36[1])[0] == "映る",
+                  json.Serialize(merged36));
+            File.Delete(backup36);
 
             var r = (List<object>)call("readings", new Dictionary<string, object> { { "words", new object[] { "台灣", "你好嗎", "㐀㐁" } } });
             Check("填入注音 from the lexicon", (string)r[0] == "ㄊㄞˊ ㄨㄢ" && ((string)r[1]).Split(' ').Length == 3 && (string)r[2] == "",

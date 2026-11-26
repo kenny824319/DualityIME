@@ -1,0 +1,24 @@
+# e2e-args: -Config cpp\tools\ja_nolm_config.json -JaWords cpp\tools\ja_user_words.json
+# #36 plan 7 through the real IME, ja_user_cases.txt with the Japanese 長句選字加強 off (ja_lm false): a pick is then
+# always typed (箸を渡る, 色を帰る). Expected text from the reference engine for the same keys (tools/ja_convert.py
+# --keys --user with the bigram, no model; the first line Composer in 中日混打), lines in this order - what a line
+# learns the next ones use. Switching away forgets the Japanese context, so every line starts without one, as the
+# tool's.
+# (中日混打 first: the custom word after Chinese; then Shift to 純日文 for the rest)
+{^F2}ji3uturu{ENTER}{^F2} => 我写る
+{^F2}{SHIFT}{^F2}su3cl3{ENTER} => 你好
+# a custom word alone, inside a longer word (遺言), a reading the dictionary lacks
+{^F2}yui{ENTER}{^F2} => 優衣
+{^F2}yuigon{ENTER}{^F2} => 遺言
+{^F2}fatora{ENTER}{^F2} => 華寅
+# one reading, two custom words: the first; ↓ picks the other among them - typed from then on, whatever the sentence
+{^F2}uturu{ENTER}{^F2} => 写る
+{^F2}uturu{DOWN}{DOWN}{ENTER}{ENTER}{^F2} => 映る
+{^F2}uturu{ENTER}{^F2} => 映る
+{^F2}syasinnniuturu{ENTER}{^F2} => 写真に映る
+# 選字學習 without the model: the pick wherever its reading is
+{^F2}hasi{DOWN}{DOWN}{DOWN}{ENTER}{ENTER}{^F2} => 箸
+{^F2}hasi{ENTER}{^F2} => 箸
+{^F2}hasiwowataru{ENTER}{^F2} => 箸を渡る
+{^F2}kaeru{DOWN}{DOWN}{ENTER}{ENTER}{^F2} => 帰る
+{^F2}irowokaeru{ENTER}{^F2} => 色を帰る

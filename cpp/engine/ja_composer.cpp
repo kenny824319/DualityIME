@@ -1,5 +1,7 @@
 #include "ja_composer.h"
 
+#include "ja_user.h"
+
 #include "lexicon.h"
 
 #include <algorithm>
@@ -68,9 +70,10 @@ ustr ja_to_half_katakana(const ustr& s) {
 }
 
 JaComposer::JaComposer(const RomajiTable& table, const JaDict& d, const Config& config, const JaBigram* bigram,
-                       const LmScorer* lm, int64_t lm_weight, const JaPredict* predictor, CorrectionMemory* phrases)
+                       const LmScorer* lm, int64_t lm_weight, const JaPredict* predictor, CorrectionMemory* phrases,
+                       JaUser* user)
     : table_(table), d_(d), config_(config), bigram_(bigram), lm_(lm), lm_weight_(lm_weight), predictor_(predictor),
-      phrases_(phrases) {
+      phrases_(phrases), user_(user) {
     reset();
 }
 
@@ -95,13 +98,19 @@ void JaComposer::convert_now() {
         cuts.push_back(b);
         cuts.push_back(e);
     }
+    if (user_) user_->refresh();
     if (kana_.empty()) {
         path_.clear();
-    } else if (lm_) {  // (plan 5b: the lattice's best sentences rescored by the model)
-        auto paths = ja_nbest(kana_, d_, pins, cuts, bigram_, context_sid_, JA_NBEST_K, JA_NBEST_N);
-        path_ = paths[ja_rescore(paths, *lm_->view(lm_context_), lm_weight_)].first;
+    } else if (lm_ && config_.flag("ja_lm")) {  // (plan 5b: rescored by the model; plan 7: its 長句選字加強 setting)
+        auto paths = ja_nbest(kana_, d_, pins, cuts, bigram_, context_sid_, JA_NBEST_K, JA_NBEST_N, user_);
+        // (#89: 參考剛送出的字 off - the Japanese sent before is not the model's context)
+        const LmScorer* view = lm_->view(config_.flag("ja_lm_context") ? lm_context_ : ustr());
+        path_ = paths[ja_rescore(paths, *view, lm_weight_)].first;
+        // (plan 7: the user's ways of writing, after the model; a pick where it says so)
+        if (user_) path_ = user_->apply(path_, pins, d_, view, lm_);
     } else {
-        path_ = ja_convert(kana_, d_, pins, cuts, bigram_, context_sid_).first;
+        path_ = ja_convert(kana_, d_, pins, cuts, bigram_, context_sid_, user_).first;
+        if (user_) path_ = user_->apply(path_, pins, d_);
     }
 }
 
@@ -409,6 +418,18 @@ std::vector<std::pair<ustr, JaPin>> JaComposer::candidates_for(const JaSegment& 
         if (seen.insert(text).second) out.push_back({text, p});
     };
     add(seg.surface, JaPin{b, e, seg.surface, first_lid, last_rid});
+    if (user_)  // (自訂詞彙: all the words of the reading next, the user 2026-11-26)
+        for (auto& w : user_->customs(reading)) {
+            JaPin p{b, e, w, first_lid, last_rid};
+            auto [f, l] = d_.lookup(reading);
+            for (uint32_t x = f; x < l; ++x)
+                if (d_.surface(x) == w) {
+                    p.lid = d_.lid(x);
+                    p.rid = d_.rid(x);
+                    break;
+                }
+            add(w, p);
+        }
     for (auto& o : options) add(o.text, o.pin);
     add(reading, JaPin{b, e, reading, first_lid, last_rid});
     ustr kata = ja_to_katakana(reading);
@@ -479,7 +500,8 @@ bool JaComposer::pick(int i) {
     if (alt >= 0 && predicted_) {  // (another prediction over what Tab took)
         Predicted was = *predicted_;
         put_phrase(was.begin, was.end, was.preds[static_cast<size_t>(alt)], was.preds);
-    } else {
+    } else {  // (plan 7: what it teaches when sent, from the words it replaces)
+        p.learn = ja_learned_from_pick(kana_, path_, p, d_);
         pin(p);
     }
     render();
@@ -511,6 +533,8 @@ ustr JaComposer::flush() {
     render();
     ustr out = composition;
     learn(segments());
+    // (plan 7: the picks sent, the ones used as remembered renewed - not under a kana lock, findings #225)
+    if (user_) user_->learn_sent(path_, pins, kana_lock == "auto");
     // (what is sent is the next conversion's context: its last word; none after a sentence end or kana as typed)
     bool ends = !out.empty() && (out.back() == U'。' || out.back() == U'？' || out.back() == U'！');
     bool keep = !path_.empty() && kana_lock == "auto" && !out.empty() && !ends;

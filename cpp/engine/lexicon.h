@@ -177,7 +177,9 @@ class CorrectionMemory {
 public:
     // flat: 標點記憶 (#83, engine/lexicon.py PunctMemory) - punct.json, {"format", "picks", "used"}, read at once
     // keep: the key strings kept (the most counted, then the most recently used - findings #194)
-    CorrectionMemory(std::wstring path, std::function<int()> today, bool flat = false, size_t keep = KEEP_CORRECTIONS);
+    // min_uses: a choice counts once picked this many times (日文選字學習: once - #36 plan 7)
+    CorrectionMemory(std::wstring path, std::function<int()> today, bool flat = false, size_t keep = KEEP_CORRECTIONS,
+                     double min_uses = CORRECTION_MIN_USES);
     void enable(bool on);  // the setting on (or on at start): read the file once
     double count(const std::string& keys, const ustr& choice) const;
     // what these keys do by the user's picks: "" (as typed), a reading, or none (the rules)
@@ -197,9 +199,13 @@ public:
     // used as remembered and sent unchanged (#78): today's day, the count as it stands; under 1 or today already: none
     std::vector<Change> touch(const std::string& keys, const ustr& choice);
     void restore(const std::vector<Change>& changes);  // (in reverse: a touch, then a record of the same)
+    // 日文選字學習 (#36 plan 7, engine/lexicon.py JaPickMemory.learn): from now on keys are written choice - the keys'
+    // other choices go - or, already so, used (touch)
+    std::vector<Change> learn_only(const std::string& keys, const ustr& choice);
     void forget();                 // 全部清除 (on or off)
     bool forget_choice(const std::string& keys, const ustr& choice);  // 記憶清單 (#65): one choice, true if there
-    void merge(const Json& raw);   // a backup restored (on or off)
+    // a backup restored (on or off); last_wins (日文選字學習, findings #210): of each reading one way, the one picked last
+    void merge(const Json& raw, bool last_wins = false);
     size_t size() const;
     // the key strings with picks (plan 6: the user's phrases starting with what is typed), in key order
     std::vector<std::string> keys() const {
@@ -223,6 +229,7 @@ private:
     void prune();
     bool flat_ = false;
     size_t keep_ = KEEP_CORRECTIONS;
+    double min_uses_ = CORRECTION_MIN_USES;
     std::wstring path_;
     std::function<int()> today_;
     bool keep_file_ = false;
@@ -328,6 +335,7 @@ public:
         custom_picks.keep_file();
         punct.keep_file();
         ja_phrases.keep_file();
+        ja_picks.keep_file();
     }
 
     OrderedMap<ustr, OrderedMap<ustr, double>> phrases;
@@ -354,8 +362,15 @@ public:
     CustomPickMemory custom_picks;  // 自訂詞彙 taken with Tab, in a file of its own (#13)
     CorrectionMemory punct;  // 標點記憶 (#83), in a file of its own (punct.json)
     CorrectionMemory ja_phrases;  // 日文's phrases sent (#36 plan 6, ja_phrases.json; engine/lexicon.py JaPhraseMemory)
+    CorrectionMemory ja_picks;    // 日文選字學習 (#36 plan 7, ja_picks.json; engine/lexicon.py JaPickMemory)
+    // 日文自訂詞彙 (#36 plan 7): reading -> word from ja_dictionary.json, read again when the file changed
+    // (engine/lexicon.py UserModel.ja_words)
+    const std::map<ustr, std::vector<ustr>>& ja_words();
 
 private:
+    std::wstring ja_words_path_;
+    long long ja_words_mtime_ = -2;  // (-2 never read, -1 no file)
+    std::map<ustr, std::vector<ustr>> ja_words_;
     double faded(double count, const int* day) const;
     void prune();
     void merge_simplified();  // phrases / phrase_used = shared_* with simp_* laid over them

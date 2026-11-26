@@ -1,5 +1,5 @@
 {
-  "_about": "#65 記憶清單: what the engine's memory_list() and the settings tool's memory op list for this folder on day 20800 (both are tested against this file). Rows newest first (day, nulls last); counts faded (each full 20 days unused halve them: 台灣, 20 days, 4 → 2), rounded, at least 1; e-mails never fade. Left out: kubernetes and recieve (fewer than 2 uses faded), xi3 (a tie), zz9 (one pick), 影片→視頻 (one pick). 標點 (#83): 「→『 (3 against 1) and ，→、 (4, 30 days: 2); left out ？ (a tie), （→【 (one pick), 。 (the default itself winning).",
+  "_about": "#65 記憶清單: what the engine's memory_list() and the settings tool's memory op list for this folder on day 20800 (both are tested against this file). Rows newest first (day, nulls last); counts faded (each full 20 days unused halve them: 台灣, 20 days, 4 → 2), rounded, at least 1; e-mails never fade. Left out: kubernetes and recieve (fewer than 2 uses faded), xi3 (a tie), zz9 (one pick), 影片→視頻 (one pick). 標點 (#83): 「→『 (3 against 1) and ，→、 (4, 30 days: 2); left out ？ (a tie), （→【 (one pick), 。 (the default itself winning). ja: 選字學習 (ja_picks.json) and 常打的詞組 (ja_phrases.json) in effect, #36 plan 7.",
   "picks": [
     {"kind": "pick", "key": "ㄋㄧˇ", "value": "妳", "shown": "妳", "reading": "ㄋㄧˇ", "count": 3, "day": 20795, "note": ""},
     {"kind": "pick", "key": "ㄊㄞˊ-ㄨㄢ", "value": "台灣", "shown": "台灣", "reading": "ㄊㄞˊ ㄨㄢ", "count": 2, "day": 20780, "note": ""},
@@ -22,6 +22,11 @@
   "punct": [
     {"kind": "punct", "key": "「", "value": "『", "shown": "「", "reading": "『", "count": 3, "day": 20790, "note": ""},
     {"kind": "punct", "key": "，", "value": "、", "shown": "，", "reading": "、", "count": 2, "day": 20770, "note": ""}
+  ],
+  "ja": [
+    {"kind": "ja_phrase", "key": "ありがとう", "value": "ありがとう", "shown": "ありがとう", "reading": "ありがとう", "count": 3, "day": 20799, "note": "常打的詞組"},
+    {"kind": "ja_pick", "key": "はし", "value": "箸", "shown": "箸", "reading": "はし", "count": 1, "day": 20795, "note": "選字"},
+    {"kind": "ja_pick", "key": "あめ", "value": "飴", "shown": "飴", "reading": "あめ", "count": 2, "day": 20790, "note": "選字"}
   ],
   "simplified": [
     {"kind": "simp_pick", "key": "ㄓㄜˋ", "value": "這", "shown": "這", "reading": "ㄓㄜˋ", "count": 6, "day": 20800, "note": "簡體選字"},

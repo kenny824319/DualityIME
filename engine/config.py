@@ -47,7 +47,9 @@ DEFAULTS = {
     "ja_auto_key": "Ctrl+F8",   # 自動判斷 (the default)
     "ja_fkeys": True,           # F6 / F7 / F8 turn the 文節 at the caret into hiragana / katakana / half-width katakana
     "ja_space_convert": False,  # 純日文: Space lists the 文節's candidates (off: Space types a space)
-    "ja_predict": True,         # 預測提示 (a later plan)
+    "ja_predict": True,         # 預測提示 (plan 6)
+    "ja_lm": True,              # 長句選字加強 of the Japanese side: the model rescoring the conversion (plan 7)
+    "ja_lm_context": True,      # 參考剛送出的字 of the Japanese side: the Japanese just sent the model reads first (#89)
 }
 
 
