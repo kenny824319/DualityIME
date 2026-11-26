@@ -72,9 +72,10 @@ CASES = [
     "hasi{DOWN}{DOWN}{ENTER}su3cl3su3cl3{ENTER}{RESET}",
     # 符號鍵盤自訂 (#69, sixteenth to twentieth: --cases 20 runs them; the setting with custom_symbols types from
     # SYMBOLS, the others from the built-in pages): a key, a page of one's own first, `` its ` key, Tab through the pages
-    # shown (數學 hidden), an empty key typing nothing, an emoji key whole, Enter at the arrows' cursor
+    # shown (數學 hidden), an empty key typing nothing, an emoji key whole, Enter at the arrows' cursor; a symbol picked
+    # with nothing typed held in the text being typed, swapped with ↓, Backspace taking one back (#82, Issue #11)
     "`a{ENTER}", "`{TAB}a{TAB}{ENTER}", "``{ENTER}", "`{TAB}{TAB}{TAB}8{ENTER}",
-    "su3`s{ESC}`d{ENTER}`{DOWN}{RIGHT}{ENTER}{ENTER}{RESET}",
+    "su3`s{ESC}`d{ENTER}`{DOWN}{RIGHT}{ENTER}{ENTER}{RESET}`,{LEFT}{DOWN}2{ENTER}{ENTER}`g`a{BACK}{ENTER}{RESET}",
     # 英文補字 (#40, twenty-first to twenty-sixth: --cases 26 runs them): a word past data/english.txt from
     # english_complete.txt, right after Chinese (我accel), a prefix the everyday list answers, in capitals; a remembered
     # word right after Chinese where the reading splits it (acc + ㄍㄠ: memory looked up only "el")

@@ -5708,13 +5708,13 @@ void Composer::close_symbols() {
     suggest();
 }
 
-void Composer::type_symbol(const ustr& sym, bool stay, bool join) {
+void Composer::type_symbol(const ustr& sym, bool stay, bool join, bool hold) {
     // the text typed so far goes out first, then the symbol (快速填入 closes too); the symbol keyboard closes unless stay
     // (符號鍵盤選完不關, #49); join (Ctrl + a mark, the symbol keyboard: #52): with text being typed it joins it instead
     fill_.reset();
     if (!stay) close_symbols();
     else symbol_fresh_ = false;  // (something went out: no longer new, Space is a space - not 快速填入)
-    if (join && !raw.empty()) {
+    if (join && (!raw.empty() || hold)) {  // (hold: a symbol picked from the keyboard, #82 / Issue #11: kept with nothing typed too)
         join_symbol(sym);
         return;
     }
@@ -5833,14 +5833,14 @@ bool Composer::key_symbols(std::optional<char32_t> ch, const std::string& specia
     } else if (ch) {
         auto i = symbols::key_index(*ch);
         ustr sym = i ? table.symbol(*symbol_page, *i) : ustr();
-        if (!sym.empty()) type_symbol(sym, stay, true);  // (an empty key types nothing: keyboard and text stay)
+        if (!sym.empty()) type_symbol(sym, stay, true, true);  // (an empty key types nothing: keyboard and text stay)
     } else if (special == "BACK" && stay) {
         return key_special("BACK");  // (false with nothing typed: the app deletes a character)
     } else if (special == "ESC" || special == "BACK") {
         close_symbols();
     } else if (special == "ENTER") {
         ustr sym = table.symbol(*symbol_page, symbol_cursor);
-        if (!sym.empty()) type_symbol(sym, stay, true);
+        if (!sym.empty()) type_symbol(sym, stay, true, true);
     } else if (special == "TAB" || special == "PGDN") {
         symbol_page = (*symbol_page + 1) % pages;
     } else if (special == "STAB" || special == "PGUP") {

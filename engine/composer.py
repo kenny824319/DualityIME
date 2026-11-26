@@ -4183,16 +4183,17 @@ class Composer:
         self.symbol_page = None
         self._suggest()
 
-    def _type_symbol(self, sym, stay=False, join=False):
+    def _type_symbol(self, sym, stay=False, join=False, hold=False):
         """The text typed so far goes out first, then the symbol (快速填入 closes too); the symbol keyboard closes
         unless stay (符號鍵盤選完不關, #49). join (Ctrl + a mark, the symbol keyboard: #52): with text being typed the
-        symbol joins it instead (_join_symbol)."""
+        symbol joins it instead (_join_symbol); hold (a symbol picked from the symbol keyboard, #82 / Issue #11): with
+        nothing typed too - it stays in the text being typed as a punctuation key's mark does, ↓ swaps it, Enter sends it."""
         self.fill = None
         if not stay:
             self.close_symbols()
         else:  # (something went out: no longer new, Space is a space - not 快速填入 - code-reviewer)
             self.symbol_fresh = False
-        if join and self.raw:
+        if join and (self.raw or hold):
             self._join_symbol(sym)
             return
         before = ""
@@ -4302,7 +4303,7 @@ class Composer:
             i = symbols.key_index(ch)
             sym = table.symbol(self.symbol_page, i) if i is not None else ""
             if sym:  # (an empty key types nothing: the keyboard and the text stay as they are)
-                self._type_symbol(sym, stay, True)
+                self._type_symbol(sym, stay, True, hold=True)
         elif special == "BACK" and stay:
             return self._key_special("BACK")  # (False with nothing typed: the app deletes a character)
         elif special in ("ESC", "BACK"):
@@ -4310,7 +4311,7 @@ class Composer:
         elif special == "ENTER":
             sym = table.symbol(self.symbol_page, self.symbol_cursor)
             if sym:
-                self._type_symbol(sym, stay, True)
+                self._type_symbol(sym, stay, True, hold=True)
         elif special in ("TAB", "PGDN"):
             self.symbol_page = (self.symbol_page + 1) % pages
         elif special in ("STAB", "PGUP"):

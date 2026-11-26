@@ -626,6 +626,25 @@ class SymbolKeyboardTest(Base):
         self.assertIsNone(c.symbol_page)
         self.assertEqual(c.commit, "")
 
+    def test_a_symbol_picked_with_nothing_typed_stays(self):
+        # (#82, Issue #11: a symbol picked from the keyboard with nothing typed stays in the text being typed, as a
+        # punctuation key's mark since 3.3.0 - ↓ before it swaps it (#53), Enter sends it; the user 2026-11-26)
+        c = self.c
+        self.press("`", ",")
+        self.assertEqual((c.commit, c.composition, c.symbol_page), ("", "，", None))
+        self.press("LEFT", "DOWN")
+        self.assertEqual(c.candidates[:3], ["，", "、", "；"])
+        c.cand_index = 1
+        self.press("ENTER")
+        self.assertEqual(c.composition, "、")
+        self.press("ENTER")
+        self.assertEqual(c.commit, "、")
+        self.press("`", "ENTER")  # (the arrows' cursor: Enter picks it, the same)
+        self.assertEqual((c.commit, c.composition), ("", "1"))
+        c.key(special="ESC")
+        self.press("`", " ")  # (the keyboard's Space - a space, not a symbol - goes out as before)
+        self.assertNotEqual(c.composition, " ")
+
     def test_tilde_types_a_tilde(self):
         # Shift+` is ~, as any other symbol key (users: it could not be typed at all); ` alone opens the keyboard
         c = self.c
@@ -645,16 +664,19 @@ class SymbolKeyboardTest(Base):
                 for _ in range(page):
                     c.key(special="TAB")
                 c.key(ch)
-                self.assertEqual(c.commit, expected)
+                # (#82: with nothing typed it stays in the text being typed - Enter sends it)
+                self.assertEqual((c.commit, c.composition), ("", expected))
                 self.assertIsNone(c.symbol_page)  # closes after one symbol
+                c.key(special="ESC")
 
     def test_shifted_key_is_the_same_key(self):
         self.c.key("`")
         self.c.key("A")
-        self.assertEqual(self.c.commit, "※")
+        self.assertEqual(self.c.composition, "※")  # (#82: held until Enter)
+        self.c.key(special="ESC")
         self.c.key("`")
         self.c.key("!")  # Shift+1
-        self.assertEqual(self.c.commit, "1")
+        self.assertEqual(self.c.composition, "1")
 
     def test_pages_wrap_around(self):
         c = self.c
@@ -668,6 +690,8 @@ class SymbolKeyboardTest(Base):
         c.key("`")
         c.key(special="DOWN")   # from "1" down to "q"
         c.key(special="RIGHT")  # "w"
+        c.key(special="ENTER")
+        self.assertEqual((c.commit, c.composition), ("", "》"))  # (#82: held until Enter)
         c.key(special="ENTER")
         self.assertEqual(c.commit, "》")
 
@@ -734,14 +758,16 @@ class SymbolKeyboardTest(Base):
         # (or × - the IME's close_symbols) closes it)
         c = self.c
         c.config.values = dict(DEFAULTS, symbols_stay_open=True)
-        sent = []
+        shown = []
         for k in ("`", "a", "s", "RIGHT", "ENTER", " ", "f"):
             self.press(k)
-            sent.append(c.commit)
-            self.assertEqual(c.symbol_page, 0, k)
+            shown.append(c.composition)  # (#82: held in the text being typed, each one after the last)
+            self.assertEqual((c.commit, c.symbol_page), ("", 0), k)
         from engine import symbols
         at = symbols.neighbour(symbols.KEYS.index("1"), "RIGHT")
-        self.assertEqual(sent, ["", "※", symbols.symbol(0, symbols.key_index("s")), "", symbols.symbol(0, at), " ", "●"])
+        s_sym, at_sym = symbols.symbol(0, symbols.key_index("s")), symbols.symbol(0, at)
+        self.assertEqual(shown, ["", "※", "※" + s_sym, "※" + s_sym, "※" + s_sym + at_sym,
+                                 "※" + s_sym + at_sym + " ", "※" + s_sym + at_sym + " ●"])
         self.press("ESC")
         self.assertIsNone(c.symbol_page)
         self.press("`", "a")
@@ -757,7 +783,8 @@ class SymbolKeyboardTest(Base):
         self.assertIsNotNone(c.fill_shown())
         self.press("ESC", "`", "a", " ")
         self.assertIsNone(c.fill_shown())
-        self.assertEqual((c.commit, c.symbol_page), (" ", 0))
+        # (#82: held as typed - Esc goes from 快速填入 back to the keyboard, whose ` key types `; ※; the space joins, #52)
+        self.assertEqual((c.commit, c.composition, c.symbol_page), ("", "`※ ", 0))
 
     def test_stays_open_after_ctrl_mark_and_numpad(self):
         # (#49, code-reviewer: Ctrl + a mark and a numpad key closed it; with the setting only Esc / × do)
@@ -769,10 +796,11 @@ class SymbolKeyboardTest(Base):
                 if not stay:
                     self.press("`")
                 self.assertTrue(c.type_full_punct(","))
-                self.assertEqual((c.commit, c.symbol_page), ("，", 0 if stay else None))
-                if stay:  # (something went out: not new any more, Space is a space, not 快速填入 - code-reviewer)
+                # (#82: ※ is held as text being typed, so Ctrl+, joins it, #52)
+                self.assertEqual((c.commit, c.composition, c.symbol_page), ("", "※，", 0 if stay else None))
+                if stay:  # (not new any more: Space is a space, not 快速填入 - code-reviewer; over text it joins, #52)
                     self.press(" ")
-                    self.assertEqual((c.commit, c.fill_shown(), c.symbol_page), (" ", None, 0))
+                    self.assertEqual((c.composition, c.fill_shown(), c.symbol_page), ("※， ", None, 0))
                 self.press("ESC", "s", "u", "3", "`")
                 c.type_literal("1")
                 self.assertEqual(c.symbol_page, 0 if stay else None)
@@ -782,11 +810,15 @@ class SymbolKeyboardTest(Base):
                 self.press("ESC", "ENTER")
 
     def test_stays_open_backspace_is_the_apps(self):
-        # (#49: with nothing being typed Backspace goes to the app - it deletes the symbol just sent - and the keyboard
-        # stays; with text being typed it deletes from that, as anywhere)
+        # (#49: Backspace deletes from the text being typed and the keyboard stays; #82: a symbol picked with nothing
+        # typed is held there, so Backspace right after takes it back - nothing went to the app; with nothing at all
+        # being typed Backspace is the app's)
         c = self.c
         c.config.values = dict(DEFAULTS, symbols_stay_open=True)
         self.press("`", "a")
+        self.assertEqual(c.composition, "※")
+        self.assertTrue(c.key(special="BACK"))
+        self.assertEqual((c.composition, c.symbol_page), ("", 0))
         self.assertFalse(c.key(special="BACK"))
         self.assertEqual(c.symbol_page, 0)
         self.press("ESC")
@@ -964,7 +996,7 @@ class CustomSymbolKeyboardTest(Base):
         c = self.c
         c.key("`")
         c.key("a")
-        self.assertEqual(c.commit, "★")
+        self.assertEqual(c.composition, "★")  # (#82: held until Enter)
 
     def test_two_keys_swapped(self):
         self.write([self.page(0, a="（", q="※"), self.page(1), self.page(2)])
@@ -972,7 +1004,8 @@ class CustomSymbolKeyboardTest(Base):
         for ch, want in (("a", "（"), ("q", "※")):
             c.key("`")
             c.key(ch)
-            self.assertEqual(c.commit, want)
+            self.assertEqual(c.composition, want)  # (#82: held until Enter)
+            c.key(special="ESC")
 
     def test_a_custom_page_first_and_backquote_twice(self):
         from engine import symbols
@@ -983,10 +1016,10 @@ class CustomSymbolKeyboardTest(Base):
         c.key("`")
         self.assertEqual(c.symbol_page, 0)
         c.key("a")
-        self.assertEqual(c.commit, "😀")
+        self.assertEqual(c.composition, "😀")  # (#82: held until Enter)
         c.key("`")
         c.key("`")  # (`` types the first page's ` key: no special case)
-        self.assertEqual(c.commit, "♪")
+        self.assertEqual(c.composition, "😀♪")
 
     def test_tab_goes_through_the_pages_shown_only(self):
         self.write([self.page(0), self.page(1, hidden=True), self.page(2)])
@@ -995,7 +1028,7 @@ class CustomSymbolKeyboardTest(Base):
         c.key(special="TAB")
         self.assertEqual(c.symbol_page, 1)
         c.key("8")
-        self.assertEqual(c.commit, "✓")  # (特殊, 數學 skipped)
+        self.assertEqual(c.composition, "✓")  # (特殊, 數學 skipped; #82: held until Enter)
         c.key("`")
         c.key(special="TAB")
         c.key(special="TAB")
@@ -1017,6 +1050,8 @@ class CustomSymbolKeyboardTest(Base):
         for ch, want in (("a", "👩‍💻"), ("s", "❤️")):
             c.key("`")
             c.key(ch)
+            self.assertEqual(c.composition, want)  # (#82: held until Enter, the emoji whole)
+            c.key(special="ENTER")
             self.assertEqual(c.commit, want)
 
     def test_the_file_changed_while_open(self):
@@ -1031,7 +1066,7 @@ class CustomSymbolKeyboardTest(Base):
         c.key(special="RIGHT")
         self.assertEqual(c.symbol_page, 0)
         c.key("a")
-        self.assertEqual(c.commit, "★")
+        self.assertEqual(c.composition, "★")  # (#82: held until Enter)
 
     def test_another_composer_reading_the_new_table_first(self):
         # (findings #125: the C++ engine serves every program with a composer each over one UserModel - another one
@@ -1047,7 +1082,7 @@ class CustomSymbolKeyboardTest(Base):
         other.key("`")  # (it reads the new table: for c, reload_symbols has nothing new any more)
         other.key(special="ESC")
         c.key("a")
-        self.assertEqual(c.commit, "★")
+        self.assertEqual(c.composition, "★")  # (#82: held until Enter)
 
     def test_names_for_the_window(self):
         self.write([self.page(2), self.page(0), self.page(1, hidden=True)])

@@ -17,3 +17,7 @@ ji3cl3{LEFT}{DOWN}2{HOME}{RIGHT}{^,}{BACK}{HOME}{RIGHT}{^.}{ENTER} => 我。郝
 ji3{^,}{LEFT}{DOWN}{DOWN}{ENTER}{ENTER} => 我、
 su3{^[}cl3{^]}{HOME}{RIGHT}{DOWN}2{ENTER} => 你『好』
 ji3{^.}{LEFT}{DOWN}2{ENTER} => 我！
+# #82 (Issue #11): a symbol picked from the symbol keyboard with nothing typed stays in the text being typed - ↓ before
+# it swaps it, more can be typed after it, Enter sends it
+`,{LEFT}{DOWN}2{ENTER}{ENTER} => 、
+`,su3{ENTER} => ，你

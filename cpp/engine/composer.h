@@ -357,7 +357,7 @@ private:
     void splits(int begin, int end, const std::set<int>& unlit, const std::set<int>& unforce, std::optional<int> skip,
                 std::vector<ustr>& labels, std::vector<Action>& actions) const;
     void open_symbols();
-    void type_symbol(const ustr& sym, bool stay = false, bool join = false);
+    void type_symbol(const ustr& sym, bool stay = false, bool join = false, bool hold = false);
     void join_symbol(const ustr& sym);
     void ready_for_key(bool to_end = false);
     void keep_picks_around(int at, const std::function<void()>& edit);
