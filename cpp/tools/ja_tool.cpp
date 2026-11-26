@@ -119,11 +119,12 @@ int wmain(int argc, wchar_t** argv) {
         std::fprintf(stderr, "usage: sz_ja <data dir> [--keys] [--time] < lines\n");
         return 2;
     }
-    bool timing = false, keys = false;
+    bool timing = false, keys = false, nbest = false;
     std::wstring bigram_path;
     for (int i = 2; i < argc; ++i) {
         timing = timing || std::wstring(argv[i]) == L"--time";
         keys = keys || std::wstring(argv[i]) == L"--keys";
+        nbest = nbest || std::wstring(argv[i]) == L"--nbest";  // (plan 5b: "cost:text|cost:text..." per line)
         if (std::wstring(argv[i]) == L"--bigram" && i + 1 < argc) bigram_path = argv[++i];
     }
     auto t0 = clock_t_::now();
@@ -169,6 +170,16 @@ int wmain(int argc, wchar_t** argv) {
             }
             std::sort(us.begin(), us.end());
             put(std::to_string(kana.size()) + " kana: " + std::to_string(us[2]) + " us\n");
+            continue;
+        }
+        if (nbest) {
+            std::string line_out;
+            for (auto& [p, c] : sz::ja_nbest(kana, *dict, {}, {}, bigram.get(), prev_sid)) {
+                sz::ustr text;
+                for (auto& x : p) text += x.surface;
+                line_out += (line_out.empty() ? "" : "|") + std::to_string(c) + ":" + sz::to_utf8(text);
+            }
+            put(line_out + "\n");
             continue;
         }
         auto [path, cost] = sz::ja_convert(kana, *dict, {}, {}, bigram.get(), prev_sid);

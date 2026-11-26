@@ -28,6 +28,13 @@ struct JaPin {
 constexpr int JA_FALLBACK_COST = 20000;
 
 // the cheapest path (BOS and EOS are id 0) and its cost: sum of node cost + connection cost;
+// up to n_best distinct sentences of the lattice, best first, as (path, cost) - plan 5b's rescoring candidates; the
+// first is ja_convert's path (engine/ja_convert.py nbest: each node keeps its k best partial paths)
+std::vector<std::pair<std::vector<JaNode>, int64_t>> ja_nbest(const ustr& kana, const JaDict& d,
+                                                              const std::vector<JaPin>& pins = {},
+                                                              const std::vector<int>& cuts = {},
+                                                              const JaBigram* bigram = nullptr, int prev_sid = -1,
+                                                              int k = 5, int n_best = 10);
 // a path node's word number in the bigram (its entry's; a pin or fallback: its reading's first entry written as it),
 // -1 none or no bigram - the context the next conversion starts from (engine/ja_convert.py word_sid)
 int ja_word_sid(const JaDict& d, const JaBigram* bigram, const JaNode& node);

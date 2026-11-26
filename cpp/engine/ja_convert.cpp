@@ -50,6 +50,57 @@ int pin_sid(const JaDict& d, const JaBigram& bigram, const ustr& reading, const 
     return -1;
 }
 
+// (engine/ja_convert.py _limits) the pin starting at each offset, offsets inside a pin, and the furthest end a word
+// from each offset may reach: no word crosses a cut, ends inside a pin or runs over one
+struct Limits {
+    std::vector<int> pin_at, reach;
+    std::vector<char> inside;
+};
+
+Limits limits(int n, const std::vector<JaPin>& pins, const std::vector<int>& cuts) {
+    Limits l{std::vector<int>(n + 1, -1), std::vector<int>(n, n), std::vector<char>(n + 1, 0)};
+    std::vector<int> stops;
+    for (size_t i = 0; i < pins.size(); ++i) {
+        const JaPin& p = pins[i];
+        if (p.begin < 0 || p.end > n || p.begin >= p.end) continue;
+        l.pin_at[p.begin] = static_cast<int>(i);
+        for (int j = p.begin + 1; j < p.end; ++j) l.inside[j] = 1;
+        if (p.begin > 0) stops.push_back(p.begin);
+    }
+    for (int c : cuts)
+        if (c > 0 && c < n) stops.push_back(c);
+    std::sort(stops.begin(), stops.end());
+    stops.erase(std::unique(stops.begin(), stops.end()), stops.end());
+    int j = static_cast<int>(stops.size()) - 1, next = n;
+    for (int b = n - 1; b >= 0; --b) {
+        while (j >= 0 && stops[j] > b) next = stops[j--];
+        l.reach[b] = next;
+    }
+    return l;
+}
+
+constexpr uint32_t PINNED = 0xFFFFFFFEu;  // a pin's node: its text from the pin
+
+// the nodes starting at begin, in node order, each with its word number (engine/ja_convert.py _starting; convert and
+// nbest share it): a pin's one node, or every entry of every reading then the character's fallback node
+void starting_at(const ustr& kana, int begin, const JaDict& d, const JaBigram* bigram, const std::vector<JaPin>& pins,
+                 int pin, int reach, std::vector<Cell>& out) {
+    out.clear();
+    if (pin >= 0) {
+        const JaPin& p = pins[pin];
+        int sid = bigram ? pin_sid(d, *bigram, kana.substr(begin, p.end - begin), p.surface) : -1;
+        out.push_back({begin, p.end, p.lid, p.rid, 0, PINNED, 0, -1, 0, sid});
+        return;
+    }
+    int kmax = std::min(d.max_reading_len, reach - begin);
+    for (int k = 1; k <= kmax; ++k) {
+        auto [first, last] = d.lookup(kana.substr(begin, k));
+        for (uint32_t e = first; e < last; ++e)
+            out.push_back({begin, begin + k, d.lid(e), d.rid(e), d.word_cost(e), e, 0, -1, 0, bigram ? bigram->sid(e) : -1});
+    }
+    out.push_back({begin, begin + 1, d.unknown_id, d.unknown_id, JA_FALLBACK_COST, FALLBACK, 0, -1, 0});
+}
+
 }  // namespace
 
 int ja_word_sid(const JaDict& d, const JaBigram* bigram, const JaNode& node) {
@@ -60,31 +111,9 @@ int ja_word_sid(const JaDict& d, const JaBigram* bigram, const JaNode& node) {
 std::pair<std::vector<JaNode>, int64_t> ja_convert(const ustr& kana, const JaDict& d, const std::vector<JaPin>& pins,
                                                    const std::vector<int>& cuts, const JaBigram* bigram, int prev_sid) {
     const int n = static_cast<int>(kana.size());
-    // (engine/ja_convert.py _limits) the pin starting at each offset, offsets inside a pin, and the furthest end a
-    // word from each offset may reach: no word crosses a cut, ends inside a pin or runs over one
-    std::vector<int> pin_at(n + 1, -1);
-    std::vector<char> inside(n + 1, 0);
-    std::vector<int> stops;
-    for (size_t i = 0; i < pins.size(); ++i) {
-        const JaPin& p = pins[i];
-        if (p.begin < 0 || p.end > n || p.begin >= p.end) continue;
-        pin_at[p.begin] = static_cast<int>(i);
-        for (int j = p.begin + 1; j < p.end; ++j) inside[j] = 1;
-        if (p.begin > 0) stops.push_back(p.begin);
-    }
-    for (int c : cuts)
-        if (c > 0 && c < n) stops.push_back(c);
-    std::sort(stops.begin(), stops.end());
-    stops.erase(std::unique(stops.begin(), stops.end()), stops.end());
-    std::vector<int> reach(n, n);
-    {
-        int j = static_cast<int>(stops.size()) - 1, next = n;
-        for (int b = n - 1; b >= 0; --b) {
-            while (j >= 0 && stops[j] > b) next = stops[j--];
-            reach[b] = next;
-        }
-    }
-    constexpr uint32_t PINNED = 0xFFFFFFFEu;  // a pin's node: its text from the pin
+    Limits lim = limits(n, pins, cuts);
+    const std::vector<int>&pin_at = lim.pin_at, &reach = lim.reach;
+    const std::vector<char>& inside = lim.inside;
     std::vector<Cell> cells;
     std::vector<std::vector<int>> ends(n + 1);
     std::vector<int> cell_pin;  // the pin of a PINNED cell, by cell index
@@ -104,22 +133,8 @@ std::pair<std::vector<JaNode>, int64_t> ja_convert(const ustr& kana, const JaDic
                     auto r = bigram->range(cells[c].sid);
                     if (r.first < r.second) with_sid.push_back({c, r});
                 }
-        starting.clear();
         int pin = pin_at[begin];
-        if (pin >= 0) {
-            const JaPin& p = pins[pin];
-            int sid = bigram ? pin_sid(d, *bigram, kana.substr(begin, p.end - begin), p.surface) : -1;
-            starting.push_back({begin, p.end, p.lid, p.rid, 0, PINNED, 0, -1, 0, sid});
-        } else {
-            int kmax = std::min(d.max_reading_len, reach[begin] - begin);
-            for (int k = 1; k <= kmax; ++k) {
-                auto [first, last] = d.lookup(kana.substr(begin, k));
-                for (uint32_t e = first; e < last; ++e)
-                    starting.push_back({begin, begin + k, d.lid(e), d.rid(e), d.word_cost(e), e, 0, -1, 0,
-                                        bigram ? bigram->sid(e) : -1});
-            }
-            starting.push_back({begin, begin + 1, d.unknown_id, d.unknown_id, JA_FALLBACK_COST, FALLBACK, 0, -1, 0});
-        }
+        starting_at(kana, begin, d, bigram, pins, pin, reach[begin], starting);
         for (auto& node : starting) {
             int best = -1;
             int64_t best_total = 0;
@@ -171,6 +186,93 @@ std::pair<std::vector<JaNode>, int64_t> ja_convert(const ustr& kana, const JaDic
     }
     std::reverse(path.begin(), path.end());
     return {path, best_total};
+}
+
+std::vector<std::pair<std::vector<JaNode>, int64_t>> ja_nbest(const ustr& kana, const JaDict& d,
+                                                              const std::vector<JaPin>& pins,
+                                                              const std::vector<int>& cuts, const JaBigram* bigram,
+                                                              int prev_sid, int k, int n_best) {
+    // (engine/ja_convert.py nbest) each node keeps its k best partial paths ordered by (cost, predecessor's node
+    // order, its rank there) - the first is ja_convert's path; the endings in the same order, a text seen skipped
+    struct Entry {
+        int64_t total;
+        int pred, rank;
+    };
+    struct Cand {
+        int64_t t, order;
+        int rank, pred;
+        bool operator<(const Cand& o) const {
+            if (t != o.t) return t < o.t;
+            if (order != o.order) return order < o.order;
+            if (rank != o.rank) return rank < o.rank;
+            return pred < o.pred;
+        }
+    };
+    const int n = static_cast<int>(kana.size());
+    Limits lim = limits(n, pins, cuts);
+    std::vector<Cell> cells;
+    std::vector<int> cell_pin;
+    std::vector<std::vector<Entry>> entries;
+    std::vector<std::vector<int>> ends(n + 1);
+    cells.push_back({0, 0, 0, 0, 0, FALLBACK, 0, -1, -1, bigram ? prev_sid : -1});  // BOS
+    cell_pin.push_back(-1);
+    entries.push_back({{0, -1, -1}});
+    ends[0].push_back(0);
+    int64_t order = 0;
+    std::vector<Cell> starting;
+    std::vector<Cand> cands;
+    for (int begin = 0; begin < n; ++begin) {
+        if (ends[begin].empty() || lim.inside[begin]) continue;
+        int pin = lim.pin_at[begin];
+        starting_at(kana, begin, d, bigram, pins, pin, lim.reach[begin], starting);
+        for (auto& node : starting) {
+            cands.clear();
+            for (int p : ends[begin]) {
+                int64_t step = d.cost(cells[p].rid, node.lid);
+                if (node.sid >= 0 && cells[p].sid >= 0) step -= bigram->bonus(cells[p].sid, node.sid);
+                for (size_t r = 0; r < entries[p].size(); ++r)
+                    cands.push_back({entries[p][r].total + step, cells[p].order, static_cast<int>(r), p});
+            }
+            std::sort(cands.begin(), cands.end());
+            std::vector<Entry> kept;
+            for (size_t i = 0; i < cands.size() && static_cast<int>(i) < k; ++i)
+                kept.push_back({cands[i].t + node.cost, cands[i].pred, cands[i].rank});
+            node.order = order++;
+            cells.push_back(node);
+            cell_pin.push_back(node.entry == PINNED ? pin : -1);
+            entries.push_back(std::move(kept));
+            ends[node.end].push_back(static_cast<int>(cells.size()) - 1);
+        }
+    }
+    cands.clear();
+    for (int p : ends[n])
+        for (size_t r = 0; r < entries[p].size(); ++r)
+            cands.push_back({entries[p][r].total + d.cost(cells[p].rid, 0), cells[p].order, static_cast<int>(r), p});
+    std::sort(cands.begin(), cands.end());
+    std::vector<std::pair<std::vector<JaNode>, int64_t>> out;
+    std::vector<ustr> seen;
+    for (auto& c : cands) {
+        std::vector<JaNode> path;
+        int p = c.pred, r = c.rank;
+        while (p > 0) {
+            const Cell& x = cells[p];
+            ustr reading = kana.substr(x.begin, x.end - x.begin);
+            ustr surface = x.entry == PINNED ? pins[cell_pin[p]].surface : x.entry == FALLBACK ? reading : d.surface(x.entry);
+            int entry = x.entry == PINNED || x.entry == FALLBACK ? -1 : static_cast<int>(x.entry);
+            path.push_back({x.begin, x.end, reading, surface, x.lid, x.rid, x.cost, entry});
+            const Entry& e = entries[p][r];
+            p = e.pred;
+            r = e.rank;
+        }
+        std::reverse(path.begin(), path.end());
+        ustr text;
+        for (auto& x : path) text += x.surface;
+        if (std::find(seen.begin(), seen.end(), text) != seen.end()) continue;
+        seen.push_back(text);
+        out.push_back({std::move(path), c.t});
+        if (static_cast<int>(out.size()) >= n_best) break;
+    }
+    return out;
 }
 
 }  // namespace sz

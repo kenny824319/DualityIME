@@ -1,6 +1,6 @@
 """#36: the two engines' Japanese conversion and 純日文 composer must give the same results.
 
-    py -3 tools/ja_compare.py [--cases <file>] [--scripts <file>] [--exe <sz_ja.exe>] [--bigram <file>|random]
+    py -3 tools/ja_compare.py [--cases <file>] [--scripts <file>] [--exe <sz_ja.exe>] [--bigram <file>|random] [--nbest]
 
 Romaji lines: the romaji column of tools/ja_sentences_sample.tsv, the Tatoeba romaji file (%DUALITYIME_CORPUS%\\
 tatoeba\\ja_eval.tsv, when it is there), "kyouhaiitenki" x 30 (270 kana), and 2000 random strings (seed 36; length 1-30
@@ -103,20 +103,21 @@ def main():
     ap.add_argument("--scripts")
     ap.add_argument("--exe", default=os.path.join(ROOT, "cpp", "build", "x64-Release", "sz_ja.exe"))
     ap.add_argument("--bigram")  # (a bigram file, or "random": one made here; each line then gets a context)
+    ap.add_argument("--nbest", action="store_true")  # (plan 5b: each line's best distinct sentences compared)
     a = ap.parse_args()
     if not os.path.exists(a.exe):
         sys.exit(f"STOPPED: build first (cpp\\build.cmd): {a.exe}")
     convert = os.path.join(ROOT, "tools", "ja_convert.py")
     data = os.path.join(ROOT, "data")
     lines = [line.rstrip("\r\n") for line in open(a.cases, encoding="utf-8")] if a.cases else cases()
-    extra = []
+    extra = ["--nbest"] if a.nbest else []
     with tempfile.TemporaryDirectory() as tmp:
         if a.bigram:
             path = a.bigram
             if a.bigram == "random":
                 path = os.path.join(tmp, "random_bigram.bin")
                 random_bigram(path)
-            extra = ["--bigram", path]
+            extra += ["--bigram", path]
             rng = random.Random(37)  # (a context for each line: none or a random word number)
             lines = [f"{rng.choice([-1, rng.randrange(500)])}\t{line}" for line in lines]
         py = run([sys.executable, convert] + extra, lines)

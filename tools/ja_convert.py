@@ -24,19 +24,22 @@ sys.path.insert(0, ROOT)
 from engine.config import Config  # noqa: E402
 from engine.ja_bigram import JaBigram  # noqa: E402
 from engine.ja_composer import JaComposer  # noqa: E402
-from engine.ja_convert import convert  # noqa: E402
+from engine.ja_convert import convert, nbest as nbest_of  # noqa: E402
 from engine.ja_dict import JaDict  # noqa: E402
 from engine.ja_romaji import RomajiTable  # noqa: E402
 
 TOKEN = re.compile(r"\{[A-Z0-9]+\}|.")
 
 
-def line_out(romaji, table, d, bigram=None):
+def line_out(romaji, table, d, bigram=None, nbest=False):
     prev = -1
     if bigram is not None and "\t" in romaji:  # (--bigram: "<context sid>\t<romaji>")
         sid, romaji = romaji.split("\t", 1)
         prev = int(sid)
     kana, pending = table.to_kana(romaji)
+    if nbest:  # (plan 5b: "cost:text|cost:text..." - the lattice's best distinct sentences)
+        return "|".join(f"{c}:{''.join(x.surface for x in p)}"
+                        for p, c in nbest_of(kana, d, bigram=bigram, prev_sid=prev))
     path, cost = convert(kana, d, bigram=bigram, prev_sid=prev)
     cuts = "".join("1" if d.is_boundary(a.rid, b.lid) else "0" for a, b in zip(path, path[1:]))
     return f"{kana}\t{pending}\t{'|'.join(n.surface for n in path)}\t{cost}\t{table.finish(romaji)}\t{cuts}"
@@ -78,6 +81,7 @@ def main():
     ap.add_argument("--data", default=os.path.join(ROOT, "data"))
     ap.add_argument("--keys", action="store_true")
     ap.add_argument("--bigram")
+    ap.add_argument("--nbest", action="store_true")
     a = ap.parse_args()
     table = RomajiTable.load(os.path.join(a.data, "ja_romaji.tsv"))
     d = JaDict.load(os.path.join(a.data, "ja_dict.bin"))  # (ja_conn.bin, ja_seg.bin beside it)
@@ -89,7 +93,7 @@ def main():
     out = sys.stdout.buffer
     for raw in sys.stdin.buffer:
         line = raw.decode("utf-8").rstrip("\r\n")
-        lines = run_script(line, table, d, bigram) if a.keys else [line_out(line, table, d, bigram)]
+        lines = run_script(line, table, d, bigram) if a.keys else [line_out(line, table, d, bigram, a.nbest)]
         out.write("".join(x + "\n" for x in lines).encode("utf-8"))
 
 
