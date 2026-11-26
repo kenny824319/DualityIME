@@ -243,6 +243,8 @@ private:
 class LmScorer {
 public:
     LmScorer(const LmModel& lm, const Lexicon& lexicon);
+    // (#36 plan 5b: the Japanese model - whole-text scores only, no syllable candidates, so no Chinese dictionary)
+    explicit LmScorer(const LmModel& lm);
     // sorted ids of every character a word of the dictionary writes for the syllable (0 for one
     // the model does not know), or nullptr
     const std::vector<int>* candidates(const ustr& syllable) const;
@@ -291,7 +293,7 @@ private:
     LmState state(const ustr& text) const;
 
     const LmModel& lm_;
-    const Lexicon& lexicon_;
+    const Lexicon* lexicon_ = nullptr;  // (null: the Japanese model, no syllable candidates)
     std::shared_ptr<const std::unordered_map<ustr, std::vector<int>>> cands_;  // (shared with the views)
     std::shared_ptr<const std::unordered_map<int, char32_t>> chars_;  // a character of each id of cands_ (top_chars)
     ustr context_;                    // a view's context ("" for the scorer itself)

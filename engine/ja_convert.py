@@ -16,6 +16,7 @@ is compared with it by (its real cost, order). A node's sid: its entry's; a pin'
 its surface; a fallback node has none.
 """
 import collections
+import re
 
 # entry: the dictionary index of the node's word (-1: a fallback node or a pin)
 Node = collections.namedtuple("Node", "begin end reading surface lid rid cost entry", defaults=(-1,))
@@ -153,6 +154,33 @@ def nbest(kana, d, pins=(), cuts=(), bigram=None, prev_sid=-1, k=5, n=10):
             if len(out) >= n:
                 break
     return out
+
+
+_ALNUM = re.compile(r"[A-Za-z0-9Ａ-Ｚａ-ｚ０-９]+")
+_UNIT_RANGES = ((0x3041, 0x3096), (0x30A1, 0x30FA), (0x30FC, 0x30FC), (0x3005, 0x3005), (0x3400, 0x4DBF),
+                (0x4E00, 0x9FFF), (0xF900, 0xFAFF))
+
+
+def ja_units(text):
+    """The Japanese model's units of a candidate sentence (plan 5b), as its training text (tools/lm/ja/prepare_ja.py)
+    without the NFKC (the C++ engine has no table for kana; candidates are dictionary surfaces, already normal): a run of
+    ASCII or full-width letters/digits is one EN_MARK, kana (ー 々) and kanji stay, everything else is dropped - half-width
+    katakana too (only an F8 pin makes it, and every candidate shares the pin). cpp ja_units the same."""
+    from .lm import EN_MARK
+    t = _ALNUM.sub(EN_MARK, text)
+    return "".join(c for c in t if c == EN_MARK or any(lo <= ord(c) <= hi for lo, hi in _UNIT_RANGES))
+
+
+def rescore(paths, view, w):
+    """The index of the sentence the model picks among nbest's paths (plan 5b): the highest w x logp - cost x 1024
+    (logp: the model's Q10 log-probability of its units after the view's context; integers, as cpp ja_rescore); the
+    engine's own first keeps a tie - a rival must be strictly better."""
+    best, best_score = 0, None
+    for i, (path, cost) in enumerate(paths):
+        score = w * view.units_logp(ja_units("".join(n.surface for n in path))) - cost * 1024
+        if best_score is None or score > best_score:
+            best, best_score = i, score
+    return best
 
 
 def convert(kana, d, pins=(), cuts=(), bigram=None, prev_sid=-1):

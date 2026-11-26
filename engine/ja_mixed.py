@@ -9,6 +9,8 @@ A piece is romaji when it has a letter and only the keys of the romaji table (lo
     letters still pending at the end of the text (being typed) RJ["pending"]; pending elsewhere, a letter left over, or a
     key that is no romaji key RJ["broken"] each.
 """
+import os
+
 from .ja_convert import FALLBACK_COST, convert
 from .ja_dict import JaDict
 from .ja_romaji import RomajiTable
@@ -27,13 +29,34 @@ ROMAJI_KEYS = frozenset("abcdefghijklmnopqrstuvwxyz-',./?![]")
 CACHE_MAX = 20000
 
 
+def load_lm(path=None):
+    """The Japanese model (plan 5b, data/ja_lm.bin) as a Scorer of whole texts, or None (no file, or no numpy)."""
+    from .lexicon import DATA_DIR
+    path = path or os.path.join(DATA_DIR, "ja_lm.bin")
+    if not os.path.exists(path):
+        return None
+    try:
+        from .lm import Scorer
+        from .lm_next import NextLM
+        return Scorer(NextLM(path), None)
+    except (ImportError, OSError, ValueError):
+        return None
+
+
+def lm_weight_of(lm):
+    """W of the rescoring (cost units per nat): the model file's weight field (quantize_next.py --weight W)."""
+    return lm.lm.h["lm_weight_milli"] // 1000 if lm is not None else 0
+
+
 class JaMixed:
     """The romaji table and dictionary the 中日混打 tokenizer reads, and the costs it worked out (pieces repeat as the
     text grows key by key)."""
 
-    def __init__(self, table, d, bigram=None):
+    def __init__(self, table, d, bigram=None, lm=None):
         self.table, self.d = table, d
         self.bigram = bigram  # (plan 5: what the composer shows its pieces with; piece_cost never uses it)
+        self.lm = lm          # (plan 5b: the Japanese model's Scorer rescoring them, or None; piece_cost never uses it)
+        self.lm_weight = lm_weight_of(lm)
         self._cache = {}
         self.space_cost = RJ["space"]  # (added by the tokenizer to a piece that takes the space after it)
 
@@ -41,7 +64,7 @@ class JaMixed:
     def load(cls, table=None, d=None):
         from .ja_bigram import JaBigram
         d = d or JaDict.load()
-        return cls(table or RomajiTable.load(), d, JaBigram.load(d))
+        return cls(table or RomajiTable.load(), d, JaBigram.load(d), load_lm())
 
     def piece_cost(self, piece, at_end):
         key = (piece, at_end)

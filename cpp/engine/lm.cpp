@@ -343,11 +343,19 @@ std::vector<int64_t> CharLM::unit_scores(const std::vector<const LmState*>& stat
 
 // ---- LmScorer ----
 
-LmScorer::LmScorer(const LmModel& lm, const Lexicon& lexicon) : lm_(lm), lexicon_(lexicon) {
+LmScorer::LmScorer(const LmModel& lm)
+    : lm_(lm), cands_(std::make_shared<std::unordered_map<ustr, std::vector<int>>>()),
+      chars_(std::make_shared<std::unordered_map<int, char32_t>>()) {
+    kept_ = std::max<size_t>(64, std::min(LM_STATES_KEPT, LM_STATES_BYTES / std::max<size_t>(1, lm_.state_bytes())));
+    start_ = lm_.start();
+    clear();
+}
+
+LmScorer::LmScorer(const LmModel& lm, const Lexicon& lexicon) : lm_(lm), lexicon_(&lexicon) {
     // (at load, not on the first key: it walks the whole dictionary, 60 ms)
     std::unordered_map<ustr, std::set<int>> out;
     auto chars = std::make_shared<std::unordered_map<int, char32_t>>();
-    for (auto& [reading, lst] : lexicon_.entries()) {
+    for (auto& [reading, lst] : lexicon_->entries()) {
         std::vector<ustr> syls = split(reading, U'-');
         for (auto& [p, _] : lst)
             if (p.size() == syls.size())

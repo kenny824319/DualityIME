@@ -2316,8 +2316,30 @@ class Composer:
         kana, pending, spaces = self._ja_piece(t)
         bigram = getattr(self.ja, "bigram", None)
         prev = self._ja_prev_sid(t) if bigram is not None else -1
-        path = ja_convert(kana, self.ja.d, self._ja_pins_of(t, kana), (), bigram, prev)[0] if kana else []
+        lm = getattr(self.ja, "lm", None)
+        if not kana:
+            path = []
+        elif lm is not None:  # (plan 5b: the lattice's best sentences rescored by the model)
+            from .ja_composer import NBEST_K, NBEST_N
+            from .ja_convert import nbest, rescore
+            paths = nbest(kana, self.ja.d, self._ja_pins_of(t, kana), (), bigram, prev, k=NBEST_K, n=NBEST_N)
+            path = paths[rescore(paths, lm.view(self._ja_prev_units(t)), self.ja.lm_weight)][0]
+        else:
+            path = ja_convert(kana, self.ja.d, self._ja_pins_of(t, kana), (), bigram, prev)[0]
         return kana, pending, spaces, path
+
+    def _ja_prev_units(self, t):
+        """The model's context of a romaji token (plan 5b), as _ja_prev_sid's: the units of the Japanese token right
+        before it in this text, or - first in the text - the Japanese sent before; nothing after anything else."""
+        from .ja_composer import LM_CONTEXT
+        from .ja_convert import ja_units
+        i = next((k for k, x in enumerate(self.tokens) if x.start == t.start), 0)
+        if i == 0:
+            return self._ja_lm_context
+        before = self.tokens[i - 1]
+        if not self._is_romaji(before):
+            return ""
+        return ja_units("".join(n.surface for n in self._ja_path(before)[3]))[-LM_CONTEXT:]
 
     def _ja_prev_sid(self, t):
         """The context of a romaji token (plan 5): the last word of the Japanese token right before it in this text, or
@@ -2331,6 +2353,18 @@ class Composer:
             return -1
         path = self._ja_path(before)[3]
         return word_sid(self.ja.d, self.ja.bigram, path[-1]) if path else -1
+
+    def _ja_lm_after(self, last):
+        """The model's context after sending a text whose last token is `last` (plan 5b): that romaji token's Japanese as
+        units (the last LM_CONTEXT), none after anything else, a kana lock or a sentence end (as _ja_context_after)."""
+        from .ja_composer import LM_CONTEXT
+        from .ja_convert import ja_units
+        if last is None or not self._is_romaji(last) or self.ja_lock != "auto" or getattr(self.ja, "lm", None) is None:
+            return ""
+        path = self._ja_path(last)[3]
+        if not path or path[-1].surface[-1:] in ("。", "？", "！"):
+            return ""
+        return ja_units("".join(n.surface for n in path))[-LM_CONTEXT:]
 
     def _ja_context_after(self, last):
         """The context for what is typed after sending a text whose last token is `last` (plan 5)."""
@@ -2394,6 +2428,7 @@ class Composer:
         """Forget everything, including what was typed before (focus change)."""
         self.context_word = None    # last Chinese phrase committed, for the bigram
         self._ja_context = -1       # 中日混打 (#36 plan 5): the last Japanese word sent (its bigram number), -1 none
+        self._ja_lm_context = ""    # ...the units of the last Japanese sent, the model's context (plan 5b)
         self.lm_context = ""        # 接續前文選字 (#37): the Chinese just sent (Traditional, the last LM_CONTEXT_MAX)
         self._run_contexts = {}     # run start -> what the model read before it, as shown (_convert_all; #51)
         self.lm_units = ""          # ...the same as units (context_units: EN_MARK too), for a model that knows English
@@ -2409,6 +2444,7 @@ class Composer:
         self.lm_context = ""
         self.lm_units = ""
         self._ja_context = -1  # (中日混打's Japanese context too)
+        self._ja_lm_context = ""
 
     def _sent(self, phrases, units=None):
         """The Traditional phrases of what was just sent: their Chinese characters go into lm_context (#37); units:
@@ -4168,6 +4204,7 @@ class Composer:
                 self.symbol_page, self.symbol_cursor = keep
         self.context_word, self.after_english = None, False
         self._ja_context = -1
+        self._ja_lm_context = ""
         self._sent([sym])  # (its Chinese, if any, is what is right before the caret now: #37)
         self.commit = before + sym
 
@@ -4906,7 +4943,7 @@ class Composer:
                     context_word=self.context_word, after_english=self.after_english, lm_context=self.lm_context,
                     lm_units=self.lm_units, syllables=[(t.start, t.raw) for t in self.tokens if t.kind == "zh"],
                     # (中日混打: the context it was typed after and its picks - findings #175)
-                    _ja_context=self._ja_context, _ja_pins={k: (v[0], list(v[1])) for k, v in self._ja_pins.items()})
+                    _ja_context=self._ja_context, _ja_lm_context=self._ja_lm_context, _ja_pins={k: (v[0], list(v[1])) for k, v in self._ja_pins.items()})
         learned = []  # what this commit taught, as it was before: for undo_commit to put back
         self.user.simp_dropped = []  # (what a pick in Traditional mode takes of Simplified mode's memory, #32)
         terms = self._learn_terms(save=False)  # (saved with the picks below: one save a commit, #32)
@@ -4940,6 +4977,7 @@ class Composer:
         self.after_english = False
         self.context_word = self.segments[-1][2] if last and last.kind == "zh" and self.segments else None
         self._ja_context = self._ja_context_after(last) if self.ja is not None else -1  # (中日混打, plan 5)
+        self._ja_lm_context = self._ja_lm_after(last) if self.ja is not None else ""  # (plan 5b)
         self._sent((p for _, _, p in self.segments), self._token_units())  # (接續前文選字, #37)
         corrected = self._learn_corrections(len(self.raw))
         self._clear_input()
@@ -5449,8 +5487,9 @@ class Composer:
         self.taken = {a - tok.start: (b - tok.start, r) for a, (b, r) in self.taken.items() if a >= tok.start}
         self.pending = {x - tok.start: v for x, v in self.pending.items() if x >= tok.start}
         if self.ja is not None:  # (中日混打, plan 5: what stays starts after the last token sent - its picks still on)
-            self._ja_context = self._ja_context_after(next((x for x in reversed(self.tokens) if x.start < tok.start),
-                                                           None))
+            before_tok = next((x for x in reversed(self.tokens) if x.start < tok.start), None)
+            self._ja_context = self._ja_context_after(before_tok)
+            self._ja_lm_context = self._ja_lm_after(before_tok)
         self._ja_pins = {x - tok.start: v for x, v in self._ja_pins.items() if x >= tok.start}  # (findings #165)
         self.context_word = next(p for s, l, p in self.segments if s + l == b)
         self._sent((p for s, l, p in self.segments if s + l <= b), self._token_units(tok.start))  # (#37)
@@ -5503,6 +5542,7 @@ class Composer:
             self.commit = to_full_width(text) if self.config.full_width and ch not in PUNCT else text
             self.context_word = None
             self._ja_context = -1
+            self._ja_lm_context = ""
             self.after_english = False
             return True
         if ch in symbols.OPEN_KEYS:  # (` opens it anywhere, `` types a `)
