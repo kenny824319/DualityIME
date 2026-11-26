@@ -1,7 +1,7 @@
 """The next student (#41) for the engines: a float prototype (tools/lm/next/models.py) -> the integer tables of
 engine/lm_next.py -> a version 2 lm.bin.
 
-    py -3 tools/lm/next/quantize_next.py <model.pt> <out lm.bin> [--weight 0.60] [--context-max 32] [--check N]
+    py -3 tools/lm/next/quantize_next.py <model.pt> <out lm.bin> [--weight 0.60] [--context-max 32] [--check N] [--data NAME]
         (--thresholds <file of "reading<TAB>q16" lines> | --no-thresholds)
 
 <model.pt> next to its .json (models.from_cfg's sizes: pretrain.py or distill.py --next writes it). --weight: the
@@ -185,12 +185,13 @@ def main(argv):
                              if k in cfg})
     model.load_state_dict(torch.load(pt, map_location="cpu"))
     from common import WORK
-    vocab = open(os.path.join(WORK, "next", "vocab.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
+    data = argv[argv.index("--data") + 1] if "--data" in argv else "next"  # (--data NAME: WORK/NAME, as pretrain.py)
+    vocab = open(os.path.join(WORK, data, "vocab.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
     h, t = quantize(model, weight, context_max)
     export(h, t, vocab, thresholds, out)
     print(f"{pt} -> {out} ({os.path.getsize(out) / 1e6:.1f} MB)")
     if "--check" in argv:
-        dev = np.memmap(os.path.join(WORK, "next", "dev.u16"), dtype=np.uint16, mode="r")
+        dev = np.memmap(os.path.join(WORK, data, "dev.u16"), dtype=np.uint16, mode="r")
         print(check(model, lm_next.NextLM(out), dev, int(argv[argv.index("--check") + 1]), len(vocab)))
 
 
