@@ -1,6 +1,7 @@
 // 兩儀輸入法 C++ engine — #36 中日混打: how likely a piece of keys is romaji, on the English piece cost's scale
 // (engine/ja_mixed.py: the same rule, values and cache).
 #pragma once
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 
@@ -8,6 +9,7 @@
 #include "ja_romaji.h"
 namespace sz {
 class JaBigram;
+class LmScorer;
 }
 
 namespace sz {
@@ -26,6 +28,8 @@ public:
     const RomajiTable& table;
     const JaDict& d;
     const JaBigram* bigram = nullptr;  // (plan 5: what the composer shows its pieces with; piece_cost never uses it)
+    const LmScorer* lm = nullptr;      // (plan 5b: the Japanese model rescoring them; piece_cost never uses it)
+    int64_t lm_weight = 0;             // ...its W (the model file's weight field)
 
 private:
     double cost_of(const std::string& piece, bool at_end) const;

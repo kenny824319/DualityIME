@@ -145,6 +145,7 @@ public:
         lm_context_.clear();
         lm_units_.clear();
         ja_context_ = -1;  // (中日混打's Japanese context too)
+        ja_lm_context_.clear();
     }
     void keep_context(const ustr& context, const ustr& units) {  // (engine_main's flush, after reset)
         lm_context_ = context;
@@ -258,6 +259,7 @@ private:
         ustr lm_units;    // ...as units (#41)
         std::vector<std::pair<int, std::string>> syllables;  // the syllables the picks are numbered by: offset, keys
         int ja_context = -1;  // (中日混打: the context it was typed after and its picks - findings #175)
+        ustr ja_lm_context;   // (...and the model's, plan 5b)
         std::map<int, std::pair<ustr, std::vector<JaPin>>> ja_pins;
     };
 
@@ -268,6 +270,9 @@ private:
     std::vector<JaNode> ja_path(const Token& t, ustr& kana, ustr& pending, ustr& spaces) const;
     int ja_prev_sid(const Token& t) const;          // a romaji token's context (plan 5, engine/composer.py)
     int ja_context_after(const Token* last) const;  // ...after sending a text ending in `last`
+    ustr ja_prev_units(const Token& t) const;        // a romaji token's model context (plan 5b)
+    ustr ja_lm_after(const Token* last) const;       // ...after sending a text ending in `last`
+    ustr ja_lm_context_;  // the units of the last Japanese sent, the model's context (plan 5b)
     int ja_context_ = -1;  // the last Japanese word sent (its bigram number), -1 none
     mutable std::map<int, std::vector<JaNode>> ja_memo_;  // token start -> its path, during one render (#176)
     bool ja_memo_on_ = false;

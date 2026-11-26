@@ -261,7 +261,8 @@ class Scorer:
         if v is not None:
             kept.move_to_end(context)
             return v
-        self.candidates("")  # (the table built once, here, and shared: a view must not build its own each sentence)
+        if self.lexicon is not None:  # (none: the Japanese model, whole-text scores only - #36 plan 5b)
+            self.candidates("")  # (the table built once, here, and shared: a view must not build its own each sentence)
         v = Scorer.__new__(Scorer)
         v.lm, v.lexicon, v._cands = self.lm, self.lexicon, self._cands
         v._context, v._views, v._base = context, None, self

@@ -21,6 +21,7 @@
 
 #include "config.h"
 #include "ja_bigram.h"
+#include "lm.h"
 #include "ja_composer.h"
 #include "ja_convert.h"
 #include "ja_dict.h"
@@ -61,10 +62,10 @@ std::vector<sz::ustr> tokens(const sz::ustr& script) {
 }
 
 void run_script(const sz::ustr& script, const sz::RomajiTable& table, const sz::JaDict& dict, bool timing,
-                const sz::JaBigram* bigram = nullptr) {
+                const sz::JaBigram* bigram = nullptr, const sz::LmScorer* lm = nullptr) {
     sz::Config cfg;
     cfg.set("ja_enabled", sz::Json(true));
-    sz::JaComposer c(table, dict, cfg, bigram);
+    sz::JaComposer c(table, dict, cfg, bigram, lm, lm ? sz::ja_lm_weight(*lm) : 0);
     std::vector<long long> times;
     for (auto& tok : tokens(script)) {
         std::string t = sz::to_utf8(tok);
@@ -120,12 +121,13 @@ int wmain(int argc, wchar_t** argv) {
         return 2;
     }
     bool timing = false, keys = false, nbest = false;
-    std::wstring bigram_path;
+    std::wstring bigram_path, lm_path;
     for (int i = 2; i < argc; ++i) {
         timing = timing || std::wstring(argv[i]) == L"--time";
         keys = keys || std::wstring(argv[i]) == L"--keys";
         nbest = nbest || std::wstring(argv[i]) == L"--nbest";  // (plan 5b: "cost:text|cost:text..." per line)
         if (std::wstring(argv[i]) == L"--bigram" && i + 1 < argc) bigram_path = argv[++i];
+        if (std::wstring(argv[i]) == L"--lm" && i + 1 < argc) lm_path = argv[++i];  // (plan 5b: the Japanese model)
     }
     auto t0 = clock_t_::now();
     auto table = sz::RomajiTable::load(argv[1]);
@@ -139,6 +141,15 @@ int wmain(int argc, wchar_t** argv) {
     if (!bigram_path.empty() && !(bigram = sz::JaBigram::load_file(bigram_path, *dict))) {
         std::fprintf(stderr, "could not read the bigram file (or it is for another ja_dict.bin)\n");
         return 1;
+    }
+    std::unique_ptr<sz::LmModel> lm_model;
+    std::unique_ptr<sz::LmScorer> lm;
+    if (!lm_path.empty()) {
+        if (!(lm_model = sz::LmModel::load(lm_path))) {
+            std::fprintf(stderr, "could not read the model file\n");
+            return 1;
+        }
+        lm = std::make_unique<sz::LmScorer>(*lm_model);
     }
     std::ios::sync_with_stdio(false);
     if (timing) put("load " + std::to_string(micros(t0, t1) / 1000) + " ms\n");
@@ -155,7 +166,7 @@ int wmain(int argc, wchar_t** argv) {
         }
         sz::ustr input = sz::from_utf8(line);
         if (keys) {
-            run_script(input, *table, *dict, timing, bigram.get());
+            run_script(input, *table, *dict, timing, bigram.get(), lm.get());
             continue;
         }
         auto [kana, pending] = table->to_kana(input);
@@ -183,6 +194,12 @@ int wmain(int argc, wchar_t** argv) {
             continue;
         }
         auto [path, cost] = sz::ja_convert(kana, *dict, {}, {}, bigram.get(), prev_sid);
+        if (lm && !kana.empty()) {  // (--lm: the 10 best rescored by the model, as the composers do)
+            auto paths = sz::ja_nbest(kana, *dict, {}, {}, bigram.get(), prev_sid, sz::JA_NBEST_K, sz::JA_NBEST_N);
+            auto& pick = paths[sz::ja_rescore(paths, *lm->view(sz::ustr()), sz::ja_lm_weight(*lm))];
+            path = pick.first;
+            cost = pick.second;
+        }
         sz::ustr surfaces;
         for (size_t i = 0; i < path.size(); ++i) {
             if (i) surfaces += U'|';

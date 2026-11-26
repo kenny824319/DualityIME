@@ -2826,6 +2826,7 @@ Composer::Composer(SyllableTable& table, const Lexicon& lexicon, const English& 
 void Composer::reset() {
     context_word_.reset();
     ja_context_ = -1;  // (中日混打, plan 5)
+    ja_lm_context_.clear();
     lm_context_.clear();
     lm_units_.clear();
     after_english_ = false;
@@ -2998,7 +2999,13 @@ std::vector<JaNode> Composer::ja_path(const Token& t, ustr& kana, ustr& pending,
         if (it != ja_memo_.end()) return it->second;
     }
     int prev = ja_->bigram ? ja_prev_sid(t) : -1;
-    auto path = ja_convert(kana, ja_->d, ja_pins_of(t, kana), {}, ja_->bigram, prev).first;
+    std::vector<JaNode> path;
+    if (ja_->lm) {  // (plan 5b: the lattice's best sentences rescored by the model)
+        auto paths = ja_nbest(kana, ja_->d, ja_pins_of(t, kana), {}, ja_->bigram, prev, JA_NBEST_K, JA_NBEST_N);
+        path = paths[ja_rescore(paths, *ja_->lm->view(ja_prev_units(t)), ja_->lm_weight)].first;
+    } else {
+        path = ja_convert(kana, ja_->d, ja_pins_of(t, kana), {}, ja_->bigram, prev).first;
+    }
     if (ja_memo_on_) ja_memo_[t.start] = path;
     return path;
 }
@@ -3014,6 +3021,35 @@ int Composer::ja_prev_sid(const Token& t) const {
     ustr kana, pending, spaces;
     auto path = ja_path(before, kana, pending, spaces);
     return path.empty() ? -1 : ja_word_sid(ja_->d, ja_->bigram, path.back());
+}
+
+ustr Composer::ja_prev_units(const Token& t) const {
+    // as ja_prev_sid: the units of the Japanese token right before it in this text, or - first in the text - the
+    // Japanese sent before; nothing after anything else (engine/composer.py _ja_prev_units)
+    size_t i = 0;
+    while (i < tokens.size() && tokens[i].start != t.start) ++i;
+    if (i == 0 || i == tokens.size()) return ja_lm_context_;
+    const Token& before = tokens[i - 1];
+    if (!is_romaji(before)) return ustr();
+    ustr kana, pending, spaces, text;
+    for (auto& n : ja_path(before, kana, pending, spaces)) text += n.surface;
+    ustr u = ja_units(text);
+    return u.size() > JA_LM_CONTEXT ? u.substr(u.size() - JA_LM_CONTEXT) : u;
+}
+
+ustr Composer::ja_lm_after(const Token* last) const {
+    // that romaji token's Japanese as units (the last JA_LM_CONTEXT); none after anything else, a kana lock or a
+    // sentence end (engine/composer.py _ja_lm_after)
+    if (!ja_ || !ja_->lm || !last || !is_romaji(*last) || ja_lock_ != "auto") return ustr();
+    ustr kana, pending, spaces;
+    auto path = ja_path(*last, kana, pending, spaces);
+    if (path.empty()) return ustr();
+    const ustr& s = path.back().surface;
+    if (!s.empty() && (s.back() == U'。' || s.back() == U'？' || s.back() == U'！')) return ustr();
+    ustr text;
+    for (auto& n : path) text += n.surface;
+    ustr u = ja_units(text);
+    return u.size() > JA_LM_CONTEXT ? u.substr(u.size() - JA_LM_CONTEXT) : u;
 }
 
 int Composer::ja_context_after(const Token* last) const {
@@ -5691,6 +5727,7 @@ void Composer::type_symbol(const ustr& sym, bool stay, bool join) {
     }
     context_word_.reset();
     ja_context_ = -1;
+    ja_lm_context_.clear();
     after_english_ = false;
     sent({sym});  // (its Chinese, if any, is what is right before the caret now: #37)
     commit = before + sym;
@@ -6766,6 +6803,7 @@ void Composer::do_commit() {
     undo.lm_context = lm_context_;
     undo.lm_units = lm_units_;
     undo.ja_context = ja_context_;
+    undo.ja_lm_context = ja_lm_context_;
     undo.ja_pins = ja_pins_;
     for (auto& t : tokens)
         if (t.kind == Kind::Zh) undo.syllables.push_back({t.start, t.raw});
@@ -6811,6 +6849,7 @@ void Composer::do_commit() {
     if (last && last->kind == Kind::Zh && !segments_.empty()) context_word_ = segments_.back().phrase;
     else context_word_.reset();
     ja_context_ = ja_context_after(last);  // (中日混打, plan 5)
+    ja_lm_context_ = ja_lm_after(last);    // (plan 5b)
     {  // (接續前文選字, #37)
         std::vector<ustr> phrases;
         for (auto& seg : segments_) phrases.push_back(seg.phrase);
@@ -7139,6 +7178,7 @@ ustr Composer::undo_commit() {
     lm_context_ = undo.lm_context;
     lm_units_ = undo.lm_units;
     ja_context_ = undo.ja_context;
+    ja_lm_context_ = undo.ja_lm_context;
     ja_pins_ = undo.ja_pins;
     after_english_ = undo.after_english;
     term_picks_ = undo.term_picks;
@@ -7508,6 +7548,7 @@ void Composer::commit_head() {
             for (auto& x : tokens)
                 if (x.start < tok_start) before = &x;
             ja_context_ = ja_context_after(before);
+            ja_lm_context_ = ja_lm_after(before);
         }
         std::map<int, std::pair<ustr, std::vector<JaPin>>> ja_pins;  // (中日混打's picks move too - findings #165)
         for (auto& [x, v] : ja_pins_)
@@ -7573,6 +7614,7 @@ bool Composer::key(std::optional<char32_t> ch, const std::string& special, bool 
         commit = config.flag("full_width") && p == PUNCT().end() ? to_full_width(text) : text;
         context_word_.reset();
         ja_context_ = -1;
+        ja_lm_context_.clear();
         after_english_ = false;
         return true;
     }

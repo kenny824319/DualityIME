@@ -6,6 +6,7 @@
 #include <unordered_map>
 
 #include "candlayout.h"
+#include "lm.h"
 
 namespace sz {
 
@@ -64,8 +65,9 @@ ustr ja_to_half_katakana(const ustr& s) {
     return out;
 }
 
-JaComposer::JaComposer(const RomajiTable& table, const JaDict& d, const Config& config, const JaBigram* bigram)
-    : table_(table), d_(d), config_(config), bigram_(bigram) {
+JaComposer::JaComposer(const RomajiTable& table, const JaDict& d, const Config& config, const JaBigram* bigram,
+                       const LmScorer* lm, int64_t lm_weight)
+    : table_(table), d_(d), config_(config), bigram_(bigram), lm_(lm), lm_weight_(lm_weight) {
     reset();
 }
 
@@ -87,7 +89,14 @@ void JaComposer::convert_now() {
         cuts.push_back(b);
         cuts.push_back(e);
     }
-    path_ = kana_.empty() ? std::vector<JaNode>() : ja_convert(kana_, d_, pins, cuts, bigram_, context_sid_).first;
+    if (kana_.empty()) {
+        path_.clear();
+    } else if (lm_) {  // (plan 5b: the lattice's best sentences rescored by the model)
+        auto paths = ja_nbest(kana_, d_, pins, cuts, bigram_, context_sid_, JA_NBEST_K, JA_NBEST_N);
+        path_ = paths[ja_rescore(paths, *lm_->view(lm_context_), lm_weight_)].first;
+    } else {
+        path_ = ja_convert(kana_, d_, pins, cuts, bigram_, context_sid_).first;
+    }
 }
 
 std::vector<JaSegment> JaComposer::segments() const {
@@ -385,9 +394,14 @@ ustr JaComposer::flush() {
     ustr out = composition;
     // (what is sent is the next conversion's context: its last word; none after a sentence end or kana as typed)
     bool ends = !out.empty() && (out.back() == U'。' || out.back() == U'？' || out.back() == U'！');
-    context_sid_ = !path_.empty() && kana_lock == "auto" && !out.empty() && !ends
-                       ? ja_word_sid(d_, bigram_, path_.back())
-                       : -1;
+    bool keep = !path_.empty() && kana_lock == "auto" && !out.empty() && !ends;
+    context_sid_ = keep ? ja_word_sid(d_, bigram_, path_.back()) : -1;
+    if (keep) {  // (plan 5b: the model's context, the last JA_LM_CONTEXT units of the Japanese sent)
+        lm_context_ += ja_units(out);
+        if (lm_context_.size() > JA_LM_CONTEXT) lm_context_ = lm_context_.substr(lm_context_.size() - JA_LM_CONTEXT);
+    } else {
+        lm_context_.clear();
+    }
     std::string lock = kana_lock;
     reset();
     kana_lock = lock;

@@ -35,6 +35,15 @@ std::vector<std::pair<std::vector<JaNode>, int64_t>> ja_nbest(const ustr& kana, 
                                                               const std::vector<int>& cuts = {},
                                                               const JaBigram* bigram = nullptr, int prev_sid = -1,
                                                               int k = 5, int n_best = 10);
+class LmScorer;
+// the Japanese model's units of a candidate sentence (engine/ja_convert.py ja_units): a run of ASCII or full-width
+// letters/digits one EN_MARK, kana (ー 々) and kanji kept, the rest dropped
+ustr ja_units(const ustr& text);
+// the sentence the model picks among ja_nbest's (engine/ja_convert.py rescore): the highest w x logp - cost x 1024, the
+// first keeping a tie
+size_t ja_rescore(const std::vector<std::pair<std::vector<JaNode>, int64_t>>& paths, const LmScorer& view, int64_t w);
+// W of the rescoring: the model file's weight field (whole units; engine/ja_mixed.py lm_weight_of)
+int64_t ja_lm_weight(const LmScorer& lm);
 // a path node's word number in the bigram (its entry's; a pin or fallback: its reading's first entry written as it),
 // -1 none or no bigram - the context the next conversion starts from (engine/ja_convert.py word_sid)
 int ja_word_sid(const JaDict& d, const JaBigram* bigram, const JaNode& node);

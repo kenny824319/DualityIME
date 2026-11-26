@@ -1,9 +1,11 @@
 #include "ja_convert.h"
 
 #include <algorithm>
+#include <cmath>
 #include <unordered_map>
 
 #include "ja_bigram.h"
+#include "lm.h"
 
 namespace sz {
 
@@ -102,6 +104,51 @@ void starting_at(const ustr& kana, int begin, const JaDict& d, const JaBigram* b
 }
 
 }  // namespace
+
+ustr ja_units(const ustr& text) {
+    auto alnum = [](char32_t c) {
+        return (c >= U'A' && c <= U'Z') || (c >= U'a' && c <= U'z') || (c >= U'0' && c <= U'9') ||
+               (c >= 0xFF21 && c <= 0xFF3A) || (c >= 0xFF41 && c <= 0xFF5A) || (c >= 0xFF10 && c <= 0xFF19);
+    };
+    auto kept = [](char32_t c) {
+        return (c >= 0x3041 && c <= 0x3096) || (c >= 0x30A1 && c <= 0x30FA) || c == 0x30FC || c == 0x3005 ||
+               (c >= 0x3400 && c <= 0x4DBF) || (c >= 0x4E00 && c <= 0x9FFF) || (c >= 0xF900 && c <= 0xFAFF);
+    };
+    ustr out;
+    for (size_t i = 0; i < text.size(); ++i) {
+        char32_t c = text[i];
+        if (alnum(c)) {
+            if (i == 0 || !alnum(text[i - 1])) out += EN_MARK;
+        } else if (kept(c)) {
+            out += c;
+        }
+    }
+    return out;
+}
+
+size_t ja_rescore(const std::vector<std::pair<std::vector<JaNode>, int64_t>>& paths, const LmScorer& view, int64_t w) {
+    std::vector<ustr> texts;
+    for (auto& [path, cost] : paths) {
+        ustr t;
+        for (auto& n : path) t += n.surface;
+        texts.push_back(ja_units(t));
+    }
+    std::vector<int64_t> logp = view.units_logp_many(texts);  // (the same numbers as units_logp, stepped together)
+    size_t best = 0;
+    int64_t best_score = 0;
+    for (size_t i = 0; i < paths.size(); ++i) {
+        int64_t score = w * logp[i] - paths[i].second * 1024;
+        if (i == 0 || score > best_score) {
+            best = i;
+            best_score = score;
+        }
+    }
+    return best;
+}
+
+int64_t ja_lm_weight(const LmScorer& lm) {
+    return static_cast<int64_t>(std::floor(lm.model().lm_weight() + 1e-9));  // (milli // 1000 for a whole W)
+}
 
 int ja_word_sid(const JaDict& d, const JaBigram* bigram, const JaNode& node) {
     if (!bigram) return -1;

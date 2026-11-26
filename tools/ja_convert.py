@@ -24,14 +24,16 @@ sys.path.insert(0, ROOT)
 from engine.config import Config  # noqa: E402
 from engine.ja_bigram import JaBigram  # noqa: E402
 from engine.ja_composer import JaComposer  # noqa: E402
-from engine.ja_convert import convert, nbest as nbest_of  # noqa: E402
+from engine.ja_composer import NBEST_K, NBEST_N  # noqa: E402
+from engine.ja_convert import convert, nbest as nbest_of, rescore  # noqa: E402
+from engine.ja_mixed import lm_weight_of, load_lm  # noqa: E402
 from engine.ja_dict import JaDict  # noqa: E402
 from engine.ja_romaji import RomajiTable  # noqa: E402
 
 TOKEN = re.compile(r"\{[A-Z0-9]+\}|.")
 
 
-def line_out(romaji, table, d, bigram=None, nbest=False):
+def line_out(romaji, table, d, bigram=None, nbest=False, lm=None):
     prev = -1
     if bigram is not None and "\t" in romaji:  # (--bigram: "<context sid>\t<romaji>")
         sid, romaji = romaji.split("\t", 1)
@@ -41,15 +43,18 @@ def line_out(romaji, table, d, bigram=None, nbest=False):
         return "|".join(f"{c}:{''.join(x.surface for x in p)}"
                         for p, c in nbest_of(kana, d, bigram=bigram, prev_sid=prev))
     path, cost = convert(kana, d, bigram=bigram, prev_sid=prev)
+    if lm is not None and kana:  # (--lm: the 10 best rescored by the model, as the composers do)
+        paths = nbest_of(kana, d, bigram=bigram, prev_sid=prev, k=NBEST_K, n=NBEST_N)
+        path, cost = paths[rescore(paths, lm.view(""), lm_weight_of(lm))]
     cuts = "".join("1" if d.is_boundary(a.rid, b.lid) else "0" for a, b in zip(path, path[1:]))
     return f"{kana}\t{pending}\t{'|'.join(n.surface for n in path)}\t{cost}\t{table.finish(romaji)}\t{cuts}"
 
 
-def run_script(script, table, d, bigram=None):
+def run_script(script, table, d, bigram=None, lm=None):
     """The state lines of one key script."""
     cfg = Config()
     cfg.values["ja_enabled"] = True
-    c = JaComposer(table, d, cfg, bigram)
+    c = JaComposer(table, d, cfg, bigram, lm=lm, lm_weight=lm_weight_of(lm))
     out = []
     for tok in TOKEN.findall(script):
         if tok == "{SPACECONV}":
@@ -82,6 +87,7 @@ def main():
     ap.add_argument("--keys", action="store_true")
     ap.add_argument("--bigram")
     ap.add_argument("--nbest", action="store_true")
+    ap.add_argument("--lm")  # (plan 5b: the Japanese model)
     a = ap.parse_args()
     table = RomajiTable.load(os.path.join(a.data, "ja_romaji.tsv"))
     d = JaDict.load(os.path.join(a.data, "ja_dict.bin"))  # (ja_conn.bin, ja_seg.bin beside it)
@@ -90,10 +96,15 @@ def main():
         bigram = JaBigram.load(d, a.bigram)
         if bigram is None:
             sys.exit("STOPPED: could not read the bigram file (or it is for another ja_dict.bin)")
+    lm = None
+    if a.lm:
+        lm = load_lm(a.lm)
+        if lm is None:
+            sys.exit("STOPPED: could not read the model file")
     out = sys.stdout.buffer
     for raw in sys.stdin.buffer:
         line = raw.decode("utf-8").rstrip("\r\n")
-        lines = run_script(line, table, d, bigram) if a.keys else [line_out(line, table, d, bigram, a.nbest)]
+        lines = run_script(line, table, d, bigram, lm) if a.keys else [line_out(line, table, d, bigram, a.nbest, lm)]
         out.write("".join(x + "\n" for x in lines).encode("utf-8"))
 
 

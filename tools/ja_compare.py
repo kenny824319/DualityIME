@@ -103,14 +103,15 @@ def main():
     ap.add_argument("--scripts")
     ap.add_argument("--exe", default=os.path.join(ROOT, "cpp", "build", "x64-Release", "sz_ja.exe"))
     ap.add_argument("--bigram")  # (a bigram file, or "random": one made here; each line then gets a context)
-    ap.add_argument("--nbest", action="store_true")  # (plan 5b: each line's best distinct sentences compared)
+    ap.add_argument("--nbest", action="store_true")
+    ap.add_argument("--lm")  # (plan 5b: a Japanese model file both sides rescore with)  # (plan 5b: each line's best distinct sentences compared)
     a = ap.parse_args()
     if not os.path.exists(a.exe):
         sys.exit(f"STOPPED: build first (cpp\\build.cmd): {a.exe}")
     convert = os.path.join(ROOT, "tools", "ja_convert.py")
     data = os.path.join(ROOT, "data")
     lines = [line.rstrip("\r\n") for line in open(a.cases, encoding="utf-8")] if a.cases else cases()
-    extra = ["--nbest"] if a.nbest else []
+    extra = (["--nbest"] if a.nbest else []) + (["--lm", a.lm] if a.lm else [])
     with tempfile.TemporaryDirectory() as tmp:
         if a.bigram:
             path = a.bigram

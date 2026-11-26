@@ -13,6 +13,7 @@
 #include "ja_mixed.h"
 #include "ja_romaji.h"
 #include "json.h"
+#include "lm.h"
 
 namespace sz {
 
@@ -23,6 +24,8 @@ struct JaData {
     std::unique_ptr<JaDict> dict;
     std::unique_ptr<JaMixed> mixed;  // 中日混打's romaji cost over them (the Chinese composers share it)
     std::unique_ptr<JaBigram> bigram;  // plan 5: data\ja_bigram.bin when it is there and for this dictionary
+    std::unique_ptr<LmModel> lm_model;  // plan 5b: data\ja_lm.bin when it is there (the Japanese model)
+    std::unique_ptr<LmScorer> lm;       // ...its whole-text scorer
     bool tried = false;
     bool ready();  // loads on the first call; false when the files cannot be read
 };
