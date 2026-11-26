@@ -1,0 +1,30 @@
+# #36 plan 5: sentences where one reading takes different words by its neighbours (設計文件目標 4: ご飯を → 箸, 川に → 橋).
+# romaji<TAB>expected; read by tools/ja_eval.py. A measurement of the context, not a gate: some have other spellings
+# people also use. Handwritten for the test, no one's typing.
+gohanwohasidetaberu	ご飯を箸で食べる
+kawanihasiwokakeru	川に橋を架ける
+mitinohasiwoaruku	道の端を歩く
+kamininamaewokaku	紙に名前を書く
+nagaikamiwomusubu	長い髪を結ぶ
+tegamiwokaku	手紙を書く
+ewokaku	絵を描く
+fukuwokiru	服を着る
+yasaiwokiru	野菜を切る
+kyouhaatsui	今日は暑い
+otyagaatsui	お茶が熱い
+honngaatsui	本が厚い
+asagahayai	朝が早い
+kurumagahayai	車が速い
+ienikaeru	家に帰る
+yoteiwokaeru	予定を変える
+tomodatiniau	友達に会う
+saizugaau	サイズが合う
+terebiwomiru	テレビを見る
+kanjawomiru	患者を診る
+kusurigakiku	薬が効く
+nimotugaomoi	荷物が重い
+kittewoharu	切手を貼る
+harugakita	春が来た
+hanagasaku	花が咲く
+hanagatumaru	鼻が詰まる
+soranikumogaukabu	空に雲が浮かぶ

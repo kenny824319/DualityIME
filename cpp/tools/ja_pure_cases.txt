@@ -7,7 +7,7 @@
 {^F2}{SHIFT}{^F2}su3cl3{ENTER} => 你好
 {^F2}kyouhaiitenki{ENTER}{^F2} => 今日はいい天気
 {^F2}watasihagakusei{LEFT}nihonnno{ENTER}{^F2} => 私は日本の学生
-{^F2}hasi{HOME}{DOWN}{DOWN}{ENTER}{END}wowataru{ENTER}{^F2} => 橋をわたる
+{^F2}hasi{HOME}{DOWN}{DOWN}{ENTER}{END}wowataru{ENTER}{^F2} => 橋を渡る
 {^F2}gakkounoshukudaiwoshita{DOWN}{DOWN}{ENTER}{ENTER}{^F2} => 学校の宿題を下
 {^F2}kyouhaiitenki{HOME}{SLEFT}{ENTER}{ENTER}{^F2} => 今日はいい天気
 {^F2}senta-{F8}{ENTER}{^F2} => ｾﾝﾀｰ

@@ -37,6 +37,7 @@
 
 #include "../common/anim_image.h"
 #include "../engine/composer.h"
+#include "../engine/ja_bigram.h"
 #include "../engine/lm.h"
 #include "../engine/lm_pool.h"
 #include "../tip/photo_frame.h"
@@ -263,6 +264,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<RomajiTable> ja_table;
     std::unique_ptr<JaDict> ja_dict;
     std::unique_ptr<JaMixed> ja_mixed;
+    std::unique_ptr<JaBigram> ja_bigram;  // (data\ja_bigram.bin when there, as the engine's JaData and Python's JaMixed.load)
     if (argc > 4) {
         std::string text;
         bool ok = false;
@@ -273,6 +275,8 @@ int main(int argc, char** argv) {
             ja_dict = JaDict::load(widen(argv[1]));
             if (ja_table && ja_dict) {
                 ja_mixed = std::make_unique<JaMixed>(*ja_table, *ja_dict);
+                ja_bigram = JaBigram::load(widen(argv[1]), *ja_dict);
+                ja_mixed->bigram = ja_bigram.get();
                 c.set_japanese(ja_mixed.get());
             }
         }

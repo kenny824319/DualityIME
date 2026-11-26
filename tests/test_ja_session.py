@@ -88,6 +88,21 @@ class JaSessionTest(unittest.TestCase):
         last = json.loads(out.decode("utf-8").splitlines()[-1])
         self.assertEqual(last["mixed"], {"on": False, "ja_off": True})
 
+    def test_context_in_engine(self):
+        # (plan 5: the engine process's 純日文 reads the word bigram, the last word sent being the context - real data:
+        # いって after 買い物に is 行って, alone 言って)
+        enter = {"op": "key", "special": "ENTER", "ja": True}
+        fresh = run([ON] + keys("itteirutokorodesu."))[-1]["reply"]["composition"]
+        after = run([ON] + keys("kaimononi") + [enter] + keys("itteirutokorodesu."))[-1]["reply"]["composition"]
+        self.assertEqual((fresh, after), ("言っているところです。", "行っているところです。"))
+
+    def test_switching_forgets_context(self):
+        # (leaving 純日文 - Ctrl+F2 to Chinese, Shift to 中日混打 - sends what is typed and forgets the context: what is
+        # typed meanwhile is not 純日文's)
+        for flush in ({"op": "ja_flush"}, {"op": "ja_flush", "keep_lock": True}):
+            out = run([ON] + keys("kaimononi") + [flush] + keys("itteirutokorodesu."))
+            self.assertEqual(out[-1]["reply"]["composition"], "言っているところです。", flush)
+
     def test_disabled_goes_back(self):
         out = run([ON] + keys("kyou") + [{"set": {"ja_enabled": False}}, {"op": "key", "ch": "a", "ja": True}])
         r = out[-1]["reply"]

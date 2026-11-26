@@ -1,7 +1,7 @@
 """#36 plan 5: build data/ja_bigram.bin (layout in engine/ja_bigram.py) from plain Japanese text (tools/ja_corpus.py).
 
     py -3 tools/build_ja_bigram.py [--corpus <txt>] [--counts <npz>] [--jobs N] [--w 1.0] [--max-bonus 800]
-                                   [--min-count 5] --out data/ja_bigram.bin
+                                   [--min-count 5] --out data/ja_bigram.bin   (w, max-bonus: whole numbers)
 
 Each line is segmented into dictionary words by the lattice of engine/ja_convert.py run backwards over the surfaces of
 data/ja_dict.bin itself (DictSurfaces: every entry's surface, reading, ids and cost - the very dictionary the bigram is
@@ -135,7 +135,9 @@ def bonus_of(c_ab, c_a, c_b, n, w, max_bonus):
 
 def build(codes, counts, V, d, idx, w, max_bonus, min_count):
     """The file's bytes."""
-    w = round(w * 100) / 100  # (as stored)
+    w = round(w)  # (as stored: whole units)
+    if not 0 < w <= 65535 or not 0 < max_bonus <= 65535:
+        sys.exit("STOPPED: --w and --max-bonus are whole numbers of 1 to 65535")
     a, b = codes // V, codes % V
     n = int(counts.sum())
     c_a = np.bincount(a, weights=counts, minlength=V)
@@ -149,7 +151,7 @@ def build(codes, counts, V, d, idx, w, max_bonus, min_count):
     sid = {v: i for i, v in enumerate(used)}  # (vids ascending: the pairs stay in (a, b) order)
     surface_sid = {idx.surfaces[v]: s for v, s in sid.items()}
     mapping = [(j, surface_sid[s]) for j, s in enumerate(idx.entry_surface) if s in surface_sid]
-    out = [HEADER.pack(b"JB01", d.n_entries, d.crc32, len(mapping), len(keep), round(w * 100), max_bonus, min_count)]
+    out = [HEADER.pack(b"JB01", d.n_entries, d.crc32, len(mapping), len(keep), w, max_bonus, min_count)]
     out.append(struct.pack(f"<{len(mapping)}I", *(j for j, _ in mapping)))
     out.append(struct.pack(f"<{len(mapping)}I", *(s for _, s in mapping)))
     out.append(struct.pack(f"<{len(keep)}I", *(sid[x] for x, _, _ in keep)))

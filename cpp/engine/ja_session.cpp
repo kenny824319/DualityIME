@@ -103,6 +103,7 @@ Json JaSession::handle(const Json& req, JaData& data, const Config& config) {
         c.set_kana_lock(lock && lock->is_string() ? lock->as_string() : "auto");
     } else if (op == "ja_flush") {  // (switching to Chinese: what is typed is sent, the kana lock back to 自動)
         commit = c.flush();  // (the list closed first: what the screen shows goes - findings #163)
+        c.forget_context();  // (plan 5: what is typed until 純日文 comes back is not its - Chinese, 中日混打)
         const Json* keep = req.get("keep_lock");  // (Shift to 中日混打: the lock stays, both modes' Japanese hold it)
         if (!(keep && keep->is_bool() && keep->as_bool())) c.set_kana_lock("auto");
     }

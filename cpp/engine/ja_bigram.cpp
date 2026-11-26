@@ -29,7 +29,7 @@ template <class T> T get(const uint8_t* p) {
     return v;
 }
 
-constexpr size_t HEADER = 28;  // "JB01", dict_entries, dict_crc32, n_map, n_pairs, w_x100 (u16), max_bonus (u16), min_count
+constexpr size_t HEADER = 28;  // "JB01", dict_entries, dict_crc32, n_map, n_pairs, w (u16), max_bonus (u16), min_count
 
 }  // namespace
 

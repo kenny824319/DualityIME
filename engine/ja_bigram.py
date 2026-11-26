@@ -2,7 +2,7 @@
 surfaces) that the corpus has side by side more often than chance. cpp/engine/ja_bigram.cpp reads the same file.
 
 Layout (little endian): b"JB01", u32 dict_entries, u32 dict_crc32 (of the whole ja_dict.bin it was built for), u32 n_map,
-u32 n_pairs, u16 w_x100, u16 max_bonus, u32 min_count; then u32 entry[n_map] (ascending), u32 sid[n_map]; then
+u32 n_pairs, u16 w (bonus units per nat, whole), u16 max_bonus, u32 min_count; then u32 entry[n_map] (ascending), u32 sid[n_map]; then
 u32 a[n_pairs], u32 b[n_pairs] (ascending by (a, b)), u16 bonus[n_pairs].
 """
 import bisect
@@ -17,11 +17,10 @@ HEADER = struct.Struct("<4sIIIIHHI")
 
 class JaBigram:
     def __init__(self, data):
-        magic, self.dict_entries, self.dict_crc32, n_map, n_pairs, w_x100, self.max_bonus, self.min_count = \
+        magic, self.dict_entries, self.dict_crc32, n_map, n_pairs, self.w, self.max_bonus, self.min_count = \
             HEADER.unpack_from(data, 0)
         if magic != b"JB01" or sys.byteorder != "little":
             raise ValueError("not a Japanese bigram file")
-        self.w = w_x100 / 100
         mv, pos = memoryview(data), HEADER.size
         size = HEADER.size + 8 * n_map + 10 * n_pairs
         if len(data) != size:
