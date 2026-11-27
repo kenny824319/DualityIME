@@ -2,24 +2,31 @@
 # 接續前文選字 (#37): what was just sent is read before the next sentence while the caret is still right after it
 # (as it comes: 長句選字加強 and 接續前文選字 on; one engine for all lines). The box talks TSF itself (like Word, Chrome,
 # Win11 Notepad): through the IMM32 layer TSF shows only the text being typed, see context_imm32_cases.txt
-# sent, then typed right after it: 再 (read after 我們先去吃飯)
+# sent, then typed right after it: 再 (alone 在 before #24, 再 now too: kept as a guard for 再 after it)
 ji3ap7vu0 fm4t z04{ENTER}y94fm4d042u04u/3{ENTER} => 我們先去吃飯再去看電影
-# sent, then the caret moved to the start (Home): what is before it is not what was sent, so no context: 在
-ji3ap7vu0 fm4t z04{ENTER}{HOME}y94fm4d042u04u/3{ENTER} => 在去看電影我們先去吃飯
-# a sentence started and dropped (Esc) right after it, then the caret moved: checked again at the next sentence: 在
-ji3ap7vu0 fm4t z04{ENTER}y{ESC}{HOME}y94fm4d042u04u/3{ENTER} => 在去看電影我們先去吃飯
-# sent, then Enter in the box (a new line): the line break is allowed between, the context stays: 再 (the user's call 2026-11-15)
-vu0 cjo6ru8 vu3yl3{ENTER}{ENTER}y94fm4d042u04u/3{ENTER} => 先回家洗澡{NL}再去看電影
-# sent, then a comma (, is ㄝ too: it waits in the buffer with what comes next), then typed on: the context stays: 再
-vu0 cjo6ru8 vu3yl3{ENTER},y94fm4d042u04u/3{ENTER} => 先回家洗澡,再去看電影
-# sent, then a lone mark (Ctrl+. : 。) and Enter: after a mark alone no line break is allowed between (any paragraph ending in 。 would pass): the context drops: 在
-vu0 cjo6ru8 vu3yl3{ENTER}{^.}{ENTER}y94fm4d042u04u/3{ENTER} => 先回家洗澡。{NL}在去看電影
+# The lines below tell the context kept from the context dropped: each types ㄊㄚ after a sentence sent, 她 only when that
+# sentence is read (alone 他). The order counts, the memory carrying over between lines: the lines keeping the context come
+# first (他很聰明 once sent alone is remembered and wins over the context after it), and the comma and English lines type
+# sentences of their own (one more 她很聰明 after a comma, besides the two lines below, turned the lines dropping the
+# context to 她 too, code-reviewer 2026-11-27)
+# sent, then typed right after it: 她
+ji3sm3-6rup su06j3njo4{ENTER}w8 cp3hj/ au/6{ENTER} => 我女兒今年五歲她很聰明
+# sent, then Enter in the box (a new line): the line break is allowed between, the context stays: 她 (the user's call 2026-11-15)
+ji3sm3-6rup su06j3njo4{ENTER}{ENTER}w8 cp3hj/ au/6{ENTER} => 我女兒今年五歲{NL}她很聰明
+# sent, then a comma (, is ㄝ too: it waits in the buffer with what comes next), then typed on: the context stays: 她
+ji3ao4ao4y942j6284vm,6{ENTER},w8 cp3m/4ej/ {ENTER} => 我妹妹在讀大學,她很用功
+# #42: sent, then a buffer that starts with English: the Chinese after it reads what was sent too: 她
+ji3ru,3ru,3ru,6cjp xk7{ENTER}Githubw8 cp3vu/4zj6{ENTER} => 我姐姐結婚了Github她很幸福
+# sent, then the caret moved to the start (Home): what is before it is not what was sent, so no context: 他
+ji3sm3-6rup su06j3njo4{ENTER}{HOME}w8 cp3hj/ au/6{ENTER} => 他很聰明我女兒今年五歲
+# a sentence started and dropped (Esc) right after it, then the caret moved: checked again at the next sentence: 他
+ji3sm3-6rup su06j3njo4{ENTER}y{ESC}{HOME}w8 cp3hj/ au/6{ENTER} => 他很聰明我女兒今年五歲
+# sent, then a lone mark (Ctrl+. : 。) and Enter: after a mark alone no line break is allowed between (any paragraph ending in 。 would pass): the context drops: 他
+ji3sm3-6rup su06j3njo4{ENTER}{^.}{ENTER}w8 cp3hj/ au/6{ENTER} => 我女兒今年五歲。{NL}他很聰明
 # #42: the Chinese after English in the buffer reads the Chinese before it: 辨識成 (each run on its own made 便是成)
 ji356ru, 5k4u;4283cjo41o4Github1u04g4t/6tj/6zj4a87{ENTER} => 我直接這樣打會被Github辨識成重複嗎
 # #42: 能 (s/6) right after Session is zhuyin, not more of the English word (it came out Sessions/6)
 ul4fm,41l3ru, vu84x96Sessions/6gjp4xu4d9 z8 {ENTER} => 要確保接下來Session能順利開發
-# #42: sent, then a buffer that starts with English: the Chinese after it reads what was sent too: 再 (alone 在)
-ji3ap7vu0 fm4t z04{ENTER}Githuby94fm4d042u04u/3{ENTER} => 我們先去吃飯Github再去看電影
 # #42: the character usually right after an English word (data/after_english.txt): T恤 (alone 續), CP值; a space between: as usual
 Tvm4{ENTER} => T恤
 T vm4{ENTER} => T 續

@@ -13,8 +13,9 @@
 {^F2}{^F7}kyou{ENTER}{^F8}{^F2} => キョウ
 # Shift sends what is typed and goes to 純日文 (a second Shift back to 中日混打, nothing typed)
 {^F2}kyou{SHIFT}{SHIFT}{^F2} => 今日
-# Shift from 純日文 with its list open: what the screen shows goes out, not lost (findings #163)
-{^F2}{SHIFT}hasi{DOWN}{SHIFT}{^F2} => はし
+# Shift from 純日文 with its list open: what the screen shows goes out, not lost (findings #163): 橋, picked on the 橋を
+# line above (a pick is remembered, both modes share it: #36 plan 7)
+{^F2}{SHIFT}hasi{DOWN}{SHIFT}{^F2} => 橋
 # switching to Chinese sends what is typed in 中日混打
 {^F2}ji3{^F2} => 我
 # plan 6: the Japanese piece at the end gets the hint; Tab types the rest of its reading and keeps the phrase

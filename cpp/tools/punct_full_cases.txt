@@ -2,9 +2,9 @@
 # 標點全形 (#53, findings #108): a , . ; typed with its key right before a swapped mark stays the mark (it went out as
 # an unfinished syllable: 我『你好.』), and brackets swap by their own kind; a mark before a pick from the replacement
 # bar stays the mark (findings #115: 你，ㄏㄠˇ went out 你,ㄏㄠˇ); a mark with no row of its own swaps back through every
-# row holding it (#113: … back to ……)
+# row holding it (the fifth of its list since a full-width mark lists only full-width marks; #113:… back to ……)
 ji3[su3cl3.]{HOME}{RIGHT}{DOWN}2{ENTER} => 我『你好。』
 ji3,,cl3{LEFT}{LEFT}{DOWN}1{ENTER} => 我，，好
 su3{^[}cl3:){^]}{HOME}{RIGHT}{DOWN}2{ENTER} => 你『好：）』
 su3,cl3{LEFT}{UP}{ENTER}{ENTER} => 你，ㄏㄠˇ
-su3{^^}{LEFT}{DOWN}2{LEFT}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER} => 你……
+su3{^^}{LEFT}{DOWN}2{LEFT}{DOWN}{DOWN}{DOWN}{DOWN}{DOWN}{ENTER}{ENTER} => 你……

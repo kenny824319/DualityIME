@@ -7,14 +7,15 @@
 su3cl3{LEFT}{DOWN}{DOWN}{ESC}{ENTER} => 你好
 # Space in the list picks nothing: Esc then only closes the list, and Enter sends the text as it was
 ji3cl3vu/4{DOWN}{DOWN} {ESC}{ENTER} => 我好行
+# Shift to English with a box open: the text goes out as it is, then the key (the engine's flush closes every box without
+# picking - with Esc and Enter the grid only folded and the sentence was lost (3.3.0's Esc closed the whole list: it
+# passes there); with the bar open 3.0-3.3.0 sent only a). Before the grid line below: it picks 事, and a pick is
+# remembered (after it ㄕˋ is 事)
+g4{DOWN}{DOWN}{RIGHT}{RIGHT}{SHIFT}a{SHIFT} => 是a
+su3cl3{LEFT}{UP}{SHIFT}a{SHIFT} => 你好a
 # Esc in the spread-out grid: back to the list as it was before → (its second candidate), Enter picks it
 g4{DOWN}{DOWN}{RIGHT}{RIGHT}{ESC}{ENTER}{ENTER} => 事
 # Space in the replacement bar picks nothing; Esc closes the bar, Enter sends the text as it was
 ji3cl3vu/4{LEFT}{LEFT}{UP} {ESC}{ENTER} => 我好行
 # Esc in 快速填入 goes back to the symbol keyboard it was opened from: q types 《 there
 ji3` {ESC}q{ENTER} => 我《
-# Shift to English with a box open: the text goes out as it is, then the key (the engine's flush closes every box without
-# picking - with Esc and Enter the grid only folded and the sentence was lost (3.3.0's Esc closed the whole list: it
-# passes there); with the bar open 3.0-3.3.0 sent only a)
-g4{DOWN}{DOWN}{RIGHT}{RIGHT}{SHIFT}a{SHIFT} => 是a
-su3cl3{LEFT}{UP}{SHIFT}a{SHIFT} => 你好a

@@ -1,8 +1,9 @@
 # Ctrl + a mark and the symbol keyboard while typing (#52): the mark joins the text being typed, at the caret, and goes
-# out with Enter; the Chinese after it reads what is before it (先回家洗澡，再去看電影: 在 when the comma sent the first part)
+# out with Enter; the Chinese after it reads what is before it (我女兒今年五歲，她很聰明: 他 with nothing before the comma;
+# 先回家洗澡，再去看電影 was the sentence before #24 made 再去看電影 再 alone too)
 su3cl3{LEFT}{^,}{ENTER} => 你，好
 su3cl3{LEFT}`f{ENTER} => 你●好
-vu0 cjo6ru8 vu3yl3{^,}y94fm4d042u04u/3{^.}{ENTER} => 先回家洗澡，再去看電影。
+ji3sm3-6rup su06j3njo4{^,}w8 cp3hj/ au/6{^.}{ENTER} => 我女兒今年五歲，她很聰明。
 # Backspace right after takes the symbol back, what is before it stays
 su3`f{BACK}cl3{ENTER} => 你好
 # Backspace with the symbol keyboard up and nothing typed closes it (符號鍵盤選完不關 off): what was sent stays
@@ -20,7 +21,8 @@ ji3{^.}{LEFT}{DOWN}2{ENTER} => 我！
 # #82 (Issue #11): a symbol picked from the symbol keyboard with nothing typed stays in the text being typed - ↓ before
 # it swaps it, more can be typed after it, Enter sends it
 `,{LEFT}{DOWN}2{ENTER}{ENTER} => 、
-`,su3{ENTER} => ，你
+# (、: ， swapped to 、 twice above is typed 、 from now on, the symbol keyboard's ， too (標點記憶, #83); 妳 picked above)
+`,su3{ENTER} => 、妳
 # #82: the keyboard's ？ (x) held with nothing typed swaps from its row; a half-width ? lists only the half-width
 # marks of its row (before, 你？好: its row began with the full-width ones)
 `x{LEFT}{DOWN}2{ENTER}{ENTER} => ！

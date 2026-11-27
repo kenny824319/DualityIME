@@ -1,5 +1,6 @@
 # 接續前文選字 (#37) in an app typing through the IMM32 layer (this box without --tsf; IDLE, Character Map, PowerShell ISE
 # measured 2026-11-22): TSF shows only the text being typed, what was sent can't be read before the caret, so the next
-# sentence is chosen as if typed alone - as before 3.3.0 (the user 2026-11-22: kept so in 3.3.0). 在 is what this
-# sentence alone gives (#24 may change that: then this line follows it)
-ji3ap7vu0 fm4t z04{ENTER}y94fm4d042u04u/3{ENTER} => 我們先去吃飯在去看電影
+# sentence is chosen as if typed alone - as before 3.3.0 (the user 2026-11-22: kept so in 3.3.0). 他 is what this
+# sentence alone gives, 她 after 我女兒今年五歲 (context_cases.txt; #24 made 再去看電影, the sentence here before, 再
+# alone too)
+ji3sm3-6rup su06j3njo4{ENTER}w8 cp3hj/ au/6{ENTER} => 我女兒今年五歲他很聰明

@@ -63,12 +63,15 @@ up e9 1j4au/6x96m06cji4qup31o4d.4xu.6{ENTER} => 因該不明來源貨品被扣�
 up e9 vu;4g4ru042l354h3h42k7ru,6eji3{ENTER} => 因該項事件導致此次的結果
 # ...and with more after it (light's model, less sure, swapped it at the bar plus and max have: its own, #60)
 up e9 vu;4g4ru042l354h3h42k7ru,6eji3vm ul4y94ru03wl3{ENTER} => 因該項事件導致此次的結果需要再檢討
-# ...and after a sentence sent (the model reads it: after 警方現在正在調查 this model made it 應該; a swap takes the lower of the model with and
-# without it, code-reviewer 2026-11-21)
+# ...and after a sentence sent. This box types through the IMM32 layer, where what was sent can't be read
+# (context_imm32_cases.txt), so here it is typed as if alone; the model reading 警方現在正在調查 (it made it 應該; a swap
+# takes the lower of the model with and without it, code-reviewer 2026-11-21) is tests/test_engine.py
+# test_yin_gai_where_it_is_meant_after_what_was_sent
 ru/3z; vu04y945/4y942ul4t86{ENTER}up e9 1j4au/6x96m06cji4qup31o4d.4xu.6{ENTER} => 警方現在正在調查因該不明來源貨品被扣留
 ji3up e9 ul4fm4{ENTER} => 我應該要去
 # a version number stays as typed (#61: v3 read as 史 - a key next to ㄕ's - and .2 as 都 after it, each holding the other up)
 v3.2 {ENTER} => v3.2 
-# a guess at the end still leans on 校正記憶 (si3 taught above), as in 3.3.0 (#61 review, findings #77; 3.3.0 sends 你李
-# in this file only because its v3.2 line above sent 史都 - without that line it sends 你裡 too)
-si3xi3{ENTER} => 你裡
+# a guess at the end still leans on 校正記憶 (si3 taught above): 你, as in 3.3.0 (#61 review, findings #77); the second
+# character is the model's guess with nothing before it (this box types through the IMM32 layer, where what was sent
+# can't be read: context_imm32_cases.txt): 理 (both engines; after v3.2 read before it, 裡)
+si3xi3{ENTER} => 你理
