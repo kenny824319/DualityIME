@@ -27,3 +27,5 @@
 ^(engine/ja_(bigram|predict|mixed|dict)\.py|cpp/engine/ja_(bigram|predict|session)\.cpp|installer/(build|install)\.ps1)$	\bja_(dict|conn|seg|bigram|lm|predict)\.bin\b  # 日文的辭典、連接成本、文節規則、詞 bigram、重新打分模型與預測詞組表（#36，data/），引擎只讀不寫
 ^installer/(build|install)\.ps1$	\bLICENSE-Mozc\.txt\b|\b(LICENSE|LEGAL)-SudachiDict\.txt\b  # 日文辭典的授權（Mozc、SudachiDict，#36，data/）
 ^(engine/lexicon\.py|cpp/engine/lexicon\.cpp|installer/src/Settings\.cs)$	\b(punct|ja_phrases)\.json\b  # 標點記憶（#83）與日文詞組記憶（#36 預測），和 user.json 分開的檔
+^(engine/lexicon\.py|cpp/engine/lexicon\.cpp|installer/src/(Settings|Lookup)\.cs)$	\b(ja_picks|ja_dictionary)\.json\b  # 日文選字學習與日文自訂詞彙（#36 第 7 份），和 user.json 分開的檔；設定工具與框選查詢寫自訂詞彙、引擎讀
+^installer/src/Lookup\.cs$	\bja_(dict|conn)\.bin\b  # 框選查詢從日文辭典與連接成本找讀音（#36 第 7 份，data/），只讀不寫

@@ -46,7 +46,7 @@ STEPS: list[tuple[str, list[str], Path, str | None]] = [
                   "tests.test_ja", "tests.test_ja_composer", "tests.test_ja_mixed", "tests.test_config_defaults",
                   "tests.test_ja_corpus", "tests.test_ja_sentences", "tests.test_ja_eval", "tests.test_ja_bigram",
                   "tests.test_lm_ja_prepare", "tests.test_ja_nbest", "tests.test_ja_rescore", "tests.test_ja_predict",
-                  "tests.test_ja_wiki_titles"],
+                  "tests.test_ja_wiki_titles", "tests.test_ja_user"],
      ROOT,
      "tests/test_engine.py"),
     # The C++ engine (cpp\build.cmd: Visual Studio Build Tools with C++), then both engines
